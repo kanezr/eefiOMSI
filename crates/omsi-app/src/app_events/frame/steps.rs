@@ -271,7 +271,7 @@ pub(crate) fn career_from_humans(career: &mut career::Career, h: &humans::Humans
 /// `game_clock`: the clock the journey's head line is written with (none: the bus's own).
 /// `learn_loaded`: the stops of the tiles loaded are learnt first. `plugin_events`: where
 /// skipped stops and the end of a trip are told to the plugins (none: a trip's end is
-/// dropped, the skipped stops are kept).
+/// dropped, the skipped stops are kept). The trip that ended (its index), if it did.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn duty_step(
     d: &mut schedule::PlayerDuty,
@@ -284,7 +284,7 @@ pub(crate) fn duty_step(
     game_clock: Option<&omsi_sim::SimClock>,
     learn_loaded: bool,
     plugin_events: Option<&mut Vec<omsi_plugin::GameEvent>>,
-) {
+) -> Option<usize> {
     if let Some(stop) = p.html_next_stop.take() {
         if d.skip_to(stop) {
             let (trip, k) = d.trip_for_ibis();
@@ -308,7 +308,8 @@ pub(crate) fn duty_step(
     {
         let clock = game_clock.unwrap_or(&p.vehicle.host.clock);
         let career = &*career;
-        crate::journey::note(journey, d, due, served, root, || crate::journey::head(career, &world.global.name, &p.vehicle, clock));
+        let odo = crate::journey::odometer_km(&p.vehicle);
+        crate::journey::note(journey, d, due, served, odo, root, || crate::journey::head(career, &world.global.name, &p.vehicle, clock));
     }
     if let Some(events) = plugin_events {
         use omsi_plugin::InfoValue::{Num, Text};
@@ -336,6 +337,7 @@ pub(crate) fn duty_step(
     ) {
         log::warn!("driver timetable paper: {e:#}");
     }
+    ended.map(|f| f.index)
 }
 
 /// The tyres' spray (see `puddles`): what every vehicle's tyres throw up from the water on

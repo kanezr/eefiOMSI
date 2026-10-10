@@ -53,6 +53,10 @@ pub(crate) struct App {
     pub(crate) shell: crate::shell::Shell,
     /// The photo mode, while it is on.
     pub(crate) photo: Option<crate::photo::Photo>,
+    /// The quick menu (Alt tapped alone), the tiles over the picture.
+    pub(crate) quick: crate::quick_menu::QuickMenu,
+    /// The trip summary's window over the picture (a trip over).
+    pub(crate) summary: crate::trip_summary::SummaryWindow,
 }
 
 impl App {

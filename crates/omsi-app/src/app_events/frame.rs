@@ -57,6 +57,8 @@ impl App {
         *self.perf.profile.entry("player").or_default() += __t.elapsed().as_secs_f64();
         self.frame_people(dt);
         self.frame_duty(dt);
+        // the quick menu's game menu closes when its list is done
+        self.quick_menu_frame();
         self.frame_integrations(event_loop, dt);
         self.frame_view_keys(dt);
         let daylight = self.frame_weather(dt);

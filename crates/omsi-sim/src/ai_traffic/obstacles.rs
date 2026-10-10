@@ -391,7 +391,11 @@ impl TrafficSim {
         let behind = half_len as f64 + ((-speed).max(0.0) * horizon) as f64;
         let wide = (half_w + half_width + 0.35) as f64;
         let margin = PLAYER_BOX_MARGIN as f64;
-        let inside = |p: DVec3| in_player_box(p, centre, fwd, right, wide, ahead + margin, behind + margin);
+        // (the stretch ahead of the nose follows the circle the bus is driving:
+        // straight ahead of it on a bend it would reach over into the opposite
+        // lane, where an oncoming car had the bus for its obstacle)
+        let kappa = self.player_turn;
+        let inside = |p: DVec3| in_player_path(p, centre, fwd, right, wide, ahead + margin, behind + margin, kappa);
         let look = (st.speed * st.speed / (2.0 * st.decel) + st.speed * 2.0 + 15.0)
             .clamp(15.0, look_ahead(st.speed));
         let mut d = 0.0f32;
@@ -430,6 +434,37 @@ impl TrafficSim {
         }
         None
     }
+}
+
+/// Whether the point `p` of a car's way lies in the player's corridor round
+/// `centre`: the box the bus's motion sweeps, its stretch ahead of the nose
+/// following the circle the bus is driving (`kappa` rad/m, positive = heading
+/// increasing, a right turn; 0 the straight box of `in_player_box`). On the
+/// same level only: a bus under a bridge held up the traffic on the bridge
+/// above it (#753). 4 m, as for the other vehicles' bodies.
+#[allow(clippy::too_many_arguments)]
+pub fn in_player_path(p: DVec3, centre: DVec3, fwd: DVec2, right: DVec2, wide: f64, ahead: f64, behind: f64, kappa: f64) -> bool {
+    let rel = p.truncate() - centre.truncate();
+    let (u, v) = (rel.dot(right), rel.dot(fwd));
+    if (p.z - centre.z).abs() >= 4.0 {
+        return false;
+    }
+    if kappa.abs() < 1e-6 {
+        return u.abs() <= wide && v <= ahead && v >= -behind;
+    }
+    // the circle the bus drives: its centre `r` to the side it turns to. A point
+    // is in the corridor when it is that close to the circle (`lateral`) and its
+    // place on it (`s`, negative behind the bus) is within the bus's reach.
+    let r = 1.0 / kappa;
+    let lateral = (f64::hypot(u - r, v) - r.abs()).abs();
+    // (the angles from the circle's centre to the bus's start and to the point,
+    // wrapped to a half turn: the corridor never runs further than half round)
+    let beta = f64::atan2(v, u - r);
+    let gamma = if r > 0.0 { std::f64::consts::PI } else { 0.0 };
+    let two_pi = 2.0 * std::f64::consts::PI;
+    let delta = (gamma - beta + std::f64::consts::PI).rem_euclid(two_pi) - std::f64::consts::PI;
+    let s = r * delta;
+    lateral <= wide && s <= ahead && s >= -behind
 }
 
 /// Whether the point `p` of a car's way lies in the player's box round `centre` (`wide` to

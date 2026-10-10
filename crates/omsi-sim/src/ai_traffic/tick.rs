@@ -63,6 +63,21 @@ impl TrafficSim {
         self.day_time += dt as f64 * self.time_scale;
         self.last_dt = dt;
         self.held_at_red = 0;
+        // the turn per metre the player's bus is driving (rad/m, positive =
+        // heading increasing, a right turn): the heading's change over the
+        // distance it moved since the last tick, wrapped to a half turn (a
+        // heading never jumps by more) and forgotten when it stands. The cars'
+        // look-ahead for the bus follows the circle it is driving with it.
+        self.player_turn = match (self.player.as_ref(), player.as_ref()) {
+            (Some(o), Some(n)) if n.4.abs() > 0.3 => {
+                let dh = ((n.1 - o.1).to_radians() + std::f64::consts::PI)
+                    .rem_euclid(2.0 * std::f64::consts::PI) - std::f64::consts::PI;
+                let moved = (n.0.truncate() - o.0.truncate()).length();
+                // (a bus's tightest turn is some 5 m of radius: 0.2 rad/m)
+                if moved > 0.25 { (dh / moved).clamp(-0.2, 0.2) } else { 0.0 }
+            }
+            _ => 0.0,
+        };
         self.player = player;
         self.geo_prev = self.cars.iter_mut().map(|c| c.geo_block.take()).collect();
         self.index_of = self

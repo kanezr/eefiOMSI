@@ -1649,8 +1649,26 @@ fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "notes" => s.notes,
         "chat" => s.chat,
         "name_tags" => s.name_tags,
+        "trip_summary" => s.trip_summary,
         _ => return None,
     })
+}
+
+/// The index of the world page titled `label` (the "World options..." list).
+pub(crate) fn world_tab(app: &App, label: &str) -> usize {
+    world_pages(app).iter().position(|p| p.0 == label).unwrap_or(0)
+}
+
+/// Whether the switch `id` is on (false when there is no such switch).
+pub(crate) fn switch_on(app: &App, id: &str) -> bool {
+    toggle_now(app, id).unwrap_or(false)
+}
+
+/// Switch `id` to the other side, as a click on it does.
+pub(crate) fn flip_switch(app: &mut App, id: &str) {
+    if let Some(on) = toggle_now(app, id) {
+        let _ = toggle_set(app, id, !on);
+    }
 }
 
 /// Switch `id` on or off; the key and value to keep for the next game.
@@ -1979,6 +1997,10 @@ fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static str, String
         "name_tags" => {
             app.settings.name_tags = on;
             Some(("name_tags", bit))
+        }
+        "trip_summary" => {
+            app.settings.trip_summary = on;
+            Some(("trip_summary", bit))
         }
         _ => None,
     }
@@ -2376,6 +2398,7 @@ fn options_pages(app: &App) -> Vec<Page> {
         switch_row(app, "coll_vehicles", "Collisions with vehicles", "Enables/Disables Collisions with Other Vehicles"),
         switch_row(app, "collision_pedestrians", "Collisions with people", "Enables/disables knocking down people"),
         switch_row(app, "timetable_win", "Timetable window (Insert)", "Displays a list of all stops (only when a tour is active)"),
+        switch_row(app, "trip_summary", "Show a summary after each trip", "A window over the picture when a trip is over: the line and tour's number, the stops' planned and real times and the odometer"),
         switch_row(app, "info_bar", "Information bar (Shift+Y)", "Displays information such as the time, speed, and other details at the top of the screen"),
         switch_row(app, "exact_fare", "Passengers pay the exact fare", "No change is given at the cash desk"),
         pick("boarding", "Boarding", "How passengers get their tickets"),

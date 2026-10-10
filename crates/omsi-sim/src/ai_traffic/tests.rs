@@ -327,6 +327,38 @@ mod group_density_tests {
     }
 
     #[test]
+    fn on_a_bend_the_look_ahead_follows_the_bus_s_circle() {
+        use super::in_player_path;
+        use glam::DVec3;
+        // the bus driving north, turning right (a 20 m radius bend),
+        // the corridor 3.5 m wide either side, 30 m ahead and behind
+        let (c, f, r) = (DVec3::new(0.0, 0.0, 0.0), DVec2::new(0.0, 1.0), DVec2::new(1.0, 0.0));
+        let (wide, ahead, behind, kappa) = (3.5, 30.0, 30.0, 0.05);
+        // straight ahead of the nose on the bend: the box reaches over into
+        // the opposite lane (west of the road), the circle does not
+        let over = DVec3::new(-3.0, 25.0, 0.0);
+        assert!(super::in_player_box(over, c, f, r, wide, ahead, behind));
+        assert!(!in_player_path(over, c, f, r, wide, ahead, behind, kappa));
+        // the road itself, curved to the right: the circle has it, the
+        // straight box misses it (arc s = 25 m of a 20 m radius)
+        let on_road = DVec3::new(20.0 * (1.0 - (25.0f64 / 20.0).cos()), 20.0 * (25.0f64 / 20.0).sin(), 0.0);
+        assert!(in_player_path(on_road, c, f, r, wide, ahead, behind, kappa));
+        assert!(!super::in_player_box(on_road, c, f, r, wide, ahead, behind));
+        // beside the bus (inside the corridor's width), and off it to the left
+        assert!(in_player_path(DVec3::new(2.0, 0.0, 0.0), c, f, r, wide, ahead, behind, kappa));
+        assert!(!in_player_path(DVec3::new(-5.0, 0.0, 0.0), c, f, r, wide, ahead, behind, kappa));
+        // far too long a turn (a 1 m radius) is clamped by the caller, not here
+        assert!(!in_player_path(DVec3::new(0.0, 40.0, 0.0), c, f, r, wide, ahead, behind, kappa));
+        // no turn: the circle is the straight box again
+        let straight = DVec3::new(2.0, 10.0, 0.0);
+        assert!(in_player_path(straight, c, f, r, wide, ahead, behind, 0.0));
+        assert_eq!(
+            in_player_path(straight, c, f, r, wide, ahead, behind, 0.0),
+            super::in_player_box(straight, c, f, r, wide, ahead, behind)
+        );
+    }
+
+    #[test]
     fn a_following_bus_is_no_bus_in_the_way() {
         let north = DVec2::new(0.0, 1.0);
         // a car ahead going the same way: only the bus itself counts

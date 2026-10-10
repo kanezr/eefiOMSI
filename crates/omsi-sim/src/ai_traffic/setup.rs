@@ -90,6 +90,7 @@ impl TrafficSim {
             stop_wishes: None,
             bus_loads: hashbrown::HashMap::new(),
             player_still: 0.0,
+            player_turn: 0.0,
             day_time: 0.0,
             time_scale: 1.0,
             weekday: 0,

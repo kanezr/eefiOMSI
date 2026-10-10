@@ -27,6 +27,15 @@ impl App {
         let now = p.vehicle.var(var).unwrap_or(0.0);
         let idle = if (now - before).abs() > 1e-4 { 0.0 } else { pumping.idle + dt };
         if idle > SERVICE_SETTLE {
+            // the wash follows the refuelling (the quick menu's tile)
+            if pumping.wash_after && kind == "refuel" {
+                self.session.pumping = Some(Pumping { kind: "wash", idle: 0.0, from: 0.0, by: pumping.by, wash_after: false });
+                p.vehicle.dirt = 0.0;
+                p.vehicle.set_engine_var("Dirt_Norm", 0.0);
+                let ok = p.vehicle.service("veh_wash", 0.0);
+                self.service_msg = Some((if ok { "Washing..." } else { "this vehicle has no bus wash handling (veh_wash)" }.into(), 4.0));
+                return;
+            }
             self.session.pumping = None;
             let line = if kind == "refuel" { format!("refuelled: {now:.0} l in the tank") } else { format!("washed: dirt {:.0}%", now * 100.0) };
             log::info!("{line}");
@@ -40,8 +49,9 @@ impl App {
         }
     }
 
-    /// One of the depot services of the game menu: "refuel", "wash" or "repair", asked for
-    /// by `by` (the `service` event's).
+    /// One of the depot services of the game menu: "refuel", "wash", "repair" or
+    /// "washfuel" (both, the wash after the fill), asked for by `by` (the `service`
+    /// event's).
     pub(crate) fn run_service(&mut self, kind: &str, by: &'static str) {
         let Some(w) = self.world.clone() else { return };
         let Some(p) = self.player.as_mut() else { return };
@@ -59,13 +69,24 @@ impl App {
                 p.vehicle.set_engine_var("Dirt_Norm", 0.0);
             }
             let from = p.vehicle.var("engine_tank_content").unwrap_or(0.0);
-            self.session.pumping = Some(Pumping { kind: if kind == "refuel" { "refuel" } else { "wash" }, idle: 0.0, from, by });
+            self.session.pumping = Some(Pumping { kind: if kind == "refuel" { "refuel" } else { "wash" }, idle: 0.0, from, by, wash_after: false });
             self.service_msg = Some((if kind == "refuel" { "Refuelling... (drive off to stop)" } else { "Washing..." }.into(), 4.0));
             return;
         }
+        // both, at a station: fill first, wash when it settles (tick_service)
+        if kind == "washfuel" && at_petrol_station(&w, &p.vehicle) {
+            if !p.vehicle.service("veh_tank", 0.0) {
+                self.service_msg = Some(("this vehicle has no fuel pump handling (veh_tank)".into(), 6.0));
+                return;
+            }
+            let from = p.vehicle.var("engine_tank_content").unwrap_or(0.0);
+            self.session.pumping = Some(Pumping { kind: "refuel", idle: 0.0, from, by, wash_after: true });
+            self.service_msg = Some(("Refuelling... (then the wash; drive off to stop)".into(), 4.0));
+            return;
+        }
         let one = Args {
-            refuel: kind == "refuel",
-            wash: kind == "wash",
+            refuel: kind == "refuel" || kind == "washfuel",
+            wash: kind == "wash" || kind == "washfuel",
             repair: kind == "repair",
             ..self.args.clone()
         };

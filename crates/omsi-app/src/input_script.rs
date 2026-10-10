@@ -71,6 +71,14 @@ impl App {
             } else if !pressed {
                 self.input.keys.remove(&code);
             }
+            // the quick menu (Alt tapped alone) and the trip summary's window
+            // take their keys before the game's own handling of them
+            if self.quick_menu_key(code, pressed, repeat) {
+                return;
+            }
+            if self.summary_key(code, pressed, repeat) {
+                return;
+            }
             // Alt+Enter: full screen on and off
             if pressed && !repeat && matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) && (self.input.keys.contains(&KeyCode::AltLeft) || self.input.keys.contains(&KeyCode::AltRight)) {
                 if self.gfx.spanned {

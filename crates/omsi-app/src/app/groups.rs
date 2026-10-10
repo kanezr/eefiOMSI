@@ -468,4 +468,6 @@ pub(crate) struct Pumping {
     pub(crate) from: f32,
     /// Who started it (the `service` event's `by`).
     pub(crate) by: &'static str,
+    /// The bus wash follows the refuelling (the quick menu's "Refuel and wash").
+    pub(crate) wash_after: bool,
 }

@@ -43,6 +43,9 @@ impl App {
         if let Some(s) = self.gfx.surface.as_ref() {
             let (w, h) = (s.config.width, s.config.height);
             self.touch_prepare(w, h);
+            // the quick menu and the trip summary, laid out over the picture
+            self.quick_prepare(w, h);
+            self.summary_prepare(w, h);
         }
         if self.gfx.surface.is_some()
             && self.renderer.is_some()
@@ -329,6 +332,9 @@ impl App {
         self.shell.render(r, &view, s.config.width, s.config.height);
         // the on-screen controls over the picture (a phone)
         self.input.touch.render(r, &view, s.config.width, s.config.height);
+        // the quick menu and the trip summary over the picture
+        self.quick.render(r, &view, s.config.width, s.config.height);
+        self.summary.render(r, &view, s.config.width, s.config.height);
         *self.perf.profile.entry("render").or_default() += __t.elapsed().as_secs_f64();
         if omsi_cfg::flags::OMSI_PROFILE_GPU.is_set() {
             // wait for the GPU here, so that its time shows as a stage of its own

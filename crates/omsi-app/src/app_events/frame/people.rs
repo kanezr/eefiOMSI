@@ -130,7 +130,7 @@ impl App {
             self.world.as_ref(),
             self.paused,
         ) {
-            steps::duty_step(
+            let ended = steps::duty_step(
                 d,
                 p,
                 w,
@@ -142,6 +142,10 @@ impl App {
                 true,
                 Some(&mut self.integrations.plugin_events),
             );
+            // the trip is over: its summary over the picture (the setting's own)
+            if let Some(trip) = ended {
+                self.trip_summary_open(trip);
+            }
         }
         if let Some(p) = self.player.as_mut() {
             let riders = self.session.humans.as_ref().map(|h| h.riding()).unwrap_or(0);

@@ -2033,28 +2033,6 @@ impl Player {
         let _ = trailer;
     }
 
-    /// One notch of the mouse wheel over a switch: `<event>_drag` with the notch as the
-    /// movement, and the `_off` the script expects when the hand lets go again.
-    pub(crate) fn wheel(&mut self, origin: DVec3, dir: Vec3, spread: f32, amount: f32) {
-        let Some(i) = self.pick(origin, dir, spread) else {
-            return;
-        };
-        let Some(ev) = self.vehicle.ty.model.meshes[self.vehicle.ty.meshes[i].def_index]
-            .mouse_event
-            .clone()
-        else {
-            return;
-        };
-        // vertical, like the wheel itself: that is the axis the knobs, the sun blind and
-        // the ignition key read (mouse_x belongs to the driver's window and the light
-        // rotary, which stay a drag)
-        self.vehicle.host.mouse = (0.0, amount);
-        self.vehicle.trigger(&format!("{ev}_drag"));
-        self.repair_roller_blind(&format!("{ev}_drag"));
-        self.vehicle.host.mouse = (0.0, 0.0);
-        self.vehicle.trigger(&format!("{ev}_off"));
-    }
-
     /// The left button let go while the right one is held: Omsi.exe sends no `_off`, so a
     /// momentary switch stays where the hand left it (a pedal held down for the steering
     /// column's adjustment, #769) until it is clicked and let go again.

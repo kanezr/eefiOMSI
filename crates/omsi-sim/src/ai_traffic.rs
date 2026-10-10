@@ -125,6 +125,12 @@ pub struct TrafficSim {
     pub bus_loads: hashbrown::HashMap<u64, f32>,
     /// Seconds the player's vehicle has been standing.
     pub player_still: f32,
+    /// The turn per metre the player's bus is driving (rad/m, positive =
+    /// heading increasing, a right turn), from the heading's change over the
+    /// distance it moved since the last tick. The stretch of road ahead of its
+    /// nose that a car watches for it in follows the circle the bus is driving
+    /// with it, so on a bend it no longer reaches over into the opposite lane.
+    pub player_turn: f64,
     /// Time of day (seconds since midnight); light cycles and timetables run on it.
     pub day_time: f64,
     /// How fast the clock runs (the time speed): the timetable keeps to it.

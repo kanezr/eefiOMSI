@@ -108,6 +108,7 @@ mod memory;
 mod offscreen;
 mod ground_gap;
 mod on_foot;
+mod quick_menu;
 mod route_arrows;
 mod server;
 mod player;
@@ -120,6 +121,7 @@ mod spawn;
 mod stock_keys;
 mod startup;
 mod traffic_link;
+mod trip_summary;
 mod tutorial;
 mod weather_setup;
 mod weather_cycle;
@@ -772,6 +774,8 @@ fn assemble_app(args: Args, settings: settings::Settings) -> App {
         exiting: false,
         shell: crate::shell::Shell::new(),
         photo: None,
+        quick: crate::quick_menu::QuickMenu::new(),
+        summary: crate::trip_summary::SummaryWindow::new(),
     }
 }
 
