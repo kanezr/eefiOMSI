@@ -294,13 +294,11 @@ fn angle_available() -> bool {
     })
 }
 
-/// The graphics interfaces in the order they are tried: Metal on a Mac; on Windows DirectX
-/// 12 first (the Windows drivers' best-kept path: on Vulkan they reset the device -
-/// "the graphics device was lost" - far more often), then Vulkan, then OpenGL for a card
-/// without either (a GeForce GT 530), then OpenGL ES on ANGLE over DirectX 11 when its DLLs
-/// are there; elsewhere Vulkan, then OpenGL. Settings → Graphics API (`graphics_api`) or
-/// OMSI_BACKEND=vulkan|dx12|gl|angle puts one first: a driver whose Vulkan misbehaves is
-/// got round.
+/// The graphics interfaces in the order they are tried: Metal on a Mac; on Windows
+/// Vulkan first (works best on AMD, fine on NVIDIA), then DirectX 12, then OpenGL for
+/// a card without either (a GeForce GT 530), then OpenGL ES on ANGLE over DirectX 11
+/// when its DLLs are there; elsewhere Vulkan, then OpenGL. Settings → Graphics API
+/// (`graphics_api`) or OMSI_BACKEND=vulkan|dx12|gl|angle puts one first.
 pub(crate) fn backend_order() -> Vec<GraphicsApi> {
     if cfg!(target_os = "macos") {
         return vec![GraphicsApi::Native(wgpu::Backends::METAL)];
@@ -312,7 +310,7 @@ pub(crate) fn backend_order() -> Vec<GraphicsApi> {
         omsi_cfg::flags::OMSI_BACKEND.var().map(str::to_string).unwrap_or(settings.graphics_api)
     };
     let native = if cfg!(windows) {
-        vec![wgpu::Backends::DX12, wgpu::Backends::VULKAN, wgpu::Backends::GL]
+        vec![wgpu::Backends::VULKAN, wgpu::Backends::DX12, wgpu::Backends::GL]
     } else {
         vec![wgpu::Backends::VULKAN, wgpu::Backends::GL]
     };

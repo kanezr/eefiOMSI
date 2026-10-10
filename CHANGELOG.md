@@ -4,6 +4,15 @@ Every push to `main` is released as `MAJOR.MINOR.COMMIT` (see
 [docs/VERSIONING.md](docs/VERSIONING.md)); the downloads are on the
 [Releases](https://github.com/openOMSI-Project/openOMSI/releases) page.
 
+## 0.2.27-eefi - 2026-10-10
+
+### Changed
+- **Windows backend order**: Vulkan tried first (best on AMD), then DirectX 12, then OpenGL. Settings → Graphics API or `OMSI_BACKEND` still overrides.
+
+### Fixes
+- **AMD Vulkan fullscreen FPS drops and lag spikes**: explicit `Fifo` (VSync) and `Immediate` (no VSync) present modes replace the driver-chosen `AutoVsync`/`AutoNoVsync` that misbehaved on older AMD GPUs.
+- **Night noise on Vulkan from bus glass reflections**: exposure meter minimum raised from 1e-4 to 1e-3, and night vision denominator clamped to prevent extreme exposure compensation amplifying glass noise.
+
 ## 0.2.27 - 2026-10-10
 
 ### New

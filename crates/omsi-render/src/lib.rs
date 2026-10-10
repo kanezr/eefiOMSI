@@ -2012,6 +2012,8 @@ pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub adapter_name: String,
+    pub adapter_vendor: u32,
+    pub adapter_backend: wgpu::Backend,
     camera_layout: wgpu::BindGroupLayout,
     material_layout: wgpu::BindGroupLayout,
     pass: PassPipelines,
@@ -2912,7 +2914,7 @@ impl Renderer {
                 let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
                 let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
                 let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-                let renderer = Self::build(device.clone(), queue.clone(), name.to_string(), format, RenderOptions { msaa, ..options });
+                let renderer = Self::build(device.clone(), queue.clone(), name.to_string(), info.vendor, info.backend, format, RenderOptions { msaa, ..options });
                 // (test hook: OMSI_FAKE_GPU_ERROR=pipeline fails a pipeline until the basic ones)
                 #[cfg(feature = "test-hooks")]
                 if !basic && omsi_cfg::flags::OMSI_FAKE_GPU_ERROR.var() == Some("pipeline") {
@@ -2951,6 +2953,8 @@ impl Renderer {
         device: wgpu::Device,
         queue: wgpu::Queue,
         adapter_name: String,
+        adapter_vendor: u32,
+        adapter_backend: wgpu::Backend,
         format: wgpu::TextureFormat,
         options: RenderOptions,
     ) -> Renderer {
@@ -3068,6 +3072,8 @@ impl Renderer {
             device,
             queue,
             adapter_name,
+            adapter_vendor,
+            adapter_backend,
             camera_layout: scene.camera_layout,
             material_layout: scene.material_layout,
             pass: passes.pass,
@@ -6616,8 +6622,8 @@ impl Renderer {
     /// `Self::build` again with `options`: on ANGLE on the compiler thread of its own (see
     /// `angle::compile`: on this thread's stack the D3D compiler overflowed it).
     fn rebuilt(&self, options: RenderOptions) -> Renderer {
-        let (device, queue, name, format) = (self.device.clone(), self.queue.clone(), self.adapter_name.clone(), self.format);
-        let build = move || Self::build(device, queue, name, format, options);
+        let (device, queue, name, format, vendor, backend) = (self.device.clone(), self.queue.clone(), self.adapter_name.clone(), self.format, self.adapter_vendor, self.adapter_backend);
+        let build = move || Self::build(device, queue, name, vendor, backend, format, options);
         if cfg!(windows) && gl_backend() && self.adapter_name.contains("ANGLE") {
             angle::compile(&self.device, build)
         } else {
@@ -9296,16 +9302,26 @@ impl<'w> SurfaceState<'w> {
     ) -> Result<Self> {
         let surface = instance.create_surface(window).context("create_surface")?;
         let encode = srgb_encode::SrgbEncode::wanted(renderer, renderer.format());
+        let is_amd_vulkan = renderer.adapter_vendor == 0x1002 && renderer.adapter_backend == wgpu::Backend::Vulkan;
+        let present_mode = if vsync {
+            if is_amd_vulkan {
+                wgpu::PresentMode::Fifo
+            } else {
+                wgpu::PresentMode::AutoVsync
+            }
+        } else {
+            if is_amd_vulkan {
+                wgpu::PresentMode::Immediate
+            } else {
+                wgpu::PresentMode::AutoNoVsync
+            }
+        };
         let mut config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: encode.as_ref().map_or(renderer.format(), |e| e.window_format()),
             width: width.max(1),
             height: height.max(1),
-            present_mode: if vsync {
-                wgpu::PresentMode::AutoVsync
-            } else {
-                wgpu::PresentMode::AutoNoVsync
-            },
+            present_mode,
             // (two frames in flight keep the graphics chip busy while the next frame is
             // recorded: with one, the whole loop serialized behind the vsync'd drawable -
             // on Apple silicon a frame cost GPU + CPU instead of the larger of the two,
@@ -9353,7 +9369,12 @@ impl<'w> SurfaceState<'w> {
     }
 
     pub fn set_vsync(&mut self, renderer: &Renderer, enabled: bool) {
-        let mode = if enabled { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync };
+        let is_amd_vulkan = renderer.adapter_vendor == 0x1002 && renderer.adapter_backend == wgpu::Backend::Vulkan;
+        let mode = if enabled {
+            if is_amd_vulkan { wgpu::PresentMode::Fifo } else { wgpu::PresentMode::AutoVsync }
+        } else {
+            if is_amd_vulkan { wgpu::PresentMode::Immediate } else { wgpu::PresentMode::AutoNoVsync }
+        };
         if self.config.present_mode == mode || renderer.device_lost().is_some() {
             return;
         }
@@ -11263,6 +11284,8 @@ mod tests {
             base.device.clone(),
             base.queue.clone(),
             "OpenGL regression adapter".into(),
+            0,
+            wgpu::Backend::Gl,
             wgpu::TextureFormat::Rgba8UnormSrgb,
             RenderOptions {
                 msaa: 1,

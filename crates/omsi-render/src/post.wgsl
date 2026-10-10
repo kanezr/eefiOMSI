@@ -173,7 +173,9 @@ fn fs_meter(in: VsOut) -> @location(0) vec4<f32> {
             let q = (vec2<f32>(f32(x), f32(y)) + 0.5) / vec2<f32>(dims) * 2.0 - 1.0;
             // the middle and the lower half count most: the sky is not what one looks at
             let w = exp(-dot(q, q) * 1.5) * (0.6 + 0.4 * clamp(q.y + 0.5, 0.0, 1.0));
-            sum = sum + log2(clamp(select(1e-4, c, c == c), 1e-4, 64.0)) * w;
+            // Higher minimum (1e-3 vs 1e-4) prevents glass reflections at night
+            // from causing extreme exposure compensation that amplifies noise on Vulkan
+            sum = sum + log2(clamp(select(1e-3, c, c == c), 1e-3, 64.0)) * w;
             wsum = wsum + w;
         }
     }
@@ -207,7 +209,9 @@ fn night_vision(c: vec3<f32>, strength: f32, pre: f32) -> vec3<f32> {
     // the rods' sensitivity peaks at 507 nm: blue and green count, red hardly
     let scot = dot(c, vec3<f32>(0.05, 0.62, 0.45));
     let tint = vec3<f32>(0.86, 0.95, 1.12);
-    let night = tint * scot * (lum / max(dot(tint * scot, vec3<f32>(0.2126, 0.7152, 0.0722)), 1e-8));
+    // Clamp denominator to prevent noise amplification in near-black pixels (Vulkan glass reflections at night)
+    let denom = max(dot(tint * scot, vec3<f32>(0.2126, 0.7152, 0.0722)), 1e-4);
+    let night = tint * scot * (lum / denom);
     return mix(c, night, rods * strength);
 }
 
