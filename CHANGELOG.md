@@ -10,6 +10,9 @@ Every push to `main` is released as `MAJOR.MINOR.COMMIT` (see
 - **The quick menu** (Alt tapped alone): twelve tiles in the lower right corner of the picture for what is wanted often - place, swap or remove a vehicle, go to a start point, the line and tour, the destination display, repair, refuel and wash, the route arrows, the time, the weather and the game controllers. It is an overlay: the game goes on under it (nothing is paused), and while a timetable is active the line-and-tour tile ends it (after a question).
 - **The trip summary** (Settings → Gameplay → *Show a summary after each trip*, on by default): when a trip is over (the bus stood at its last stop), a window over the picture with the line and tour's number and a table of the stops - the planned and real arrival, their difference, the planned and real departure, its difference and the odometer, "---" where the bus never served a stop. Copy it whole (Ctrl+C) or save it as a text file in `Journeys` (Ctrl+E). The journey log has the odometer's column and "---" for the missed stops too.
 
+### Changed
+- **Updater does not update through openOMSI repository but instead eefiOMSI repository.**
+
 ### Fixes
 - **The mouse wheel over a switch of the bus zooms the view** (the field of view), as everywhere else. It no longer turns the switch; the wheel over a switch of a scenery object still turns it.
 
