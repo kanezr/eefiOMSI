@@ -159,6 +159,39 @@ pub(super) fn find_vehicle_freetex(name: &str, dirs: &[&Path]) -> Option<PathBuf
     omsi_texture::find_texture(&rel, dirs)
 }
 
+/// Whether `key` is the cache key `sync_materials` makes of the free texture `name` under
+/// the light maps `mask`: the name lower-cased (ASCII), then `#` and the mask if there is
+/// one.
+fn freetex_key_is(key: Option<&str>, name: &str, mask: Option<u32>) -> bool {
+    let Some(key) = key.map(str::as_bytes) else {
+        return false;
+    };
+    let name = name.as_bytes();
+    let Some((head, rest)) = key.split_at_checked(name.len()) else {
+        return false;
+    };
+    if !head.iter().zip(name).all(|(k, n)| *k == n.to_ascii_lowercase()) {
+        return false;
+    }
+    match mask {
+        None => rest.is_empty(),
+        Some(m) => {
+            let mut digits = [0u8; 10];
+            let mut at = digits.len();
+            let mut v = m;
+            loop {
+                at -= 1;
+                digits[at] = b'0' + (v % 10) as u8;
+                v /= 10;
+                if v == 0 {
+                    break;
+                }
+            }
+            rest.first() == Some(&b'#') && rest[1..] == digits[at..]
+        }
+    }
+}
+
 pub(super) fn sync_materials(
     renderer: &Renderer,
     scene: &mut Scene,
@@ -186,8 +219,19 @@ pub(super) fn sync_materials(
         // over the display, and a new picture came with the last map whatever its variable.
         let lights = &mut v.lights;
         for f in &mut v.free {
-            let name = vehicle.str_var(&f.var);
-            let name = name.trim().to_string();
+            // (the string read in place and compared with the key it made last time: the
+            // name was copied, lower-cased and formatted for every free texture of every
+            // vehicle each frame, though it changes only when a display does)
+            let current = vehicle
+                .ty
+                .program
+                .str_var(&f.var)
+                .and_then(|i| vehicle.state.str_vars.get(i as usize))
+                .map_or("", |s| s.trim());
+            if freetex_key_is(f.current.as_deref(), current, mask) {
+                continue;
+            }
+            let name = current.to_string();
             let key = match mask {
                 Some(m) => format!("{}#{m}", name.to_ascii_lowercase()),
                 None => name.to_ascii_lowercase(),
@@ -596,7 +640,8 @@ pub(super) fn material_extra(
         water: false,
         display: false,
         screen: false,
-        led: false,
+        // (a scenery object's slot is an LED panel only by the modeller's word)
+        led: led_glow_effect(ov).is_some_and(|g| g > 0.0),
         led_sign: false,
         no_map_lights: false,
         tree: false,
@@ -612,6 +657,23 @@ pub(super) fn material_extra(
             .map(|o| o.border_color.map(|c| (c / 255.0).clamp(0.0, 1.0))),
         metal_ok: false,
         glow: glow_strength(ov),
+        led_glow: led_glow_effect(ov),
+    }
+}
+
+/// `[led_glow_effect] <0..1>` of a slot (an openOMSI extension, see
+/// `MaterialExtra::led_glow`): the last of its commands counts, as with the others.
+pub(super) fn led_glow_effect(ov: &[&MaterialDef]) -> Option<f32> {
+    ov.iter().rev().find_map(|o| o.led_glow)
+}
+
+/// The LED panel guess (`MaterialExtra::led`) as the modeller's `[led_glow_effect]` has it,
+/// where the slot has one: a value over 0 makes the slot an LED panel glowing with that
+/// share, 0 makes it none.
+pub(super) fn apply_led_glow_effect(extra: &mut MaterialExtra, ov: &[&MaterialDef]) {
+    if let Some(g) = led_glow_effect(ov) {
+        extra.led = g > 0.0;
+        extra.led_glow = Some(g);
     }
 }
 
@@ -767,20 +829,30 @@ pub(super) fn text_alpha(materials: &[omsi_o3d::Material], slot: usize, override
 /// clamp, mirror) on the slot carry over to the text drawn into it. Made with the plain
 /// wrap, Road-Hog123's bus stop flags - a second mesh whose UVs run past the text texture
 /// into its border - showed the stop name repeated across the whole flag (#1645).
-pub(super) fn text_material(renderer: &Renderer, scene: &mut Scene, tex: TextureId, alpha: AlphaMode, slot_ov: &[&MaterialDef]) -> MaterialId {
+/// The slot's own emissive colour goes with it (`slot_mat`, its o3d material, or its
+/// `[matl_allcolor]`): Omsi.exe only swaps the slot's texture and keeps its material, so a
+/// sign whose slot glows - a route arrow's caption - glows with its text, and one that does
+/// not stays dark at night. Made without it, the arrows' street and stop names went black
+/// after dusk on arrows that shone.
+pub(super) fn text_material(renderer: &Renderer, scene: &mut Scene, tex: TextureId, alpha: AlphaMode, slot_ov: &[&MaterialDef], slot_mat: Option<&omsi_o3d::Material>) -> MaterialId {
     let extra = material_extra(slot_ov, None, None, [0.0; 4]);
     let plain = MaterialExtra::default();
     let border_only = MaterialExtra { border: extra.border, ..plain.clone() };
     renderer.address_next.set(tex_addressing(slot_ov.iter().copied()));
-    // (lit like the rest of the object: Omsi.exe only swaps the slot's texture, a sign
-    // does not shine at night)
-    renderer.add_material_extra(scene, Some(tex), alpha, [1.0; 4], false, None, None, None, None, [0.0; 3], border_only)
+    let emissive = text_emissive(slot_ov, slot_mat);
+    renderer.add_material_extra(scene, Some(tex), alpha, [1.0; 4], false, None, None, None, None, emissive, border_only)
 }
 
-/// The key of a text texture material: the text's own key and how its slot addresses it.
-pub(super) fn text_material_key(base: String, slot_ov: &[&MaterialDef]) -> String {
+/// The emissive colour of a text texture's slot (see `text_material`).
+pub(super) fn text_emissive(slot_ov: &[&MaterialDef], slot_mat: Option<&omsi_o3d::Material>) -> [f32; 3] {
+    slot_mat.map(|m| d3d_material(m, slot_ov.iter().find_map(|o| o.allcolor), true).1).unwrap_or([0.0; 3])
+}
+
+/// The key of a text texture material: the text's own key, how its slot addresses it and
+/// the slot's glow.
+pub(super) fn text_material_key(base: String, slot_ov: &[&MaterialDef], slot_mat: Option<&omsi_o3d::Material>) -> String {
     let border = material_extra(slot_ov, None, None, [0.0; 4]).border;
-    format!("{base}|{:?}|{border:?}", tex_addressing(slot_ov.iter().copied()))
+    format!("{base}|{:?}|{border:?}|{:?}", tex_addressing(slot_ov.iter().copied()), text_emissive(slot_ov, slot_mat))
 }
 
 pub(super) fn scenery_text_key(tt: &omsi_model::TextTexture, text: &str, alpha: AlphaMode) -> String {
@@ -1058,4 +1130,43 @@ pub(super) fn slot_overlays_another(mesh: &MeshData, slot: usize) -> bool {
         }
     }
     own.len() >= 3 && own.iter().filter(|k| others.contains(*k)).count() * 10 >= own.len() * 9
+}
+
+#[cfg(test)]
+mod freetex_key_tests {
+    use super::freetex_key_is;
+
+    /// The key as `sync_materials` makes it.
+    fn key(name: &str, mask: Option<u32>) -> String {
+        match mask {
+            Some(m) => format!("{}#{m}", name.to_ascii_lowercase()),
+            None => name.to_ascii_lowercase(),
+        }
+    }
+
+    #[test]
+    fn matches_the_key_made_of_the_same_name() {
+        for name in ["", "Anz_Linie.BMP", "x#0", "Ä_Ziel", "a/b\\c"] {
+            for mask in [None, Some(0), Some(3), Some(10), Some(u32::MAX)] {
+                assert!(freetex_key_is(Some(&key(name, mask)), name, mask), "{name:?} {mask:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn differs_from_any_other_key() {
+        let names = ["", "x", "X#0", "x#0", "xy", "y", "Ä", "ä"];
+        let masks = [None, Some(0), Some(3), Some(30)];
+        for a in names {
+            for ma in masks {
+                for b in names {
+                    for mb in masks {
+                        let same = key(a, ma) == key(b, mb);
+                        assert_eq!(freetex_key_is(Some(&key(a, ma)), b, mb), same, "{a:?} {ma:?} / {b:?} {mb:?}");
+                    }
+                }
+            }
+        }
+        assert!(!freetex_key_is(None, "", None));
+    }
 }

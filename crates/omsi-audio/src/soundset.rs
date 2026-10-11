@@ -53,6 +53,9 @@ pub struct SoundSet {
     dir: std::path::PathBuf,
     /// The listener sits in this vehicle's interior (see [`SoundSet::set_inside`]).
     inside: bool,
+    /// How far in: 1 in a cab view, 0 outside, in between while a walker steps in or out
+    /// through a door (see [`SoundSet::set_inside_amount`]).
+    amount: f32,
     /// This set belongs to an AI vehicle or another player's (Omsi.exe's view 4).
     ai: bool,
     /// The player's own vehicle moves with its listener; its 3D sounds still pan and fade,
@@ -191,6 +194,7 @@ impl SoundSet {
             master: 1.0,
             dir: dir.to_path_buf(),
             inside: false,
+            amount: 0.0,
             ai: false,
             listener_vehicle: false,
             muffled: false,
@@ -203,8 +207,24 @@ impl SoundSet {
     /// object or another vehicle is always listened to from outside.
     pub fn set_inside(&mut self, inside: bool) {
         self.inside = inside;
+        self.amount = if inside { 1.0 } else { 0.0 };
         for (_, p) in &mut self.parts {
             p.set_inside(inside);
+        }
+    }
+
+    /// [`SoundSet::set_inside`] by degrees, for a listener walking in or out through a
+    /// door: `amount` 1 is all in (as `set_inside(true)`), 0 all out. In between, the
+    /// entries of both views are heard, the cab's at `amount` of their volume and the
+    /// street's at the rest, and the bus's outside sounds come through what is open as
+    /// much more as the listener is out - no switch from one sound to the other at the
+    /// step.
+    pub fn set_inside_amount(&mut self, amount: f32) {
+        let amount = if amount > 0.0 { amount.min(1.0) } else { 0.0 };
+        self.inside = amount >= 0.5;
+        self.amount = amount;
+        for (_, p) in &mut self.parts {
+            p.set_inside_amount(amount);
         }
     }
 
@@ -230,6 +250,7 @@ impl SoundSet {
     /// for the player's bus, [`SoundSet::new_exterior`] for the others).
     pub fn add_part(&mut self, index: usize, mut part: SoundSet) {
         part.inside = self.inside;
+        part.amount = self.amount;
         part.muffled = self.muffled;
         part.ai = self.ai;
         part.listener_vehicle = self.listener_vehicle;
@@ -583,7 +604,7 @@ impl SoundSet {
     }
 
     fn ctx_without_engine(&self) -> Ctx {
-        Ctx { view: self.view_mask(), cab: self.muffled, master: self.master, doppler: !self.listener_vehicle, listener: Vec3::ZERO }
+        Ctx { view: self.view_mask(), amount: self.amount, cab: self.muffled, master: self.master, doppler: !self.listener_vehicle, listener: Vec3::ZERO }
     }
 
     pub fn stop_all(&mut self, engine: &AudioEngine) {
@@ -601,6 +622,9 @@ impl SoundSet {
 /// The per-set inputs of an entry's evaluation.
 struct Ctx {
     view: i32,
+    /// How far the listener is inside this (the player's) vehicle, see
+    /// [`SoundSet::set_inside_amount`]; not read for the views of other vehicles (4).
+    amount: f32,
     cab: bool,
     master: f32,
     doppler: bool,
@@ -612,7 +636,27 @@ impl Ctx {
     /// none, or is an outside sound of the player's bus heard from its cab while
     /// `Snd_OutsideVol` is over 0.01 (doors or a window open).
     fn view_lets_through(&self, vp: i32) -> bool {
-        vp == 0 || vp & self.view != 0 || (vp & 2 == 0 && self.view == 2 && outside_vol() > 0.01)
+        if self.view & 4 != 0 {
+            return passes(vp, self.view);
+        }
+        (self.amount > 0.0 && passes(vp, 2)) || (self.amount < 1.0 && passes(vp, 1))
+    }
+
+    /// The share of its volume an entry of the player's bus is heard at, with the listener
+    /// `amount` inside: in the cab an outside sound at `Snd_OutsideVol`, the rest in full;
+    /// walking through a door the two views' shares mixed. None when nothing changes (all
+    /// in or all out, the entry heard in full).
+    fn view_share(&self, vp: i32) -> Option<f32> {
+        let outside_only = vp & 2 == 0 && vp != 0;
+        if self.amount >= 1.0 {
+            return outside_only.then(outside_vol);
+        }
+        if self.amount <= 0.0 {
+            return None;
+        }
+        let cab = if !passes(vp, 2) { 0.0 } else if outside_only { outside_vol() } else { 1.0 };
+        let street = if passes(vp, 1) { 1.0 } else { 0.0 };
+        Some(self.amount * cab + (1.0 - self.amount) * street)
     }
 
     /// One entry this frame (`TSound` update 0x750340): its volume and pitch as DirectSound
@@ -650,12 +694,16 @@ impl Ctx {
             vol *= g;
         }
         // an AI vehicle (view 4) heard from a cab: through the player's bus's bodywork
+        // (stepping in through a door, by as much as the listener is in)
         if self.view & 4 != 0 && self.cab {
-            vol *= 0.2 + outside_vol();
+            let w = cab_amount();
+            vol *= if w >= 1.0 { 0.2 + outside_vol() } else { 1.0 + (0.2 + outside_vol() - 1.0) * w };
         }
         // the player's bus's outside sound heard in its cab: through what is open
-        if def.viewpoint & 2 == 0 && def.viewpoint != 0 && self.view == 2 {
-            vol *= outside_vol();
+        if self.view & 4 == 0 {
+            if let Some(share) = self.view_share(def.viewpoint) {
+                vol *= share;
+            }
         }
         let (gain, audible) = direct_sound_volume(vol, s.last_gain);
         s.last_gain = gain;
@@ -690,10 +738,70 @@ impl Ctx {
             // keeps its file's rate)
             doppler: self.doppler && s.def.is_loop,
             range: s.def.range,
-            lowpass_hz: 0.0,
+            lowpass_hz: self.cab_lowpass(s.def.viewpoint),
             important: s.def.important,
         }
     }
+}
+
+impl Ctx {
+    /// The low-pass an entry of the player's own bus is heard through (Hz, 0 for none): an
+    /// outside sound in the cab comes through the gaps of what is open, and what comes
+    /// through a crack loses its treble - see [`cab_lowpass_hz`]. Other vehicles' sounds
+    /// keep theirs (they only get quieter in a cab, as in Omsi.exe).
+    fn cab_lowpass(&self, vp: i32) -> f32 {
+        if self.view & 4 != 0 || self.amount <= 0.0 || !(vp & 2 == 0 && vp != 0) {
+            return 0.0;
+        }
+        cab_lowpass_hz(self.amount * outside_vol() + (1.0 - self.amount))
+    }
+}
+
+/// How bright an outside sound comes into the cab through what is open (`open` as
+/// `Snd_OutsideVol`, 0..1): through closed doors and windows (0) only what is under some
+/// 500 Hz, with more open the corner rising (evenly in octaves) to the whole range, which
+/// is reached at 0.95 - from there on no filter at all.
+pub fn cab_lowpass_hz(open: f32) -> f32 {
+    const OPEN: f32 = 0.95;
+    if !(open < OPEN) {
+        return 0.0;
+    }
+    500.0 * (20_000.0f32 / 500.0).powf(open.max(0.0) / OPEN)
+}
+
+/// Whether an entry with `[viewpoint] vp` is heard in `view` (0x750462): when it names the
+/// view, names none, or is an outside sound of the player's bus heard from its cab while
+/// `Snd_OutsideVol` is over 0.01 (doors or a window open).
+fn passes(vp: i32, view: i32) -> bool {
+    vp == 0 || vp & view != 0 || (vp & 2 == 0 && view == 2 && outside_vol() > 0.01)
+}
+
+/// How far a walker is inside the player's bus (bits of an f32; NaN: nobody walking about
+/// it, see [`set_cab_amount`]).
+static CAB_AMOUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x7fc0_0000);
+
+/// How far a walker's eyes are inside the player's bus (0..1), or None while nobody walks
+/// about it (the camera is then in a cab or not, as the views say). While it is given the
+/// player's bus is heard by that much from inside ([`SoundSet::set_inside_amount`]) and
+/// the traffic's sets heard from a cab (`set_muffled`) are only as muffled as that.
+pub fn set_cab_amount(v: Option<f32>) {
+    let v = match v {
+        Some(x) if x > 0.0 => x.min(1.0),
+        Some(_) => 0.0,
+        None => f32::NAN,
+    };
+    CAB_AMOUNT.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// What [`set_cab_amount`] was given last.
+pub fn walker_cab_amount() -> Option<f32> {
+    let v = f32::from_bits(CAB_AMOUNT.load(std::sync::atomic::Ordering::Relaxed));
+    (!v.is_nan()).then_some(v)
+}
+
+/// How muffled a cab makes the traffic: all the way unless a walker is on the way in.
+fn cab_amount() -> f32 {
+    walker_cab_amount().unwrap_or(1.0)
 }
 
 /// `Snd_OutsideVol` of the player's bus (bits of an f32): Omsi.exe's 0x859a04, 1 while the
@@ -720,8 +828,16 @@ mod tests {
     use super::*;
     use omsi_vehicle::VolCurve;
 
+    /// The tests that set the player's bus's `Snd_OutsideVol` or the walker's way in (one
+    /// value for the whole program) take turns.
+    static GLOBALS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn globals() -> std::sync::MutexGuard<'static, ()> {
+        GLOBALS.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn ctx(view: i32, cab: bool) -> Ctx {
-        Ctx { view, cab, master: 1.0, doppler: false, listener: Vec3::ZERO }
+        Ctx { view, amount: if view == 2 { 1.0 } else { 0.0 }, cab, master: 1.0, doppler: false, listener: Vec3::ZERO }
     }
 
     fn eval(c: &Ctx, def: SoundEntry, var: &dyn Fn(&str) -> Option<f32>) -> Eval {
@@ -756,6 +872,7 @@ mod tests {
 
     #[test]
     fn the_cab_hears_outside_through_what_is_open() {
+        let _turn = globals();
         let none = |_: &str| None;
         // the own bus's outside-only entry (`[viewpoint] 5`) in the cab: at Snd_OutsideVol,
         // not at all with everything shut
@@ -774,6 +891,67 @@ mod tests {
         assert!(eval(&ctx(4, false), SoundEntry { volume: 1.0, viewpoint: 1, ..Default::default() }, &none).wrong_view);
         let cab = SoundEntry { volume: 0.8, viewpoint: 2, ..Default::default() };
         assert!(eval(&ctx(1, false), cab, &none).wrong_view, "a cab sound stays in");
+        set_outside_open(None);
+    }
+
+    #[test]
+    fn outside_sounds_in_the_cab_are_low_passed_by_how_open_it_is() {
+        let _turn = globals();
+        assert!((cab_lowpass_hz(0.0) - 500.0).abs() < 1e-3);
+        assert_eq!(cab_lowpass_hz(0.95), 0.0, "open from 0.95 on");
+        assert_eq!(cab_lowpass_hz(1.0), 0.0);
+        let mut last = 0.0;
+        for k in 0..95 {
+            let f = cab_lowpass_hz(k as f32 / 100.0);
+            assert!(f > last, "rising");
+            last = f;
+        }
+        let engine_out = SoundEntry { volume: 0.8, viewpoint: 5, ..Default::default() };
+        let s = RuntimeSound::new(engine_out.clone(), None);
+        let e = Eval { gain: 1.0, audible: true, pitch: 1.0, wrong_view: false };
+        set_outside_open(Some(0.3));
+        let in_cab = ctx(2, true).params(&s, &e, true, &Mat4::IDENTITY);
+        assert!((in_cab.lowpass_hz - cab_lowpass_hz(0.3)).abs() < 1e-3);
+        // the street hears it as it is, and the cab sounds and the traffic are never filtered
+        assert_eq!(ctx(1, false).params(&s, &e, true, &Mat4::IDENTITY).lowpass_hz, 0.0);
+        let cab_only = RuntimeSound::new(SoundEntry { viewpoint: 2, ..engine_out.clone() }, None);
+        assert_eq!(ctx(2, true).params(&cab_only, &e, true, &Mat4::IDENTITY).lowpass_hz, 0.0);
+        assert_eq!(ctx(4, true).params(&s, &e, true, &Mat4::IDENTITY).lowpass_hz, 0.0);
+        set_outside_open(Some(0.96));
+        assert_eq!(ctx(2, true).params(&s, &e, true, &Mat4::IDENTITY).lowpass_hz, 0.0, "doors open: as before");
+        set_outside_open(None);
+    }
+
+    #[test]
+    fn stepping_in_crosses_from_the_street_to_the_cab() {
+        let _turn = globals();
+        let none = |_: &str| None;
+        set_outside_open(Some(0.2));
+        let half = |w: f32| Ctx { amount: w, ..ctx(if w >= 0.5 { 2 } else { 1 }, w >= 0.5) };
+        let engine_out = SoundEntry { volume: 1.0, viewpoint: 1, ..Default::default() };
+        let rain_in = SoundEntry { volume: 1.0, viewpoint: 2, ..Default::default() };
+        let both = SoundEntry { volume: 1.0, viewpoint: 0, ..Default::default() };
+        // all out and all in: as the two views always were
+        assert_eq!(eval(&half(0.0), engine_out.clone(), &none).gain, 1.0);
+        assert!(eval(&half(0.0), rain_in.clone(), &none).wrong_view);
+        assert!((eval(&half(1.0), engine_out.clone(), &none).gain - 0.2).abs() < 1e-3);
+        // a quarter in: three quarters of the street, a quarter of the cab
+        let w = 0.25;
+        assert!((eval(&half(w), engine_out.clone(), &none).gain - (0.75 + 0.25 * 0.2)).abs() < 2e-3);
+        assert!((eval(&half(w), rain_in.clone(), &none).gain - 0.25).abs() < 2e-3);
+        assert_eq!(eval(&half(w), both, &none).gain, 1.0);
+        // the outside sound grows duller the further in
+        let s = RuntimeSound::new(engine_out, None);
+        let e = Eval { gain: 1.0, audible: true, pitch: 1.0, wrong_view: false };
+        let f = |w: f32| half(w).params(&s, &e, true, &Mat4::IDENTITY).lowpass_hz;
+        assert_eq!(f(0.0), 0.0);
+        assert!(f(0.25) > f(0.75) && f(0.75) > f(1.0) && f(1.0) > 0.0, "{} {} {}", f(0.25), f(0.75), f(1.0));
+        // the traffic slides from its street level to its cab level
+        let ai = SoundEntry { volume: 1.0, viewpoint: 4, ..Default::default() };
+        set_cab_amount(Some(0.5));
+        assert!((eval(&ctx(4, true), ai.clone(), &none).gain - (1.0 + (0.4 - 1.0) * 0.5)).abs() < 2e-3);
+        set_cab_amount(None);
+        assert!((eval(&ctx(4, true), ai, &none).gain - 0.4).abs() < 2e-3);
         set_outside_open(None);
     }
 
@@ -826,7 +1004,7 @@ mod tests {
         assert_eq!(eval(&ctx(2, true), hit.clone(), &now).gain, 0.0, "read at the frame's end: silent");
         let fired = |n: &str| at_fire("ev_doorhitclose_0", n).or_else(|| now(n));
         assert_eq!(eval(&ctx(2, true), hit.clone(), &fired).gain, 1.0);
-        let set = SoundSet { sounds: vec![RuntimeSound::new(hit, None)], master: 1.0, dir: Default::default(), inside: true, ai: false, listener_vehicle: true, muffled: false, parts: Vec::new() };
+        let set = SoundSet { sounds: vec![RuntimeSound::new(hit, None)], master: 1.0, dir: Default::default(), inside: true, amount: 1.0, ai: false, listener_vehicle: true, muffled: false, parts: Vec::new() };
         assert_eq!(set.curve_triggers(), vec!["ev_doorhitclose_0".to_string()]);
     }
 

@@ -1,4 +1,4 @@
-//! Updates from the project's GitHub releases (github.com/kanezr/eefiOMSI).
+//! Updates from the project's GitHub releases (github.com/openOMSI-org/openOMSI).
 //!
 //! Every push to main publishes a release `v<MAJOR.MINOR.COMMIT>` with one archive per
 //! platform (see .github/workflows/release.yml). The launcher asks the GitHub API for the

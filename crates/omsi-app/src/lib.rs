@@ -35,10 +35,13 @@ mod ambience;
 mod soundscape;
 mod wheel_surface;
 mod camera_arm;
+mod cam_approach;
 mod career;
 mod describe;
 mod editor;
+mod duty_book;
 mod game_lists;
+mod game_panels;
 mod game_controller_menu;
 mod rail_drive;
 mod driver;
@@ -72,6 +75,7 @@ mod real_time;
 mod settings;
 mod shell;
 mod photo;
+mod devtools;
 mod telemetry;
 mod threads;
 mod tiles;
@@ -108,7 +112,6 @@ mod memory;
 mod offscreen;
 mod ground_gap;
 mod on_foot;
-mod quick_menu;
 mod route_arrows;
 mod server;
 mod player;
@@ -121,7 +124,6 @@ mod spawn;
 mod stock_keys;
 mod startup;
 mod traffic_link;
-mod trip_summary;
 mod tutorial;
 mod weather_setup;
 mod weather_cycle;
@@ -559,6 +561,7 @@ fn assemble_app(args: Args, settings: settings::Settings) -> App {
             hidden_frames: 0,
             stand_in: None,
             sim_view: Default::default(),
+            starting: None,
         },
         window: None,
         renderer: None,
@@ -578,6 +581,7 @@ fn assemble_app(args: Args, settings: settings::Settings) -> App {
             placed: Vec::new(),
             traffic: None,
             schedule: None,
+            timetable_book: None,
             humans: None,
             duty: None,
             duty_places: false,
@@ -629,6 +633,7 @@ fn assemble_app(args: Args, settings: settings::Settings) -> App {
             pane_scroll_drag: None,
             pane_scroll: None,
             teleport_pick: false,
+            game_panels: Default::default(),
             tutorial: None,
             wheel_acc: 0.0,
             editor_drag: false,
@@ -656,6 +661,8 @@ fn assemble_app(args: Args, settings: settings::Settings) -> App {
             starting: None,
             speed: 30.0,
             f1_reset: None,
+            view_yaw: 0.0,
+            view_fov: None,
             head_idle_hold: Default::default(),
             ego: false,
             in_cab: false,
@@ -696,6 +703,7 @@ fn assemble_app(args: Args, settings: settings::Settings) -> App {
             ambience: None,
             soundscape: None,
             voice: None,
+            foot_in: None,
         },
         clock: omsi_sim::SimClock::default(),
         started,
@@ -774,8 +782,7 @@ fn assemble_app(args: Args, settings: settings::Settings) -> App {
         exiting: false,
         shell: crate::shell::Shell::new(),
         photo: None,
-        quick: crate::quick_menu::QuickMenu::new(),
-        summary: crate::trip_summary::SummaryWindow::new(),
+        devtools: None,
     }
 }
 

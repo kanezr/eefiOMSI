@@ -77,10 +77,9 @@ impl Traffic {
         scene: &mut Scene,
         id: u64,
     ) -> bool {
-        let Some(i) = self.sim.cars.iter().position(|c| c.id == id) else {
+        let Some(c) = self.sim.take_off_id(id, omsi_sim::ai_traffic::control::Removal::TakenOver) else {
             return false;
         };
-        let c = self.sim.cars.swap_remove(i);
         self.drop_sounds(c.id);
         view.release_car(world, renderer, scene, c.id);
         true

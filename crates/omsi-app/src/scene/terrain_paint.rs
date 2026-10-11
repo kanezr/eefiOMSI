@@ -225,6 +225,18 @@ pub(super) fn tree_card_sway(ot: &ObjectType, texture: &str) -> [f32; 3] {
     [if shrub { SHRUB_CARD_PIVOT } else { TREE_CARD_PIVOT }, 1.0, vegetation_give(&[texture, &path])]
 }
 
+/// How a `[tree]`'s crossed cards stand for an object turned by `heading` (degrees,
+/// clockwise from above). Omsi.exe does not turn the cards with the object: it reads the
+/// angle of the object's x axis back from its quaternion (0x7efda8 - counter-clockwise from
+/// east, 0x7efb8c) and hands that angle to D3DXMatrixRotationY (0x774444), which turns the
+/// other way round in its left-handed frame - the cards stand mirrored about north against
+/// the object, counter-clockwise by the heading. Turned with the object as here before, a
+/// map's tree showed its picture's planes at other angles than in OMSI (alike only at
+/// multiples of 45 degrees).
+pub(super) fn tree_card_turn(heading: f64) -> Mat4 {
+    Mat4::from_rotation_z(heading.to_radians() as f32)
+}
+
 /// Where a `[tree]` card's crown leaves its trunk, and a shrub's (of the card's height).
 pub(super) const TREE_CARD_PIVOT: f32 = 0.28;
 pub(super) const SHRUB_CARD_PIVOT: f32 = 0.03;

@@ -790,3 +790,245 @@ fn moving_back_in_clears_the_oncoming_lane_part_way() {
     assert_eq!(ramp_progress_for(2.0, 2.5), 1.0);
     assert!(ramp_progress_for(3.3, 1.5) < t);
 }
+
+/// Straight lanes north, one after the other, with these lengths and limits (km/h).
+fn straight_road(pieces: &[(f64, f32)]) -> Network {
+    let mut lanes = Vec::new();
+    let mut y = 0.0;
+    for &(len, kmh) in pieces {
+        let mut l = LaneBuilder::arc(DVec3::new(0.0, y, 0.0), 0.0, len, 0.0, 0.0, LaneKind::Street, 3.0);
+        l.speed_limit_kmh = kmh;
+        lanes.push(l);
+        y += len;
+    }
+    let mut net = Network { lanes, ..Default::default() };
+    net.link(1.5);
+    net
+}
+
+/// A follower at its time gap behind a leader that brakes as a driver brakes for a light
+/// (2.5 m/s²) to a standstill: the ordinary channel is enough all the way, nothing comes
+/// near the ordinary maximum and the follower stops at a gap.
+#[test]
+fn a_leader_braking_comfortably_needs_no_emergency() {
+    let net = straight_road(&[(900.0, 50.0)]);
+    for seed in [3u64, 0x5151, 0xbeef] {
+        let mut car = AiState::new(0, 0.0, seed);
+        car.speed = 13.0;
+        car.plan_next(&net);
+        let mut lead_v = 13.0f32;
+        let mut lead_s = car.front + car.min_gap + car.headway * 13.0 + 2.5;
+        let dt = 0.02;
+        let (mut closest, mut hardest, mut emergencies) = (f32::MAX, 0.0f32, 0);
+        for k in 0..2000 {
+            let braking = k > 100 && lead_v > 0.0;
+            if braking {
+                lead_v = (lead_v - 2.5 * dt).max(0.0);
+            }
+            lead_s += lead_v * dt;
+            let gap = lead_s - 2.5 - (car.s + car.front);
+            closest = closest.min(gap);
+            car.drive(&net, dt, Some(Lead { gap, speed: lead_v, acc: if braking { -2.5 } else { 0.0 } }), None);
+            hardest = hardest.min(car.acc);
+            emergencies += car.emergency_began as u32;
+        }
+        assert_eq!(emergencies, 0, "seed {seed}: the collision-prevention channel took over");
+        assert!(hardest > -car.ordinary_brake + 1.0, "seed {seed}: braked at {hardest:.2} m/s²");
+        assert!(closest > car.min_gap * 0.6, "seed {seed}: came within {closest:.2} m");
+        assert!(car.speed < 0.01);
+    }
+}
+
+/// Something standing turns up 16 m ahead of a car at 50 km/h (it needs 6 m/s²): the
+/// collision-prevention channel takes over, once, brakes harder than the ordinary maximum
+/// and the car stops short of it.
+#[test]
+fn an_emergency_stop_is_its_own_channel_and_stays_clear() {
+    let net = straight_road(&[(900.0, 50.0)]);
+    let mut car = AiState::new(0, 0.0, 9);
+    car.speed = 13.9;
+    car.cmd = 0.0;
+    car.plan_next(&net);
+    let wall = car.s + car.front + 16.0;
+    let (mut closest, mut hardest, mut began) = (f32::MAX, 0.0f32, 0);
+    for _ in 0..600 {
+        let gap = wall - (car.s + car.front);
+        closest = closest.min(gap);
+        car.drive(&net, 0.02, Some(Lead { gap, speed: 0.0, acc: 0.0 }), None);
+        hardest = hardest.min(car.acc);
+        began += car.emergency_began as u32;
+    }
+    assert_eq!(began, 1, "one emergency, counted once");
+    assert!(hardest < -car.ordinary_brake, "it braked at {hardest:.2} m/s² only");
+    assert!(hardest >= -car.emergency_brake - 1e-3);
+    assert!(closest > 0.3, "came within {closest:.2} m");
+    assert!(car.speed < 0.01 && !car.emergency);
+}
+
+/// A car coming to its line, or up to a car standing ahead, stops there and stays: no
+/// creeping on by centimetres once it stands, the brake lights on all the while.
+#[test]
+fn a_stop_is_reached_without_creeping_or_flicker() {
+    let net = straight_road(&[(900.0, 50.0)]);
+    for (seed, v, behind) in [(3u64, 13.9f32, false), (77, 6.0, false), (0x1234, 2.0, false), (3, 13.9, true), (77, 6.0, true), (0x4321, 1.0, true)] {
+        let mut car = AiState::new(0, 0.0, seed);
+        car.speed = v;
+        car.plan_next(&net);
+        let mut line = 70.0f32;
+        let mut stood: Option<f32> = None;
+        let mut flips = 0;
+        let mut last_braking = true;
+        for k in 0..3000 {
+            // (the car ahead rolls on by 40 cm once everybody stands: the one behind stays)
+            if behind && k == 2000 {
+                line += 0.4;
+            }
+            // a line, or the back of a car standing there
+            let (lead, stop) = if behind { (Some(Lead { gap: line - car.s - car.front, speed: 0.0, acc: 0.0 }), None) } else { (None, Some(line - car.s)) };
+            car.drive(&net, 0.02, lead, stop);
+            match stood {
+                None if car.speed < 0.01 => stood = Some(car.s),
+                Some(_) => {
+                    flips += (car.braking != last_braking) as u32;
+                    last_braking = car.braking;
+                }
+                None => {}
+            }
+        }
+        let at = stood.expect("it stopped");
+        assert!((car.s - at).abs() < 0.01, "seed {seed}: crept {:.3} m on after stopping", car.s - at);
+        assert_eq!(flips, 0, "seed {seed}: the brake lights went on and off");
+        let front = car.s + car.front;
+        let want = if behind { line - 0.4 - car.min_gap } else { line };
+        assert!(front <= want + 0.3 && front > want - 1.5, "seed {seed}: front at {front:.2}, wanted at {want}");
+    }
+}
+
+/// A 30 zone after a 50 one: the car is down to 30 km/h where it begins, braking gently,
+/// and a car over a limit gets down to it within a couple of seconds rather than creeping
+/// towards it.
+#[test]
+fn a_lower_limit_ahead_is_met_in_time_and_without_creeping() {
+    let net = straight_road(&[(200.0, 50.0), (400.0, 30.0)]);
+    let mut car = AiState::new(0, 20.0, 5);
+    car.speed = 50.0 / 3.6;
+    car.decel = 2.2;
+    car.desire = 1.0;
+    car.plan_next(&net);
+    let limit = 30.0 / 3.6;
+    let mut entered = None;
+    let mut hardest = 0.0f32;
+    for _ in 0..1500 {
+        car.drive(&net, 0.02, None, None);
+        hardest = hardest.min(car.acc);
+        if car.lane == 1 && entered.is_none() {
+            entered = Some(car.speed);
+        }
+    }
+    let v = entered.expect("reached the 30 zone");
+    assert!(v < limit + 0.7, "entered at {:.1} km/h", v * 3.6);
+    assert!(hardest > -car.decel, "braked at {hardest:.2} m/s²");
+    // put on a 30 lane at 40 km/h: within the limit after two seconds, not still above it
+    let mut fast = AiState::new(1, 10.0, 6);
+    fast.speed = 40.0 / 3.6;
+    fast.desire = 1.0;
+    fast.plan_next(&net);
+    for _ in 0..100 {
+        fast.drive(&net, 0.02, None, None);
+    }
+    assert!(fast.speed < limit + 0.1, "{:.2} km/h after 2 s", fast.speed * 3.6);
+}
+
+/// A junction object of two paths: a straight one north (path 0) and one from the east
+/// crossing it square (path 1), with `[blockpath]`/`[crossingproblem]` as given.
+fn two_paths(crossing_problem: bool, block: bool) -> Network {
+    let key = |path: u16| Some(LaneKey { tile: (0, 0), id: 1, path });
+    let mut a = LaneBuilder::arc(DVec3::new(0.0, -20.0, 0.0), 0.0, 40.0, 0.0, 0.0, LaneKind::Street, 3.0);
+    let mut b = LaneBuilder::arc(DVec3::new(20.0, 0.0, 0.0), 270.0, 40.0, 0.0, 0.0, LaneKind::Street, 3.0);
+    for (l, k) in [(&mut a, 0), (&mut b, 1)] {
+        l.source = 2;
+        l.key = key(k);
+    }
+    a.crossing_problem = crossing_problem;
+    if block {
+        a.blocks = vec![1];
+    }
+    let mut net = Network { lanes: vec![a, b], ..Default::default() };
+    net.link(1.5);
+    net
+}
+
+#[test]
+fn a_crossing_problem_makes_the_whole_of_both_lanes_the_meeting_place() {
+    let plain = two_paths(false, false);
+    let c = plain.crossings[1][0];
+    assert!(c.other_before <= 3.0 && c.other_after <= 3.0, "{c:?}");
+    // (either lane flagged: seen from both)
+    let flagged = two_paths(true, false);
+    for (l, len) in [(0usize, 40.0f32), (1, 40.0)] {
+        let c = flagged.crossings[l][0];
+        assert!((c.at - c.before).abs() < 0.01 && (c.at + c.after - len).abs() < 0.01, "{c:?}");
+        assert!((c.other_at - c.other_before).abs() < 0.01 && (c.other_at + c.other_after - len).abs() < 0.01, "{c:?}");
+    }
+}
+
+#[test]
+fn a_blockpath_has_no_effect_as_in_omsi() {
+    // two paths that do not cross: a blockpath between them adds no meeting place
+    let key = |path: u16| Some(LaneKey { tile: (0, 0), id: 1, path });
+    let mut a = LaneBuilder::arc(DVec3::new(0.0, -20.0, 0.0), 0.0, 40.0, 0.0, 0.0, LaneKind::Street, 3.0);
+    let mut b = LaneBuilder::arc(DVec3::new(10.0, -20.0, 0.0), 0.0, 40.0, 0.0, 0.0, LaneKind::Street, 3.0);
+    for (l, k) in [(&mut a, 0), (&mut b, 1)] {
+        l.source = 2;
+        l.key = key(k);
+    }
+    a.blocks = vec![1];
+    let mut net = Network { lanes: vec![a, b], ..Default::default() };
+    net.link(1.5);
+    assert!(net.crossings[0].is_empty() && net.crossings[1].is_empty());
+    // and a crossing pair keeps its geometric meeting place
+    let blocked = two_paths(false, true);
+    assert_eq!(blocked.crossings[0], two_paths(false, false).crossings[0]);
+}
+
+#[test]
+fn the_ring_goes_before_the_entry_where_the_map_sets_no_priorities() {
+    // an entry from the south joining a ring lane that comes from the entry's right
+    // (from the east, heading west across it): by right-before-left the ring would go
+    // first anyway; one coming from the left is the case that matters
+    let a = LaneBuilder::arc(DVec3::new(0.0, -10.0, 0.0), 0.0, 20.0, 0.0, 0.0, LaneKind::Street, 3.0);
+    let b = LaneBuilder::arc(DVec3::new(-10.0, 0.0, 0.0), 90.0, 20.0, 0.0, 0.0, LaneKind::Street, 3.0);
+    let mut net = Network { lanes: vec![a, b], ..Default::default() };
+    net.link(1.5);
+    // b comes from a's left: a goes first by right-before-left
+    assert!(!net.must_yield(0, 1) && net.must_yield(1, 0));
+    net.lanes[1].ring = true;
+    assert!(net.must_yield(0, 1) && !net.must_yield(1, 0));
+    // the map's priorities still decide where it sets them
+    net.lanes[0].priority = 192.0;
+    assert!(!net.must_yield(0, 1));
+}
+
+#[test]
+fn two_turns_sweeping_past_each_other_meet_where_they_pass() {
+    // two gentle bends of one junction object from opposite sides, bowing towards each
+    // other: 1.5 m apart at their middles, never crossing
+    let key = |path: u16| Some(LaneKey { tile: (0, 0), id: 1, path });
+    let arc = |x: f64, y: f64, h: f64| LaneBuilder::arc(DVec3::new(x, y, 0.0), h, 25.0 * 0.824, 25.0, 0.0, LaneKind::Street, 3.0);
+    let net_of = |dy: f64| {
+        let mut a = arc(-10.0, -2.84, 66.4);
+        let mut b = arc(10.0, 2.84 + dy, 246.4);
+        for (l, k) in [(&mut a, 0), (&mut b, 1)] {
+            l.source = 2;
+            l.key = key(k);
+        }
+        let mut net = Network { lanes: vec![a, b], ..Default::default() };
+        net.link(1.5);
+        net
+    };
+    let net = net_of(0.0);
+    let c = net.crossings[0].iter().find(|c| c.other == 1).expect("a meeting place where they pass");
+    assert!(!c.merge && (c.at - net.lanes[0].length() * 0.5).abs() < 2.0, "{c:?}");
+    // bends well apart do not meet
+    assert!(net_of(5.0).crossings[0].is_empty());
+}

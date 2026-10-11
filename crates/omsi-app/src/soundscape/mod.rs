@@ -204,7 +204,11 @@ impl Soundscape {
         self.events(&pack, &c, master, lowpass, dt);
         self.timed(&pack, &c, master, lowpass);
         self.flush(engine, &pack);
-        self.last = self.describe(&c);
+        // (only read for OMSI_DEBUG_SOUND's lines: written out every frame it was a dozen
+        // strings made for nobody)
+        if omsi_cfg::flags::OMSI_DEBUG_SOUND.is_set() {
+            self.last = self.describe(&c);
+        }
         self.place = place;
         self.pack = Some(pack);
     }

@@ -46,7 +46,7 @@
             android:resizeableActivity="false"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode|density"
             android:windowSoftInputMode="adjustNothing|stateHidden"
-            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+            android:theme="@style/OmsiTheme">
             <meta-data android:name="android.app.lib_name" android:value="openomsi_game" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

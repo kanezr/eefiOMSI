@@ -714,7 +714,8 @@ impl World {
                 // ... and a `\S:n` mask makes it an LED panel: its lit dots are its own
                 // light, which the enhanced picture blooms (see `MaterialExtra::led`)
                 // (a page drawn as an LED panel carries its dot mask as a plain transmap)
-                extra.led = (d.script_trans.is_some() || (d.script.is_some() && d.transmap.is_some())) && d.extra.led;
+                // (unless the modeller has said so, `[led_glow_effect]`)
+                extra.led = d.extra.led && (d.extra.led_glow.is_some() || d.script_trans.is_some() || (d.script.is_some() && d.transmap.is_some()));
                 let m = renderer.add_material_extra(
                     scene,
                     tex,
@@ -1156,6 +1157,7 @@ impl World {
             // dot mask - keeps it an LED panel: see `MaterialExtra::led`)
             let it_page = script_item.is_some_and(|s| vt.model.html_textures.iter().any(|h| h.script_index == s));
             (it_extra.led, it_extra.led_sign) = ((it_script_trans.is_some() || (it_page && it_trans.is_some())) && if ov_item.iter().any(|o| o.lightmap.is_some()) { lm_white(ov_item) } else { lm_white(&ov) }, it_page);
+            apply_led_glow_effect(&mut it_extra, if led_glow_effect(ov_item).is_some() { ov_item } else { &ov });
             it_extra.no_z_write |= extra.no_z_write;
             it_extra.no_z_check |= extra.no_z_check;
             it_extra.glass |= extra.glass;
@@ -1436,6 +1438,7 @@ fn slot_extra(
     let html_page = script_slot.is_some_and(|s| cx.vt.model.html_textures.iter().any(|h| h.script_index == s));
     extra.led = (script_trans.is_some() || (html_page && has_transmap)) && lm_white(ov);
     extra.led_sign = html_page;
+    apply_led_glow_effect(&mut extra, ov);
     if dirt_overlay {
         extra.no_z_write = true;
     }

@@ -7,6 +7,11 @@
 use omsi_cfg::{CfgFile, CfgReader, Entry};
 use std::path::{Path, PathBuf};
 
+mod extensions;
+pub use extensions::SpotlightCookie;
+#[cfg(test)]
+mod extension_tests;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AnimOrigin {
     Trans([f32; 3]),
@@ -98,6 +103,11 @@ pub struct MaterialDef {
     /// openOMSI extension: Omsi.exe does not know the keyword, and the classic picture draws
     /// the material as if it were not there.
     pub glow: Option<(String, f32)>,
+    /// `[led_glow_effect] <value>` (openOMSI): how much of an LED panel's glow the slot
+    /// gets, 0..1 - 0 none (a flipdot or an LCD the automatic guess took for LED dots),
+    /// 1 the full `Led glow` setting. The modeller's word replaces the guess the enhanced
+    /// picture otherwise makes from the slot's `\S:n` mask and white light map.
+    pub led_glow: Option<f32>,
     pub allcolor: Option<[f32; 14]>,
 }
 
@@ -117,7 +127,7 @@ impl MaterialDef {
         macro_rules! opt {
             ($($f:ident),*) => { $( if self.$f.is_none() { self.$f = base.$f.clone(); } )* };
         }
-        opt!(envmap, envmap_mask, bumpmap, transmap, raindropmap, texcoord_trans_x, texcoord_trans_y, use_script_texture, use_text_texture, alphascale, freetex, nightmap, glow, allcolor);
+        opt!(envmap, envmap_mask, bumpmap, transmap, raindropmap, texcoord_trans_x, texcoord_trans_y, use_script_texture, use_text_texture, alphascale, freetex, nightmap, glow, led_glow, allcolor);
         self.envmap_realtime |= base.envmap_realtime;
         if self.tex_address == TexAddress::Wrap {
             self.tex_address = base.tex_address;
@@ -442,6 +452,7 @@ pub struct Model {
     pub particle_emitters: Vec<ParticleEmitter>,
     pub spotlights: Vec<Spotlight>,
     pub spotlights_2: Vec<Spotlight2>,
+    pub spotlight_cookies: Vec<SpotlightCookie>,
     pub interior_lights: Vec<InteriorLight>,
     /// `[light]` legacy lights (raw).
     pub lights: Vec<Vec<String>>,
@@ -490,6 +501,7 @@ impl Model {
                 Entry::Token(t) => m.handle_token(t, &mut r),
             }
         }
+        m.tidy_interior_lamps();
         m
     }
 
@@ -534,8 +546,32 @@ impl Model {
         self.meshes.last_mut()
     }
 
+    /// The material the `matl_*` commands act on: the last one selected - except right after
+    /// a `[matl_change]`, where Omsi.exe goes on with the slot's own material until the first
+    /// `[matl_item]` (0x5efae8: the change keeps the slot's record as the current one, and the
+    /// item later starts as a copy of it). An LED matrix that opens its change first and
+    /// writes `[matl_alpha]` and its script texture after it gives them to the slot itself:
+    /// kept on the change record, the slot stayed opaque and every dot of the panel shone.
+    /// A slot without a `[matl]` of its own gets one here, as Omsi.exe has a record for every
+    /// material of the mesh.
     fn cur_matl(&mut self) -> Option<&mut MaterialDef> {
-        self.meshes.last_mut().and_then(|m| m.materials.last_mut())
+        let mesh = self.meshes.last_mut()?;
+        let (texture, index) = match mesh.materials.last() {
+            Some(d) if !d.item && d.change.is_some() => (d.texture.clone(), d.index),
+            _ => return mesh.materials.last_mut(),
+        };
+        let base = |d: &MaterialDef| !d.item && d.change.is_none() && d.index == index && d.texture.eq_ignore_ascii_case(&texture);
+        let k = match mesh.materials.iter().rposition(base) {
+            Some(k) => k,
+            None => {
+                // (before the change, which stays the last record: the commands after this
+                // one still find it)
+                let at = mesh.materials.len() - 1;
+                mesh.materials.insert(at, MaterialDef { texture, index, ..Default::default() });
+                at
+            }
+        };
+        mesh.materials.get_mut(k)
     }
 
     /// Handle one model.cfg keyword. Returns `false` when the keyword is not part of the
@@ -804,6 +840,7 @@ impl Model {
                 };
                 self.spotlights_2.push(Spotlight2 { values, variable, mirrored });
             }
+            "spotlight_cookie" => self.spotlight_cookies.push(SpotlightCookie::read(r)),
             "interiorlight" => {
                 let variable = r.str().to_string();
                 let range = r.f32();
@@ -842,7 +879,10 @@ impl Model {
                 // the variant of the preceding [matl_change]: starts as a copy of the base
                 // material, the following matl_* keywords change the variant only
                 if let Some(mesh) = self.cur_mesh() {
-                    if let Some(change) = mesh.materials.last().filter(|m| m.change.is_some()).cloned() {
+                    // (a second item starts from the slot's material as well, not from the
+                    // item before it: 0x5efae8 copies the record the [matl_change] picked)
+                    let open = mesh.materials.last().is_some_and(|m| m.change.is_some());
+                    if let Some(change) = mesh.materials.iter().rev().find(|m| open && m.change.is_some() && !m.item).cloned() {
                         // inherit the plain [matl] of the same slot (alpha, transmap, ...)
                         let base = mesh
                             .materials
@@ -850,11 +890,12 @@ impl Model {
                             .rev()
                             .find(|m| !m.item && m.change.is_none() && m.texture.eq_ignore_ascii_case(&change.texture) && m.index == change.index)
                             .cloned();
-                        // ... and what the [matl_change] (or the item before) set on top: Omsi.exe
-                        // copies the whole material record into the new item (0x5efae8 ->
-                        // 0x40a058), its free texture, scrolling and border with it. Copied from
-                        // the plain [matl] alone, the SD77's lit roller blind (`lights_stand`)
-                        // lost its destination text and scrolling with the lights on (#1419).
+                        // - with what was set after the [matl_change], which went to that
+                        // [matl] (see `cur_matl`): Omsi.exe copies the whole material record
+                        // into the new item (0x5efae8 -> 0x40a058), its
+                        // free texture, scrolling and border with it. Without them the SD77's
+                        // lit roller blind (`lights_stand`) lost its destination text and
+                        // scrolling with the lights on (#1419).
                         let mut item = change.clone();
                         if let Some(base) = base {
                             item.inherit(&base);
@@ -962,6 +1003,14 @@ impl Model {
                 let v = r.f32();
                 if let Some(m) = self.cur_matl() {
                     m.glow = Some((t, v));
+                }
+            }
+            "led_glow_effect" => {
+                // (a value out of 0..1 is taken to the nearer end; a line that is no number
+                // reads as 0, as any number of the format does)
+                let v = r.f32();
+                if let Some(m) = self.cur_matl() {
+                    m.led_glow = Some(if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 });
                 }
             }
             "matl_allcolor" => {

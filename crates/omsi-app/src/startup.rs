@@ -294,11 +294,12 @@ fn angle_available() -> bool {
     })
 }
 
-/// The graphics interfaces in the order they are tried: Metal on a Mac; on Windows
-/// Vulkan first (works best on AMD, fine on NVIDIA), then DirectX 12, then OpenGL for
-/// a card without either (a GeForce GT 530), then OpenGL ES on ANGLE over DirectX 11
-/// when its DLLs are there; elsewhere Vulkan, then OpenGL. Settings → Graphics API
-/// (`graphics_api`) or OMSI_BACKEND=vulkan|dx12|gl|angle puts one first.
+/// The graphics interfaces in the order they are tried: Metal on a Mac; on Windows Vulkan
+/// first (best for AMD), then DirectX 12, then OpenGL for a card
+/// without either (a GeForce GT 530), then OpenGL ES on ANGLE over DirectX 11 when its DLLs
+/// are there; elsewhere Vulkan, then OpenGL. Settings → Graphics API (`graphics_api`) or
+/// OMSI_BACKEND=vulkan|dx12|gl|angle puts one first: a driver whose Vulkan misbehaves is
+/// got round.
 pub(crate) fn backend_order() -> Vec<GraphicsApi> {
     if cfg!(target_os = "macos") {
         return vec![GraphicsApi::Native(wgpu::Backends::METAL)];
@@ -349,19 +350,19 @@ fn backend_instance(api: GraphicsApi) -> wgpu::Instance {
     wgpu::Instance::new(d)
 }
 
-/// The renderer for a window: on `instance` if it can, else on the next graphics interface
-/// and adapter that can (`instance` then becomes that one's). Laptops with a GeForce GT or
-/// GTX beside the processor's graphics listed a Vulkan adapter whose device then could not
-/// be opened (an old driver, the switchable graphics), or whose opening took wgpu down: the
-/// game and the launcher ended before their window showed anything. Now each adapter that
-/// can show the window is tried in turn - the card, then the processor's graphics - on
-/// Vulkan, DirectX 12 and OpenGL, and only when none opens is the game given up, saying so.
-pub(crate) fn window_renderer(
-    instance: &mut wgpu::Instance,
-    window: &std::sync::Arc<winit::window::Window>,
+/// The adapters a window's renderer is tried on, in turn: on `instance` if it can, else on
+/// the next graphics interface and adapter that can (`instance` then becomes that one's).
+/// Laptops with a GeForce GT or GTX beside the processor's graphics listed a Vulkan adapter
+/// whose device then could not be opened (an old driver, the switchable graphics), or whose
+/// opening took wgpu down: the game and the launcher ended before their window showed
+/// anything. Now each adapter that can show the window is tried in turn - the card, then the
+/// processor's graphics - on Vulkan, DirectX 12 and OpenGL, and only when none opens is the
+/// game given up, saying so. (Where the last try stands is kept: a renderer whose pipelines
+/// then fail to build is followed by the next adapter.)
+struct Opener {
+    window: std::sync::Arc<winit::window::Window>,
     options: omsi_render::RenderOptions,
-) -> Result<Renderer> {
-    let mut failures: Vec<String> = Vec::new();
+    failures: Vec<String>,
     // The instance made for the settings' interface first, then every interface in turn -
     // each made only when the ones before it could not draw. Made all at once, a Windows
     // machine drawing on DirectX 12 loaded the Vulkan loader and its layers (Optimus,
@@ -372,64 +373,236 @@ pub(crate) fn window_renderer(
     // when no graphics chip opens on any interface: an Intel HD 2500 has no DirectX 12
     // driver, DirectX 12 listed that renderer alone, and the game "started" on it at a
     // frame every few seconds instead of on the chip's OpenGL (#770).
-    let mut made: Vec<(Option<GraphicsApi>, wgpu::Instance)> = vec![(None, instance.clone())];
-    let mut order = backend_order().into_iter();
-    let mut no_surface: Vec<usize> = Vec::new();
-    for software_round in [false, true] {
-        let mut k = 0;
+    made: Vec<(Option<GraphicsApi>, wgpu::Instance)>,
+    order: std::vec::IntoIter<GraphicsApi>,
+    no_surface: Vec<usize>,
+    /// The round (graphics chips, then software renderers) and the instance in it.
+    software_round: bool,
+    k: usize,
+}
+
+impl Opener {
+    fn new(instance: &wgpu::Instance, window: &std::sync::Arc<winit::window::Window>, options: omsi_render::RenderOptions) -> Opener {
+        Opener {
+            window: window.clone(),
+            options,
+            failures: Vec::new(),
+            made: vec![(None, instance.clone())],
+            order: backend_order().into_iter(),
+            no_surface: Vec::new(),
+            software_round: false,
+            k: 0,
+        }
+    }
+
+    /// The next adapter whose graphics device opens, the device, its name and its instance.
+    fn next(&mut self) -> Option<(omsi_render::Opened, String, wgpu::Instance)> {
         loop {
-            if k == made.len() {
-                let Some(b) = order.next() else { break };
-                log::info!("graphics: trying {b:?}");
-                made.push((Some(b), backend_instance(b)));
+            if self.k == self.made.len() {
+                match self.order.next() {
+                    Some(b) => {
+                        log::info!("graphics: trying {b:?}");
+                        self.made.push((Some(b), backend_instance(b)));
+                    }
+                    None if !self.software_round => {
+                        self.software_round = true;
+                        self.k = 0;
+                        continue;
+                    }
+                    None => return None,
+                }
             }
-            let (b, inst) = made[k].clone();
-            k += 1;
-            if no_surface.contains(&(k - 1)) {
+            let (b, inst) = self.made[self.k].clone();
+            if self.no_surface.contains(&self.k) {
+                self.k += 1;
                 continue;
             }
-            let surface = match inst.create_surface(window.clone()) {
+            let surface = match inst.create_surface(self.window.clone()) {
                 Ok(s) => s,
                 Err(e) => {
-                    failures.push(format!("{}: no surface ({e})", b.map(|b| format!("{b:?}")).unwrap_or_else(|| "first choice".into())));
-                    no_surface.push(k - 1);
+                    self.failures.push(format!("{}: no surface ({e})", b.map(|b| format!("{b:?}")).unwrap_or_else(|| "first choice".into())));
+                    self.no_surface.push(self.k);
+                    self.k += 1;
                     continue;
                 }
             };
             for adapter in Renderer::adapters_for(&inst, &surface) {
                 let info = adapter.get_info();
-                if is_software(&info) != software_round {
+                if is_software(&info) != self.software_round {
                     continue;
                 }
                 let what = format!("{} ({:?})", info.name, info.backend);
-                if failures.iter().any(|f| f.starts_with(&what)) {
+                if self.failures.iter().any(|f| f.starts_with(&what)) {
                     continue;
                 }
-                if software_round {
+                if self.software_round {
                     log::warn!("graphics: no graphics chip could be opened; trying the software renderer {what} (a few frames a second at best)");
                 }
-                match omsi_render::catch(|| pollster::block_on(Renderer::new_on(adapter, Some(&surface), None, options))) {
-                    Some(Ok(r)) => {
-                        if !failures.is_empty() {
-                            log::warn!("graphics: drawing on {what}; before it {}", failures.join("; "));
-                        }
-                        drop(surface);
-                        *instance = inst;
-                        return Ok(r);
-                    }
+                match omsi_render::catch(|| pollster::block_on(Renderer::open_on(adapter, Some(&surface), None, self.options))) {
+                    // (the same instance is looked at again after a renderer that then failed
+                    // to build: its next adapter, the failed one being in `failures`)
+                    Some(Ok(o)) => return Some((o, what, inst)),
                     Some(Err(e)) => {
                         log::warn!("graphics: {what} could not be opened: {e:#}");
-                        failures.push(format!("{what}: {e:#}"));
+                        self.failures.push(format!("{what}: {e:#}"));
                     }
                     None => {
                         log::warn!("graphics: {what} failed while being opened");
-                        failures.push(format!("{what}: failed while being opened"));
+                        self.failures.push(format!("{what}: failed while being opened"));
                     }
                 }
             }
+            self.k += 1;
         }
     }
-    Err(anyhow!("no graphics device could be opened ({}); updating the graphics driver usually helps", if failures.is_empty() { "no adapter can show a window".to_string() } else { failures.join("; ") }))
+
+    fn give_up(&self) -> anyhow::Error {
+        anyhow!("no graphics device could be opened ({}); updating the graphics driver usually helps", if self.failures.is_empty() { "no adapter can show a window".to_string() } else { self.failures.join("; ") })
+    }
+}
+
+/// A window's renderer on its way: the graphics device is open, and the window can be drawn
+/// into with it (a first picture, the launcher's interface) while the ~110 pipelines are
+/// built on a worker. They took seconds on the main thread before the first picture - 8 s on
+/// DirectX 12, a phone's first start half a minute - and a window shown meanwhile stood
+/// blank: white where Windows had made it smaller first, a phone's wallpaper behind it.
+pub(crate) struct RendererStart {
+    /// What the window is drawn with meanwhile: the device, its queue, the renderer's format.
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+    pub format: wgpu::TextureFormat,
+    building: Option<std::thread::JoinHandle<Option<Result<Renderer>>>>,
+    built: Option<Result<Renderer>>,
+    what: String,
+    opener: Opener,
+}
+
+/// The stack of the thread the pipelines are built on: the shader translation recurses
+/// deeply on big shaders (the main thread's 1 MB on Windows was not always enough on ANGLE).
+const BUILD_STACK: usize = 32 << 20;
+
+/// The pipelines are what the window waits for: built at the main thread's priority. On
+/// macOS a new thread's default quality of service had Metal's shader compiler serve it
+/// several times slower than the main thread it was built on before (0.7 s became 5-9 s for
+/// the game's renderer, with every shader in Metal's cache).
+fn as_urgent_as_the_main_thread() {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
+        }
+        const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
+        // SAFETY: plain call on the current thread with valid constants
+        unsafe {
+            pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+        }
+    }
+}
+
+impl RendererStart {
+    /// The graphics device for `window`, on `instance` or the next interface and adapter that
+    /// can (`instance` then becomes that one's, see `Opener`); its pipelines are
+    /// being built from here on.
+    pub(crate) fn begin(instance: &mut wgpu::Instance, window: &std::sync::Arc<winit::window::Window>, options: omsi_render::RenderOptions) -> Result<RendererStart> {
+        let mut opener = Opener::new(instance, window, options);
+        let Some((opened, what, inst)) = opener.next() else { return Err(opener.give_up()) };
+        *instance = inst;
+        let (device, queue, format) = (opened.device().clone(), opened.queue().clone(), opened.format());
+        let mut start = RendererStart { device, queue, format, building: None, built: None, what, opener };
+        // ANGLE's window takes its sRGB pictures encoded by the renderer (`SrgbEncode`), and
+        // its pipelines are compiled on a thread of its own already: built on the spot.
+        let angle = opened.adapter_info().backend == wgpu::Backend::Gl && opened.adapter_info().name.contains("ANGLE");
+        if angle {
+            start.built = Some(omsi_render::catch(|| pollster::block_on(opened.finish())).unwrap_or_else(|| Err(anyhow!("failed while its pipelines were built"))));
+            return Ok(start);
+        }
+        let spawned = std::thread::Builder::new().name("renderer pipelines".into()).stack_size(BUILD_STACK).spawn(move || {
+            as_urgent_as_the_main_thread();
+            omsi_render::catch(|| pollster::block_on(opened.finish()))
+        });
+        match spawned {
+            Ok(h) => start.building = Some(h),
+            Err(e) => start.built = Some(Err(anyhow!("no thread for the pipelines: {e}"))),
+        }
+        Ok(start)
+    }
+
+    /// Whether the window can be drawn into before the renderer is there (not on ANGLE).
+    pub(crate) fn early(&self) -> bool {
+        self.building.is_some()
+    }
+
+    /// The pipelines are built (or their build failed): `wait` returns at once.
+    pub(crate) fn is_done(&self) -> bool {
+        self.building.as_ref().is_none_or(|h| h.is_finished())
+    }
+
+    /// Let go of the renderer being built: waits for its pipelines and drops it (on a thread
+    /// that may wait, see the launcher's rest while a game runs).
+    pub(crate) fn abandon(mut self) {
+        if let Some(h) = self.building.take() {
+            let _ = h.join();
+        }
+    }
+
+    /// The renderer, once its pipelines are built. A build that failed is followed by the
+    /// next adapter and interface, as before (on this thread: the
+    /// window keeps the picture it has meanwhile); its renderer is then on another device
+    /// than `device`.
+    pub(crate) fn wait(mut self, instance: &mut wgpu::Instance) -> Result<Renderer> {
+        let mut built = match (self.built.take(), self.building.take()) {
+            (Some(b), _) => b,
+            (None, Some(h)) => h.join().ok().flatten().unwrap_or_else(|| Err(anyhow!("failed while its pipelines were built"))),
+            (None, None) => Err(anyhow!("renderer pipelines: not built")),
+        };
+        loop {
+            match built {
+                Ok(r) => {
+                    if !self.opener.failures.is_empty() {
+                        log::warn!("graphics: drawing on {}; before it {}", self.what, self.opener.failures.join("; "));
+                    }
+                    return Ok(r);
+                }
+                Err(e) => {
+                    log::warn!("graphics: {} could not be opened: {e:#}", self.what);
+                    self.opener.failures.push(format!("{}: {e:#}", self.what));
+                }
+            }
+            let Some((opened, what, inst)) = self.opener.next() else { return Err(self.opener.give_up()) };
+            *instance = inst;
+            self.what = what;
+            built = omsi_render::catch(|| pollster::block_on(opened.finish())).unwrap_or_else(|| Err(anyhow!("failed while its pipelines were built")));
+        }
+    }
+}
+
+/// The colour a window shows before it has anything else to show: the launcher's background
+/// and the game's loading screen (linear, as the sRGB window takes it).
+pub(crate) const WINDOW_BACKGROUND: wgpu::Color = wgpu::Color { r: 0.0056, g: 0.0056, b: 0.0056, a: 1.0 };
+
+/// A picture of `color` alone into `surface`, shown (no pipeline needed: a clear). False when
+/// the window gave no picture to draw into (hidden, covered, being resized).
+pub(crate) fn present_clear(surface: &mut SurfaceState<'_>, device: &wgpu::Device, queue: &wgpu::Queue, window: &winit::window::Window, color: wgpu::Color) -> bool {
+    let frame = match surface.acquire() {
+        wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+        wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+            let size = window.inner_size();
+            surface.resize_on(device, size.width, size.height);
+            return false;
+        }
+        _ => return false,
+    };
+    let view = frame.texture.create_view(&Default::default());
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("first picture") });
+    drop(enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("first picture"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(color), store: wgpu::StoreOp::Store } })],
+        ..Default::default()
+    }));
+    queue.submit([enc.finish()]);
+    window.pre_present_notify();
+    frame.present();
+    true
 }
 
 /// Tell the player why the game cannot go on, also where there is no window yet (a message

@@ -137,24 +137,39 @@ impl App {
                         .as_mut()
                         .map(|h| h.take_footfalls())
                         .unwrap_or_default();
-                    // what the passengers say, where they stand
-                    for line in self.session.humans.as_mut().map(|h| h.take_voice_lines()).unwrap_or_default() {
-                        if let Some(clip) = a.load_clip(&line.path) {
-                            a.play(
-                                clip,
-                                omsi_audio::mixer::VoiceParams {
-                                    gain: 1.0,
-                                    pitch: 1.0,
-                                    looping: false,
-                                    position: Some(line.position.as_vec3()),
-                                    doppler: true,
-                                    range: 3.0,
-                                    lowpass_hz: 0.0,
-                                    important: false,
-                                },
-                            );
-                        }
+                    // what the passengers say, where they stand. A clip heard for the first
+                    // time is read in the background and the line spoken as soon as it is
+                    // there (read here, in the frame, it stalled the picture); one still not
+                    // read after two seconds is let go.
+                    thread_local! {
+                        static WAITING: std::cell::RefCell<Vec<(omsi_sim::people::VoiceLine, Instant)>> =
+                            const { std::cell::RefCell::new(Vec::new()) };
                     }
+                    let said = self.session.humans.as_mut().map(|h| h.take_voice_lines()).unwrap_or_default();
+                    WAITING.with_borrow_mut(|waiting| {
+                        waiting.extend(said.into_iter().map(|line| (line, Instant::now())));
+                        waiting.retain(|(line, since)| {
+                            if !a.clips_ready(std::slice::from_ref(&line.path)) {
+                                return since.elapsed() < std::time::Duration::from_secs(2);
+                            }
+                            if let Some(clip) = a.load_clip(&line.path) {
+                                a.play(
+                                    clip,
+                                    omsi_audio::mixer::VoiceParams {
+                                        gain: 1.0,
+                                        pitch: 1.0,
+                                        looping: false,
+                                        position: Some(line.position.as_vec3()),
+                                        doppler: true,
+                                        range: 3.0,
+                                        lowpass_hz: 0.0,
+                                        important: false,
+                                    },
+                                );
+                            }
+                            false
+                        });
+                    });
                     let inside = self.cam.in_cab;
                     let __tm = Instant::now();
                     // openOMSI's ambience; with its recordings the street's rain is its own
@@ -235,9 +250,6 @@ impl App {
                 w,
                 traffic,
                 self.session.duty.as_ref(),
-                self.player
-                    .as_ref()
-                    .and_then(|p| p.vehicle.host.hof.as_deref()),
                 &self.clock,
             );
             *self.perf.profile.entry("scripted.boards").or_default() += __tb.elapsed().as_secs_f64();

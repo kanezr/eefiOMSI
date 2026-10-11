@@ -675,6 +675,11 @@ fn graphics_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
 /// Controls page).
 fn driving_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, out: &mut Outside, cols: [Rect; 2]) -> [f32; 2] {
     let mut c = Col::new(ui, cols[0], "Keyboard & mouse");
+    if super::mobile::mobile() {
+        c.section(ui, "Touch controls");
+        sel_setting(ui, s, dirty, "s-touch-doors", c.row(), "Door buttons", "touch_door_mode", &[("standard", "Standard (physical doors)"), ("direct", "Direct OMSI triggers")]);
+        c.section(ui, "Keyboard & mouse");
+    }
     sel_setting(ui, s, dirty, "s-keys", c.row(), "Driving keys", "drive_keys", &[("omsi", "Custom controls (Controls page)"), ("simple", "W A S D + arrows"), ("wasd", "W A S D only"), ("arrows", "Arrow keys only")]);
     toggle_setting(ui, s, dirty, c.row(), "Steering linearity (keys at OMSI's steady pace)", "steering_linear");
     toggle_setting(ui, s, dirty, c.row(), "Old Steering (the wheel stays, turn it back yourself)", "old_steering");
@@ -1088,6 +1093,14 @@ fn sound_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) -> [f
         *dirty = 0.3;
     }
     sel_setting(ui, s, dirty, "s-voices", c.row(), "Passenger voices", "pax_voices", &[("all", "Greetings and tickets"), ("tickets", "Only the ticket asked for"), ("off", "Silent")]);
+    // the bus radio's own sound (all off at first)
+    for (key, label, id) in [("radio_speaker", "Radio: small speaker", "s-radspk"), ("radio_hiss", "Radio: FM hiss", "s-radhiss"), ("radio_dropouts", "Radio: signal dropouts", "s-raddrop")] {
+        let mut v = get(s, key).as_f64().unwrap_or(0.0) as f32;
+        if ui.slider(id, c.row(), &mut v, 0.0, 1.0, 0.05, label, &|v| format!("{:.0}%", v * 100.0)) {
+            s[key] = json!((v * 100.0).round() / 100.0);
+            *dirty = 0.3;
+        }
+    }
     [c.used(), radio_stations(ui, cols[1])]
 }
 

@@ -803,6 +803,11 @@ fn player_vehicle_batches(
     list: &[u32],
     origins: &[DVec3],
 ) -> Vec<Batch> {
+    // (no vehicle to reflect - dry ground under it, or the camera away from it: nothing to
+    // look for among the whole scene's instances and every entry the frame draws)
+    if origins.is_empty() {
+        return Vec::new();
+    }
     let entries: std::collections::HashSet<u32> = scene
         .instances
         .iter()
@@ -824,10 +829,15 @@ fn selected_entry_batches(
     entries: &std::collections::HashSet<u32>,
 ) -> Vec<Batch> {
     let mut out = Vec::new();
+    // (the few vehicles' entries lie close together: the rest of the frame's thousands are
+    // told apart by two comparisons, not looked up)
+    let lo = entries.iter().copied().min().unwrap_or(u32::MAX);
+    let hi = entries.iter().copied().max().unwrap_or(0);
     for b in batches {
         let mut start = None;
         for index in b.instances.clone() {
-            if entries.contains(&list[index as usize]) {
+            let e = list[index as usize];
+            if e >= lo && e <= hi && entries.contains(&e) {
                 start.get_or_insert(index);
             } else if let Some(first) = start.take() {
                 out.push(Batch {

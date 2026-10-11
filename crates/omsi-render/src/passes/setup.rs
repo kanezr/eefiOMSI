@@ -123,7 +123,7 @@ impl Renderer {
             && !env.no_puddle_reflections;
         let reflection_frame = !enhanced && puddles_wanted && self.reflection_pass.is_some();
         let masked_frame = enhanced || reflection_frame;
-        let (grid, lamp_shadows) = self.prepare_lights(scene, cam_rel, enhanced_frame, lighting.lamp_shadows && with_overlays && projection.is_none() && self.shadow_pipelines.len() > 6);
+        let (grid, lamp_shadows) = self.prepare_lights(scene, cam_rel, enhanced_frame, lighting.lamp_shadows && with_overlays && projection.is_none() && self.shadow_pipelines.len() > 6, lighting.inside.as_ref());
         self.prepare_coronas(scene, lighting.night, lighting.inside.as_ref().filter(|v| point_in_vehicle_box(camera.position, v)));
         self.prepare_smoke(scene, camera.position);
         // ambient occlusion only for the real picture, not for the mirrors
@@ -335,7 +335,7 @@ impl Renderer {
             light_view_proj_close: sh.light_view_proj_close.to_cols_array_2d(),
             wind: [lighting.glass_wind.x, lighting.glass_wind.y, lighting.glass_wind.z, 1.0],
             lamp_view_proj: std::array::from_fn(|k| lamp_shadows.get(k).map_or(Mat4::IDENTITY, |l| l.view_proj()).to_cols_array_2d()),
-            lamp_shadow: std::array::from_fn(|k| lamp_shadows.get(k).map_or(-1.0, |l| l.index as f32)),
+            lamp_shadow: std::array::from_fn(|k| lamp_shadows.get(k).map_or(-1.0, lamp_shadow_code)),
             tree_wind: {
                 // the gusts drift with the wind: summed over the frames (the wind changes
                 // with the weather), in f64 and modulo the shaders' pattern period
@@ -361,6 +361,7 @@ impl Renderer {
                 Some((_, _, bb)) if lighting.inside.is_some() => [bb[3], bb[4], bb[5], 1.0],
                 _ => [0.0; 4],
             },
+            cookies: self.cookies.fields(),
         };
         self.queue
             .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cu));

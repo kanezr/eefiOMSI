@@ -604,7 +604,7 @@ impl World {
                 tg.trees.push(tkey.clone());
             }
             let mat = tr.material;
-            let xf = Mat4::from_rotation_z((-heading).to_radians() as f32)
+            let xf = tree_card_turn(*heading)
                 * Mat4::from_scale(glam::Vec3::new(
                     *width as f32,
                     *width as f32,
@@ -1104,7 +1104,7 @@ impl World {
                         .unwrap_or_default();
                     let alpha = text_alpha(o3d_mats, slot, overrides);
                     let slot_ov: Vec<&MaterialDef> = overrides.iter().filter(|o| !o.item && omsi_sim::vehicle::override_slot(o3d_mats, o) == Some(slot)).collect();
-                    let key = text_material_key(scenery_text_key(tt, &text, alpha), &slot_ov);
+                    let key = text_material_key(scenery_text_key(tt, &text, alpha), &slot_ov, o3d_mats.get(slot));
                     if let Some(e) = gpu.text_textures.get_mut(&key) {
                         e.2 += 1;
                         let mat = e.1;
@@ -1126,7 +1126,7 @@ impl World {
                     let helper = if ot.sco.is_help_arrow { helper_text_image(tt, atlas.as_deref(), &text) } else { None };
                     let image = helper.unwrap_or_else(|| scenery_text_image(tt, atlas, &text));
                     let tex = gpu.add_image(renderer, scene, &image, true);
-                    let mat = text_material(renderer, scene, tex, alpha, &slot_ov);
+                    let mat = text_material(renderer, scene, tex, alpha, &slot_ov, o3d_mats.get(slot));
                     let mat = gpu.material(renderer, scene, mat);
                     gpu.text_textures.insert(key.clone(), (tex, mat, 1));
                     tg.texts.push(key);

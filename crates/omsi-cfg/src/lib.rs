@@ -469,7 +469,8 @@ fn name_key(name: &str) -> String {
 }
 
 type Listing = std::sync::Arc<std::collections::HashMap<String, std::ffi::OsString>>;
-static LISTINGS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Listing>>> = std::sync::OnceLock::new();
+// (read far more often than added to, by the loaders side by side: a lock for readers)
+static LISTINGS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<PathBuf, Listing>>> = std::sync::OnceLock::new();
 /// Bumped whenever content may have come or gone (a root added or taken away, a mod
 /// installed while the game runs): the caches of what is where start afresh.
 static CONTENT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -479,7 +480,7 @@ static CONTENT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 pub fn content_changed() {
     CONTENT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if let Some(l) = LISTINGS.get() {
-        l.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        l.write().unwrap_or_else(|e| e.into_inner()).clear();
     }
 }
 
@@ -491,8 +492,8 @@ pub fn content_generation() -> u64 {
 
 /// The entries of a directory by [`name_key`], listed once.
 fn dir_listing(dir: &Path) -> Listing {
-    let cache = LISTINGS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Some(l) = cache.lock().unwrap().get(dir) {
+    let cache = LISTINGS.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    if let Some(l) = cache.read().unwrap().get(dir) {
         return l.clone();
     }
     let mut map = std::collections::HashMap::new();
@@ -508,7 +509,7 @@ fn dir_listing(dir: &Path) -> Listing {
         }
     }
     let l = std::sync::Arc::new(map);
-    cache.lock().unwrap().insert(dir.to_path_buf(), l.clone());
+    cache.write().unwrap().insert(dir.to_path_buf(), l.clone());
     l
 }
 
@@ -641,7 +642,21 @@ fn mirrored_base(base: &Path, root: &Path, roots: &[PathBuf]) -> Option<PathBuf>
     if owner == root {
         return None;
     }
-    base.strip_prefix(owner).ok().map(|suffix| root.join(suffix))
+    base.strip_prefix(owner).ok().map(|suffix| {
+        // The suffix is spelled as in `base`'s root, which need not be how `root` spells it:
+        // a mod that ships `Vehicles/Foo/texture/...` next to the original pack's
+        // `Vehicles/Foo/Texture`. A case-sensitive file system (Linux) would not find the
+        // original's folder under the mod's spelling, so walk the suffix case-insensitively.
+        let parts: Vec<String> = suffix
+            .components()
+            .filter_map(|c| match c {
+                std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect();
+        let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+        resolve_existing(root, &refs).unwrap_or_else(|| root.join(suffix))
+    })
 }
 
 /// Case-insensitive walk of the components `rel` from `base` using the cached directory
@@ -810,6 +825,13 @@ pub fn resolve_path(base: &Path, rel: &str) -> PathBuf {
     for comp in rel {
         if *comp == ".." {
             cur.pop();
+            continue;
+        }
+        // the folder's listing, kept from the first time, has the name spelled just so:
+        // the path as asked for, which the file system would only confirm (a look on the
+        // disk for every component of every path was most of a lookup's time)
+        if dir_listing(&cur).get(&name_key(comp)).is_some_and(|n| n.as_os_str() == std::ffi::OsStr::new(comp)) {
+            cur.push(comp);
             continue;
         }
         let direct = cur.join(comp);
@@ -1011,6 +1033,27 @@ pub fn ensure_content_layout(dir: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mods_lowercase_texture_folder_does_not_hide_the_originals() {
+        // A mod ships `Vehicles/Pack/texture/..` (a livery) next to the original pack's
+        // `Vehicles/Pack/Texture/..`: a file asked for from the mod's folder is found in the
+        // original's, whatever the case of the folder, as on a case-insensitive file system
+        let t = std::env::temp_dir().join(format!("omsi-cfg-mirror-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let (mods, omsi) = (t.join("mods"), t.join("omsi"));
+        std::fs::create_dir_all(mods.join("Vehicles/Pack/texture")).unwrap();
+        std::fs::create_dir_all(omsi.join("Vehicles/Pack/Texture")).unwrap();
+        std::fs::write(omsi.join("Vehicles/Pack/Texture/black.dds"), b"x").unwrap();
+        let roots = vec![mods.clone(), omsi.clone()];
+        let mirrored = mirrored_base(&mods.join("Vehicles/Pack/texture"), &omsi, &roots).unwrap();
+        assert_eq!(mirrored, omsi.join("Vehicles/Pack/Texture"));
+        assert!(resolve_existing(&mirrored, &["black.dds"]).is_some());
+        // a folder the other root does not have keeps the plain spelling
+        let none = mirrored_base(&mods.join("Vehicles/Other/texture"), &omsi, &roots).unwrap();
+        assert_eq!(none, omsi.join("Vehicles/Other/texture"));
+        std::fs::remove_dir_all(&t).unwrap();
+    }
 
     #[test]
     fn writable_check() {

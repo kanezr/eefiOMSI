@@ -6,27 +6,48 @@
 //! and sound like, and taking the lanes and the vehicle types from the world, is omsi-app's
 //! `traffic` (its `Traffic` is a `TrafficSim` with its pictures and sounds).
 
+pub mod body_link;
+pub mod admission;
+pub mod berths;
 pub mod bus_service;
 pub mod control;
 pub mod deadlock;
+pub mod fixed_step;
+pub mod horn;
 pub mod density;
 pub mod dormant;
+pub mod emergency;
 pub mod junctions;
+pub mod lateral;
 pub mod light_paths;
 pub mod lights;
 pub mod mirror;
 pub mod model;
 pub mod obstacles;
+pub mod foot_grid;
 pub mod parked;
 pub mod planning;
+pub mod scenery;
 pub mod setup;
 pub mod stats;
 pub mod tick;
 pub mod viewer;
 #[cfg(test)]
+mod body_tests;
+#[cfg(test)]
 mod scenario_tests;
 #[cfg(test)]
+mod junction_tests;
+#[cfg(test)]
+mod service_tests;
+#[cfg(test)]
+mod population_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod lateral_tests;
+#[cfg(test)]
+mod emergency_tests;
 
 use crate::ai_motion::{
     back_in_ramp, pull_out_ramps, AiBody, MotionKind, BACK_IN_LAT_ACCEL, PULL_OUT_ACCEL,
@@ -44,8 +65,10 @@ use hashbrown::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use control::Removal;
 use dormant::*;
 use junctions::*;
+use lateral::*;
 use lights::*;
 use model::*;
 use obstacles::*;
@@ -125,12 +148,6 @@ pub struct TrafficSim {
     pub bus_loads: hashbrown::HashMap<u64, f32>,
     /// Seconds the player's vehicle has been standing.
     pub player_still: f32,
-    /// The turn per metre the player's bus is driving (rad/m, positive =
-    /// heading increasing, a right turn), from the heading's change over the
-    /// distance it moved since the last tick. The stretch of road ahead of its
-    /// nose that a car watches for it in follows the circle the bus is driving
-    /// with it, so on a bend it no longer reaches over into the opposite lane.
-    pub player_turn: f64,
     /// Time of day (seconds since midnight); light cycles and timetables run on it.
     pub day_time: f64,
     /// How fast the clock runs (the time speed): the timetable keeps to it.
@@ -199,10 +216,20 @@ pub struct TrafficSim {
     pub framed_spawns: Vec<(u64, DVec3)>,
     /// The player's vehicle as of the last tick (nothing is put on the road on top of it).
     pub player: Option<PlayerBox>,
+    /// The curvature of the player's path as of the last tick (1/m, positive to the right,
+    /// `player_turn_of`): the cars look for the bus along its turn (`in_player_sweep`).
+    pub player_turn: f64,
     /// The player's bus has right of way over the traffic (its script's `TrafficPriority`,
     /// OMSI: priority 1000 over the types' own): cars keep out of the way it is about
     /// to take for longer.
     pub player_priority: bool,
+    /// The LAN players whose vehicles' scripts claim priority (`TrafficPriority`, as their
+    /// variables come over the network): emergency vehicles like the player's (by session id,
+    /// set before each `tick`).
+    pub other_priority: hashbrown::HashSet<u32>,
+    /// Emergency vehicles on an active drive, the cars making way for them and the junctions
+    /// kept for them (`emergency`).
+    pub emergency: emergency::Emergency,
     /// The player's indicators (0 off, 1 left, 2 right, 3 hazard; `lan::indicator`), set
     /// before each `tick`.
     pub player_blinker: u8,
@@ -259,4 +286,25 @@ pub struct TrafficSim {
     pub others_now: Vec<PlayerBox>,
     /// `OMSI_TRAFFIC_STATS`: the flow statistics of the run (see `stats`).
     pub stats: Option<Box<stats::TrafficStats>>,
+    /// The scenery the traffic drives through: what a car stood for, or could not steer
+    /// free of, for `scenery::PATIENCE` seconds (a path the map lays through an object).
+    pub scenery_through: Vec<Obb>,
+    /// The frame time not yet run as a step (s, see `fixed_step`).
+    pub sim_accum: f64,
+    /// How far this frame's picture is from the step before the last to the last (0..1).
+    pub frame_alpha: f32,
+    /// Every car's parts as they stood before the last step, by id (see `fixed_step`).
+    pub pose_before: HashMap<u64, Vec<fixed_step::PartPose>>,
+    /// The lane changes the cars' ways require and those begun this step (see
+    /// `lateral::ChangeClaim`).
+    pub change_claims: Vec<lateral::ChangeClaim>,
+    /// Asks whether a box touches the scenery, for the cars' manoeuvres (`ghost_blocked`);
+    /// None: the player's collision world (`occluders`) is asked.
+    pub scenery_probe: Option<lateral::SceneryProbe>,
+    /// The stops' berths: which timetable bus holds which, who queues for it (`berths`).
+    pub berths: berths::Berths,
+    /// Cars taken off the road, by `Removal` (diagnostics).
+    pub removals: [u64; Removal::COUNT],
+    /// The requests to put vehicles on the road, and their answers (`admission`).
+    pub admission: admission::Admission,
 }

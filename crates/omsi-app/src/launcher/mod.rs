@@ -9,6 +9,7 @@
 //! functions `omsi-launcher --cli` offers a terminal.
 
 pub(crate) mod drive;
+mod device;
 pub(crate) mod mapview;
 pub mod mobile;
 pub mod phone;
@@ -99,6 +100,16 @@ pub struct Launcher {
     window: Option<Arc<Window>>,
     surface: Option<SurfaceState<'static>>,
     renderer: Option<Renderer>,
+    /// The renderer while its pipelines are being built (see `open_device`): the interface
+    /// is drawn on its device meanwhile, the bus preview waits for it.
+    starting: Option<crate::startup::RendererStart>,
+    /// The device, queue and format the interface is drawn with (the renderer's, or the
+    /// one being built's).
+    dev: Option<(wgpu::Device, wgpu::Queue, wgpu::TextureFormat)>,
+    /// The window was made hidden and is shown with its first picture (see `resumed`), and
+    /// the pictures tried so far.
+    show: bool,
+    tries: u32,
     gpu: Option<omsi_ui::Gpu>,
     ui: Ui,
     state: state::State,
@@ -140,7 +151,7 @@ pub struct Launcher {
     map_gen: u64,
     /// The picture last shown (its interface, layers, preview and atlas) and when: idle,
     /// the same picture is not drawn and shown again (see `frame`).
-    shown: Option<(Vec<omsi_ui::Vertex>, String, Instant)>,
+    shown: Option<(Vec<omsi_ui::Vertex>, Option<String>, Instant)>,
     /// The window has the keyboard / is hidden: without focus it is drawn ten times a
     /// second, hidden not at all (a game started from it is being played).
     focused: bool,
@@ -192,6 +203,10 @@ impl Launcher {
         window: None,
         surface: None,
         renderer: None,
+        starting: None,
+        dev: None,
+        show: false,
+        tries: 0,
         gpu: None,
         ui: Ui::new(),
         state: state::State::new(),
@@ -328,6 +343,8 @@ impl Launcher {
             let _ = h.join();
         }
         self.renderer = None;
+        self.starting = None;
+        self.dev = None;
         self.ime = false;
         self.window.take()
     }
@@ -338,36 +355,12 @@ impl Launcher {
         self.window = Some(window);
         self.surface = None;
         self.renderer = None;
+        self.starting = None;
+        self.dev = None;
         self.state.poll_now();
         self.state.load_profile();
     }
 
-    /// The surface for the window the launcher has (created again after the app was in the
-    /// background: a phone takes the window's surface away meanwhile).
-    fn make_surface(&mut self) {
-        let Some(window) = self.window.clone() else { return };
-        if self.renderer.is_none() {
-            // Finish dropping the device given up for a game before opening another one.
-            if let Some(h) = self.gpu_rest_drop.take() {
-                let _ = h.join();
-            }
-            let settings = crate::settings::Settings::load();
-            let renderer = match crate::startup::window_renderer(&mut self.instance, &window, showroom_options(&settings)) {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::startup::fatal_message(&format!("openOMSI cannot draw on this computer: {e:#}"));
-                    std::process::exit(1);
-                }
-            };
-            self.gpu = Some(omsi_ui::Gpu::new(&renderer.device, renderer.format(), 4, self.ui.atlas.size));
-            self.ui.atlas = omsi_ui::Atlas::new(self.ui.atlas.size);
-            self.renderer = Some(renderer);
-        }
-        let Some(renderer) = self.renderer.as_ref() else { return };
-        let size = window.inner_size();
-        self.surface = SurfaceState::new_with(&self.instance, window.clone(), renderer, size.width.max(1), size.height.max(1), true).ok();
-        self.last = Instant::now();
-    }
 }
 
 impl ApplicationHandler for Launcher {
@@ -410,6 +403,11 @@ impl ApplicationHandler for Launcher {
             // its own, so the pictures of a hidden window come out the same, and nothing pops
             // up on the screen of whoever runs the checks)
             attrs = attrs.with_active(false).with_visible(false);
+        } else if !mobile::mobile() && !cfg!(target_os = "macos") {
+            // (shown with its first picture: shown at once, Windows left it blank - white -
+            // until the first frame; macOS gives a window a background of its own)
+            attrs = attrs.with_visible(false);
+            self.show = true;
         }
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -419,29 +417,14 @@ impl ApplicationHandler for Launcher {
                 return;
             }
         };
-        let settings = crate::settings::Settings::load();
-        let renderer = match crate::startup::window_renderer(&mut self.instance, &window, showroom_options(&settings)) {
-            Ok(r) => r,
-            Err(e) => {
-                crate::startup::fatal_message(&format!("openOMSI cannot draw on this computer: {e:#}"));
-                event_loop.exit();
-                return;
-            }
-        };
+        if let Err(e) = self.open_device(&window, false) {
+            crate::startup::fatal_message(&format!("openOMSI cannot draw on this computer: {e:#}"));
+            event_loop.exit();
+            return;
+        }
         let size = window.inner_size();
-        let surface = match SurfaceState::new_with(&self.instance, window.clone(), &renderer, size.width, size.height, true) {
-            Ok(s) => s,
-            Err(e) => {
-                crate::startup::fatal_message(&format!("openOMSI cannot draw into its window: {e:#}"));
-                event_loop.exit();
-                return;
-            }
-        };
-        log::info!("launcher window {}x{} (scale {:.2}), adapter {}", size.width, size.height, window.scale_factor(), renderer.adapter_name);
-        self.gpu = Some(omsi_ui::Gpu::new(&renderer.device, renderer.format(), 4, self.ui.atlas.size));
+        log::info!("launcher window {}x{} (scale {:.2}) opened {:.2} s after the start", size.width, size.height, window.scale_factor(), self.started.elapsed().as_secs_f64());
         self.window = Some(window);
-        self.surface = Some(surface);
-        self.renderer = Some(renderer);
         self.last = Instant::now();
     }
 
@@ -469,7 +452,7 @@ impl ApplicationHandler for Launcher {
                 self.occluded = o;
                 if o {
                     self.pages.pads.cancel_feedback_test();
-                } else if self.renderer.is_none() {
+                } else if !self.device_open() {
                     // Back in view without a graphics device (a game just ended, or the
                     // window was covered while resting): draw again so the device is opened
                     // without waiting for the next slow occluded tick.
@@ -479,8 +462,10 @@ impl ApplicationHandler for Launcher {
                 }
             }
             WindowEvent::Resized(s) => {
-                if let (Some(sf), Some(r)) = (self.surface.as_mut(), self.renderer.as_ref()) {
-                    sf.resize(r, s.width, s.height);
+                match (self.surface.as_mut(), self.renderer.as_ref(), self.dev.as_ref()) {
+                    (Some(sf), Some(r), _) => sf.resize(r, s.width, s.height),
+                    (Some(sf), None, Some((device, _, _))) => sf.resize_on(device, s.width, s.height),
+                    _ => {}
                 }
             }
             WindowEvent::ModifiersChanged(m) => {
@@ -607,12 +592,12 @@ impl ApplicationHandler for Launcher {
         // that gives the graphics device up again when the game is back in front: the
         // game's window hides the launcher's then, and drawn nothing, it kept the device)
         // (likewise the frame that opens it again for a window brought forward)
-        let resting = !mobile::mobile() && self.renderer.is_some() && self.state.in_game() && !self.awake();
-        let waking = !mobile::mobile() && self.renderer.is_none() && self.state.in_game() && self.awake();
+        let resting = !mobile::mobile() && self.device_open() && self.state.in_game() && !self.awake();
+        let waking = !mobile::mobile() && !self.device_open() && self.state.in_game() && self.awake();
         // Device given up while a game runs: still need a redraw when the game ends so the
         // device is opened again (Occluded alone used to leave the resting picture forever).
-        let resume_needed = !mobile::mobile() && self.renderer.is_none() && !self.state.in_game();
-        let occluded = self.occluded && self.shot.is_none() && !resting && !waking && !resume_needed
+        let resume_needed = !mobile::mobile() && !self.device_open() && !self.state.in_game();
+        let occluded = self.occluded && !self.show && self.shot.is_none() && !resting && !waking && !resume_needed
             && !self.script.iter().any(|(_, c)| c.starts_with("shot"));
         let interval = if occluded {
             0.5
@@ -641,11 +626,16 @@ impl ApplicationHandler for Launcher {
             self.update_tick(event_loop);
             self.check_exit(event_loop);
             // A game may have ended on this tick: wake so `frame` opens the device again.
-            if !mobile::mobile() && self.renderer.is_none() && !self.state.in_game() {
+            if !mobile::mobile() && !self.device_open() && !self.state.in_game() {
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
             }
+        } else if self.show {
+            // The window made hidden until its first picture is drawn from here: Windows sends
+            // no paint message to a hidden window, so a redraw asked for never came and the
+            // launcher never appeared.
+            self.frame(event_loop);
         } else if let Some(w) = self.window.as_ref() {
             w.request_redraw();
         }
@@ -671,39 +661,6 @@ impl Launcher {
         // stayed the size of a 1440 x 880 window's, tiny across the width; the pages scroll or
         // keep their width, see `draw_ui`)
         dpi * (lw / 1440.0).min(lh / 820.0).clamp(0.8, 2.2)
-    }
-
-    /// The graphics device was lost (#274: an AMD Radeon's DX12 driver gave up while the
-    /// preview's textures went up, and the launcher then drew on the dead device, with
-    /// thousands of errors a second): everything made on it goes, the other interface is
-    /// taken - DirectX 12 and Vulkan for each other, remembered in the settings for the game
-    /// as well - and the window is drawn again on a new device. Twice at most.
-    fn recover_device(&mut self) -> bool {
-        let Some(why) = self.renderer.as_ref().and_then(|r| r.device_lost()) else { return false };
-        let tries = LAUNCHER_RECOVERIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let name = self.renderer.as_ref().map(|r| r.adapter_name.clone()).unwrap_or_default();
-        let other = if name.contains("(Dx12)") { Some("vulkan") } else if name.contains("(Vulkan)") && cfg!(windows) { Some("dx12") } else if name.contains("(Vulkan)") { Some("gl") } else { None };
-        log::error!("launcher: the graphics device was lost on {name} ({why}); {}", match (tries < 2, other) {
-            (true, Some(o)) => format!("drawing on {o} from now on"),
-            (true, None) => "drawing on a new device".to_string(),
-            _ => "giving up".to_string(),
-        });
-        if tries >= 2 {
-            return false;
-        }
-        if let Some(o) = other {
-            std::env::set_var("OMSI_BACKEND", o);
-            self.state.settings["graphics_api"] = serde_json::json!(o);
-            self.state.settings_dirty = 0.3;
-        }
-        self.surface = None;
-        self.drop_gpu();
-        if let Some(h) = self.gpu_rest_drop.take() {
-            let _ = h.join();
-        }
-        self.renderer = None;
-        self.make_surface();
-        true
     }
 
     #[cfg(not(target_os = "android"))]
@@ -757,7 +714,7 @@ impl Launcher {
         }
         // (only once the game is on its way: the launcher has the focus while Start is
         // pressed, and gives the device up then as before)
-        self.awake_in_game = f && self.renderer.is_none() && self.state.in_game() && self.state.queued_launch.is_none();
+        self.awake_in_game = f && !self.device_open() && self.state.in_game() && self.state.queued_launch.is_none();
     }
 
     /// Looked at while a game runs (see `awake_in_game`): drawn and answering as usual.
@@ -792,7 +749,7 @@ impl Launcher {
         };
         // (looked at while a game runs: drawn as usual, see `awake_in_game`)
         let awake = self.awake();
-        if desktop && self.renderer.is_none() {
+        if desktop && !self.device_open() {
             if self.state.in_game() && !awake {
                 // nothing is drawn while a game runs; what is clicked or typed meanwhile is not
                 // done once the launcher is back (the first frame pressed Start again)
@@ -826,12 +783,23 @@ impl Launcher {
         // graphics device is given up until the game ends (with it open, a game on an NVIDIA
         // card without Resizable BAR uploaded at 20 MB/s)
         // (asked again: a script's `focus 0` comes in the frame just drawn)
-        if desktop && self.renderer.is_some() && self.state.in_game() && !self.awake()
+        if desktop && self.device_open() && self.state.in_game() && !self.awake()
             && (self.state.queued_launch.is_none() || presence_released)
         {
             log::info!("launcher: a game starts or runs, the graphics device is given up until it ends");
             self.surface = None;
             self.drop_gpu();
+            self.dev = None;
+            // (a renderer still being built is let go of the same way, once it is there)
+            if let Some(start) = self.starting.take() {
+                if let Some(prev) = self.gpu_rest_drop.take() {
+                    let _ = prev.join();
+                }
+                self.gpu_rest_drop = std::thread::Builder::new()
+                    .name("launcher-gpu-rest".into())
+                    .spawn(move || start.abandon())
+                    .ok();
+            }
             // Dropping a wgpu device can wait on the GPU for seconds (especially while the
             // game is opening the same card). Do it off the UI thread so Windows does not
             // mark the launcher "Not Responding" over the resting picture.
@@ -861,6 +829,7 @@ impl Launcher {
         let now = Instant::now();
         let dt = now.duration_since(self.last).as_secs_f32().min(0.1);
         self.last = now;
+        self.poll_renderer();
         let (Some(window), Some(_)) = (self.window.clone(), self.surface.as_ref()) else { return };
         let scale = self.ui_scale();
         let phys = window.inner_size();
@@ -873,12 +842,11 @@ impl Launcher {
         self.update_discord();
         self.update_tick(event_loop);
         // the preview shows the chosen bus in the chosen light
-        let c = &self.state.choice;
-        let look = showroom::Look { root: std::path::PathBuf::from(&self.state.config.root), map: c.map.clone(), bus: c.bus.clone(), paint: c.paint.clone(), weather: c.weather.clone(), time: c.time, date: c.date.clone() };
         // (not while a game runs: the launcher looked at meanwhile loads no bus onto the card;
         // nor before the first frame is shown, which the bus's loading would hold up)
-        if !self.first_frame && !look.bus.is_empty() && !look.map.is_empty() && !self.state.in_game() {
-            self.showroom.want(look);
+        let c = &self.state.choice;
+        if !self.first_frame && !c.bus.is_empty() && !c.map.is_empty() && !self.state.in_game() {
+            self.showroom.want_choice(&self.state.config.root, c);
         }
         if let Some(r) = self.renderer.as_ref() {
             self.showroom.update(r, dt);
@@ -911,30 +879,34 @@ impl Launcher {
         self.touch_frame();
 
         // --- to the GPU: the preview when it changed, then the interface onto the window
-        let Some(renderer) = self.renderer.as_mut() else { return };
-        if let Some(r) = self.preview_rect {
-            let (w, h) = ((r.w * scale) as u32, (r.h * scale) as u32);
-            if let (Some(view), Some(gpu)) = (self.showroom.preview(renderer, w, h), self.gpu.as_mut()) {
-                if self.preview_gen != self.showroom.generation {
-                    self.preview_gen = self.showroom.generation;
-                    match self.preview_tex {
-                        Some(id) => gpu.set_view(&renderer.device, id, &view, (w, h)),
-                        None => self.preview_tex = Some(gpu.add_view(&renderer.device, &view, (w, h))),
+        // (the interface is drawn on the device of the renderer still being built: the bus
+        // preview and the map picture wait for the renderer)
+        let Some((device, queue, _)) = self.dev.clone() else { return };
+        if let Some(renderer) = self.renderer.as_mut() {
+            if let Some(r) = self.preview_rect {
+                let (w, h) = ((r.w * scale) as u32, (r.h * scale) as u32);
+                if let (Some(view), Some(gpu)) = (self.showroom.preview(renderer, w, h), self.gpu.as_mut()) {
+                    if self.preview_gen != self.showroom.generation {
+                        self.preview_gen = self.showroom.generation;
+                        match self.preview_tex {
+                            Some(id) => gpu.set_view(&renderer.device, id, &view, (w, h)),
+                            None => self.preview_tex = Some(gpu.add_view(&renderer.device, &view, (w, h))),
+                        }
                     }
                 }
             }
-        }
-        // the map picture, drawn again when what it shows, where it looks or the zoom's own
-        // thinness changed
-        if self.map_rect.is_some() {
-            if let Some(view) = self.mapview.picture(renderer) {
-                if let Some(gpu) = self.gpu.as_mut() {
-                    if self.map_gen != self.mapview.generation {
-                        self.map_gen = self.mapview.generation;
-                        let size = self.mapview.pixels();
-                        match self.map_tex {
-                            Some(id) => gpu.set_view(&renderer.device, id, &view, size),
-                            None => self.map_tex = Some(gpu.add_view(&renderer.device, &view, size)),
+            // the map picture, drawn again when what it shows, where it looks or the zoom's own
+            // thinness changed
+            if self.map_rect.is_some() {
+                if let Some(view) = self.mapview.picture(renderer) {
+                    if let Some(gpu) = self.gpu.as_mut() {
+                        if self.map_gen != self.mapview.generation {
+                            self.map_gen = self.mapview.generation;
+                            let size = self.mapview.pixels();
+                            match self.map_tex {
+                                Some(id) => gpu.set_view(&renderer.device, id, &view, size),
+                                None => self.map_tex = Some(gpu.add_view(&renderer.device, &view, size)),
+                            }
                         }
                     }
                 }
@@ -944,10 +916,10 @@ impl Launcher {
         for (addr, img) in std::mem::take(&mut self.icons_pending) {
             if let Some(gpu) = self.gpu.as_mut() {
                 let (w, h) = img.dimensions();
-                let tex = renderer.device.create_texture(&wgpu::TextureDescriptor { label: Some("server icon"), size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8UnormSrgb, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[] });
-                renderer.queue.write_texture(tex.as_image_copy(), &img, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: Some(h) }, wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 });
+                let tex = device.create_texture(&wgpu::TextureDescriptor { label: Some("server icon"), size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: wgpu::TextureFormat::Rgba8UnormSrgb, usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST, view_formats: &[] });
+                queue.write_texture(tex.as_image_copy(), &img, wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: Some(h) }, wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 });
                 let view = tex.create_view(&Default::default());
-                let id = gpu.add_view(&renderer.device, &view, (w, h));
+                let id = gpu.add_view(&device, &view, (w, h));
                 self.icons.insert(addr, id);
             }
         }
@@ -957,17 +929,19 @@ impl Launcher {
         // and DirectX 11 cost as much as a frame of the game's interface. Once a second it is
         // drawn all the same.
         // (the map is drawn every frame it is open: its markers follow the mouse)
-        let key = format!("{pw}x{ph} {} {} {} {layers:?} {ranges:?}", self.preview_gen, self.showroom.drawn, self.ui.atlas.generation);
         let idle = self.last_input.elapsed().as_secs_f32() > 3.0 && self.dragging.is_none() && self.shot.is_none() && self.map_rect.is_none();
+        // (the picture's key is written out only when idle: every layer and range formatted
+        // each frame, for a comparison made only then; the first idle frame is shown again)
+        let key = idle.then(|| format!("{pw}x{ph} {} {} {} {layers:?} {ranges:?}", self.preview_gen, self.showroom.drawn, self.ui.atlas.generation));
         if idle && self.shown.as_ref().is_some_and(|(v, k, at)| *v == verts && *k == key && at.elapsed().as_secs_f32() < 1.0) {
             self.check_exit(event_loop);
             return;
         }
         let draws: Vec<Draw> = ranges.iter().enumerate().map(|(k, (r, tex))| Draw { buffer: 0, range: r.clone(), layer: k, texture: *tex }).collect();
-        let bg = wgpu::Color { r: 0.0056, g: 0.0056, b: 0.0056, a: 1.0 };
+        let bg = crate::startup::WINDOW_BACKGROUND;
         if let Some(gpu) = self.gpu.as_mut() {
-            gpu.upload(&renderer.device, &renderer.queue, 0, &verts);
-            gpu.upload_atlas(&renderer.queue, &mut self.ui.atlas);
+            gpu.upload(&device, &queue, 0, &verts);
+            gpu.upload_atlas(&queue, &mut self.ui.atlas);
         }
         // OMSI_LAUNCHER_SHOT: the window's picture into a file (drawn into a texture of its
         // own, so a hidden window gives one too)
@@ -981,28 +955,42 @@ impl Launcher {
                 }
             }
         }
-        let Some(renderer) = self.renderer.as_mut() else { return };
-        let surface = self.surface.as_mut().unwrap();
-        let frame = match surface.surface.get_current_texture() {
+        let Some(surface) = self.surface.as_mut() else { return };
+        let frame = match surface.acquire() {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                surface.resize(renderer, pw, ph);
+                match self.renderer.as_ref() {
+                    Some(r) => surface.resize(r, pw, ph),
+                    None => surface.resize_on(&device, pw, ph),
+                }
                 return;
             }
-            _ => return,
+            _ => {
+                // (a hidden window - OMSI_BACKGROUND's - gives no picture to draw into: its
+                // first frame counts as drawn, and the preview goes on loading after it)
+                if std::mem::take(&mut self.first_frame) {
+                    log::info!("launcher: first frame drawn (the window is hidden) in {:.2} s", self.started.elapsed().as_secs_f64());
+                }
+                self.show_window();
+                return;
+            }
         };
-        let view = frame.texture.create_view(&Default::default());
+        // (ANGLE presents through an sRGB stand-in: the swapchain's own view is not the
+        // interface's target, and resolving into it was a black window on DirectX 11)
+        let view = surface.view(&device, &frame);
         if let Some(gpu) = self.gpu.as_mut() {
-            let mut enc = renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("launcher") });
-            gpu.render(&renderer.device, &renderer.queue, &mut enc, &view, (pw, ph), Some(bg), &layers, &draws);
-            renderer.queue.submit([enc.finish()]);
+            let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("launcher") });
+            gpu.render(&device, &queue, &mut enc, &view, (pw, ph), Some(bg), &layers, &draws);
+            queue.submit([enc.finish()]);
         }
         window.pre_present_notify();
-        frame.present();
+        surface.present(&device, &queue, frame);
         self.shown = Some((verts, key, Instant::now()));
         if std::mem::take(&mut self.first_frame) {
             log::info!("launcher: first frame presented in {:.2} s", self.started.elapsed().as_secs_f64());
         }
+        self.tries = 3;
+        self.show_window();
         self.check_exit(event_loop);
     }
 
@@ -1076,33 +1064,6 @@ impl Launcher {
         }
     }
 
-    /// The window's picture drawn again into a texture and read back (for OMSI_LAUNCHER_SHOT).
-    fn shot_image(&mut self, w: u32, h: u32, layers: &[omsi_ui::Layer], draws: &[Draw], bg: wgpu::Color) -> Option<image::RgbaImage> {
-        let r = self.renderer.as_mut()?;
-        let gpu = self.gpu.as_mut()?;
-        let tex = r.device.create_texture(&wgpu::TextureDescriptor { label: Some("launcher shot"), size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: r.format(), usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, view_formats: &[] });
-        let view = tex.create_view(&Default::default());
-        let mut enc = r.device.create_command_encoder(&Default::default());
-        gpu.render(&r.device, &r.queue, &mut enc, &view, (w, h), Some(bg), layers, draws);
-        let stride = (w * 4).div_ceil(256) * 256;
-        let buf = r.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (stride * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
-        enc.copy_texture_to_buffer(tex.as_image_copy(), wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(stride), rows_per_image: None } }, wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 });
-        r.queue.submit([enc.finish()]);
-        buf.slice(..).map_async(wgpu::MapMode::Read, |_| {});
-        r.device.poll(wgpu::PollType::wait_indefinitely()).ok();
-        let data = buf.slice(..).get_mapped_range();
-        let bgra = matches!(r.format(), wgpu::TextureFormat::Bgra8UnormSrgb | wgpu::TextureFormat::Bgra8Unorm);
-        let mut img = image::RgbaImage::new(w, h);
-        for y in 0..h {
-            for x in 0..w {
-                let i = (y * stride + x * 4) as usize;
-                let (r_, g, b) = if bgra { (data[i + 2], data[i + 1], data[i]) } else { (data[i], data[i + 1], data[i + 2]) };
-                img.put_pixel(x, y, image::Rgba([r_, g, b, 255]));
-            }
-        }
-        Some(img)
-    }
-
     fn draw_ui(&mut self) {
         if self.page != Page::Controls || self.pages.controls_tab != 1 {
             self.pages.pads.cancel_feedback_test();
@@ -1140,7 +1101,7 @@ impl Launcher {
         });
         // a phone: the launcher made for it, not the desktop's pages
         if mobile {
-            if self.page == Page::Setup && !omsi_cfg::missing_original_essentials(std::path::Path::new(&self.state.config.root)).is_empty() && self.phone.page.is_none() {
+            if self.page == Page::Setup && self.phone.page.is_none() && root_incomplete(&self.state.config.root) {
                 self.phone.tab = phone::Tab::More;
                 self.phone.page = Some(Page::Setup);
             }
@@ -1429,10 +1390,26 @@ impl Launcher {
 }
 
 
+/// Whether `root` lacks some of the original game (`missing_original_essentials`), looked at
+/// again at most once a second: asked every frame of the phone's Setup page, it looked for
+/// every essential file of the installation each time.
+fn root_incomplete(root: &str) -> bool {
+    static LAST: std::sync::Mutex<Option<(String, Instant, bool)>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((r, at, v)) = last.as_ref() {
+        if r == root && at.elapsed().as_secs_f32() < 1.0 {
+            return *v;
+        }
+    }
+    let v = !omsi_cfg::missing_original_essentials(std::path::Path::new(root)).is_empty();
+    *last = Some((root.to_string(), Instant::now(), v));
+    v
+}
+
 /// The showroom's renderer: a bus on a floor needs none of the game's costly passes - no
 /// ambient occlusion, a small shadow map, 4x MSAA for the edges whatever the game uses -
 /// and it draws Vanilla+ whatever the game does (`showroom::lighting_for`): no enhanced
 /// pipelines, reflection probe or cloud noise either (`RenderOptions::preview_only`).
-fn showroom_options(settings: &crate::settings::Settings) -> omsi_render::RenderOptions {
+pub(crate) fn showroom_options(settings: &crate::settings::Settings) -> omsi_render::RenderOptions {
     omsi_render::RenderOptions { msaa: 4, ssao: false, shadow_size: 1024, render_scale: 1.0, preview_only: true, no_enhanced: true, ray_tracing: false, ..settings.render_options() }
 }

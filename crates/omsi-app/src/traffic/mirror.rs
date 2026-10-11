@@ -91,6 +91,7 @@ impl Traffic {
             light_hold: false,
             reserved: Vec::new(),
             amber: None,
+            amber_start: false,
             passing: None,
             gone: false,
             fresh: 0.0,
@@ -114,9 +115,17 @@ impl Traffic {
             consist_reversed: false,
             waits_on: None,
             yield_to: None,
-            deadlock_pass: f32::MIN,
-            deadlock_tried: f32::MIN,
+            sideways: Default::default(),
+            yield_pass: f32::MIN,
+            tail_claims: Vec::new(),
+            tail: 0.0,
+            exit_claim: None,
+            holds: Vec::new(),
+            courtesy: false,
+            horn: Default::default(),
+            make_way: None,
             park: None,
+            guard: Default::default(),
         });
         view.insert(id, render);
         self.sim.cars.len() - 1

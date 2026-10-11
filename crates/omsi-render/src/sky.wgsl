@@ -36,6 +36,7 @@ struct Camera {
     inside2_a: vec4<f32>,
     inside2_b: vec4<f32>,
     inside2_c: vec4<f32>,
+    cookies: array<vec4<f32>, 8>,
 };
 
 // A hash of a lattice point, from its integer bits.

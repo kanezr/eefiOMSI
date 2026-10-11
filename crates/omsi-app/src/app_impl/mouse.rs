@@ -145,7 +145,7 @@ impl App {
     /// steering's point stands in it.
     pub(super) fn cursor_moved_to(&mut self, x: f32, y: f32) {
         // a plugin's slider or panel being dragged follows the cursor
-        if self.plugin_drag_move(x, y) {
+        if self.plugin_drag_move(x, y) || self.game_panel_drag(x) {
             self.input.cursor = (x, y);
             return;
         }
@@ -542,6 +542,17 @@ impl App {
                     p.release();
                 }
                 self.input.dragging = false;
+            }
+        }
+        // the map camera (F4): a click on the ground that worked nothing of the bus asks
+        // whether to move the bus there (`game_panels::move_here`)
+        if pressed && self.view == "free" && !self.cam.ego && !self.input.dragging && self.menus.game_menu.is_none() && !self.mouse_steering_now() {
+            if self.player.as_ref().is_some_and(|p| crate::rail_drive::is_rail(&p.vehicle.ty.def)) {
+                return;
+            }
+            let hit = self.cursor_ray_now().zip(self.world.clone()).and_then(|((o, d, _), w)| crate::placing::ground_hit(&w, o, d.as_dvec3(), 2000.0));
+            if let Some(at) = hit {
+                crate::game_panels::ask_move(self, at);
             }
         }
     }

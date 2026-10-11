@@ -39,6 +39,23 @@ pub(crate) fn update_vehicle(
     duty: &PlayerDuty,
     fonts: &mut omsi_sim::texttex::FontLibrary,
 ) -> Result<()> {
+    // A model without the string has no paper to show: nothing to draw, nothing to look
+    // for on the disk (this ran, file check included, on every frame of such a bus).
+    let Some(var) = vehicle.ty.program.str_var("file_schedule") else {
+        return Ok(());
+    };
+    let var = var as usize;
+    // The paper changes with the trip only: while what it is drawn from and the name the
+    // bus shows are as they were last time, the text is not set again every frame.
+    static LAST: std::sync::Mutex<Option<(u64, String)>> = std::sync::Mutex::new(None);
+    let key = input_key(duty);
+    if let Ok(last) = LAST.lock() {
+        if let Some((k, name)) = last.as_ref() {
+            if *k == key && vehicle.state.str_vars.get(var) == Some(name) {
+                return Ok(());
+            }
+        }
+    }
     let (arr, dep) = tt_labels();
     let (title, rows) = paper_content(&duty.line, &duty.tour, &duty.trips, duty.trip_index, (arr, dep));
     let lines = paper_lines(&title, &rows);
@@ -46,7 +63,8 @@ pub(crate) fn update_vehicle(
     let path = cache_dir()?.join(format!("schedule-v7-{signature:016x}.png"));
     let filename = path.to_string_lossy().into_owned();
 
-    if vehicle.str_var("file_schedule") == filename {
+    if vehicle.state.str_vars.get(var) == Some(&filename) {
+        remember(&LAST, key, filename);
         return Ok(());
     }
 
@@ -62,7 +80,33 @@ pub(crate) fn update_vehicle(
         save_png(&image, &path)?;
     }
     set_filename(vehicle, &filename);
+    remember(&LAST, key, filename);
     Ok(())
+}
+
+fn remember(last: &std::sync::Mutex<Option<(u64, String)>>, key: u64, filename: String) {
+    if let Ok(mut last) = last.lock() {
+        *last = Some((key, filename));
+    }
+}
+
+/// Everything `paper_content` reads of the duty, hashed (the labels are fixed for the run).
+fn input_key(duty: &PlayerDuty) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    duty.line.hash(&mut hasher);
+    duty.tour.hash(&mut hasher);
+    duty.trip_index.hash(&mut hasher);
+    if let Some(trip) = duty.trips.get(duty.trip_index) {
+        trip.line.hash(&mut hasher);
+        trip.terminus.hash(&mut hasher);
+        for stop in &trip.stops {
+            stop.name.hash(&mut hasher);
+            stop.stops.hash(&mut hasher);
+            stop.arr.to_bits().hash(&mut hasher);
+            stop.dep.to_bits().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
 fn cache_dir() -> Result<PathBuf> {

@@ -4,9 +4,10 @@
 
 use super::*;
 
-mod batch;
+pub(crate) mod batch;
 mod cull;
 mod effects;
+mod headlamp_shadow;
 mod main_pass;
 mod post;
 mod prepass;
@@ -16,6 +17,7 @@ mod shadow_plan;
 mod submit;
 
 pub(crate) use batch::DrawPlan;
+pub(crate) use headlamp_shadow::{headlamp_shadow, lamp_shadow_code, own_headlamp, VehicleBox};
 pub(crate) use shadow_plan::ShadowPlan;
 
 /// The frame's switches from the environment: read once at the start of every frame

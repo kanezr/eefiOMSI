@@ -29,6 +29,9 @@ pub(crate) fn traffic_tick(
     t.other_blinkers = outline_indicators(remotes, player, placed);
     if !paused {
         t.player_priority = player.and_then(|p| p.vehicle.var("TrafficPriority")).is_some_and(|v| v > 0.5);
+        // (a LAN player's emergency vehicle: its scripts' variables come over the network,
+        // `omsi_net::vars`, for a copy of the same vehicle files)
+        t.other_priority = remotes.remotes.iter().filter(|(_, r)| r.vehicle().var("TrafficPriority").is_some_and(|v| v > 0.5)).map(|(id, _)| *id).collect();
         t.player_blinker = player.map(|p| lan::indicator(&p.vehicle)).unwrap_or(0);
         t.tick(view, dt, player.map(|p| player_outline(p)));
         world.set_switches(&t.switch_requests());
@@ -57,7 +60,7 @@ pub(crate) fn deliver_player_impacts(p: &mut Player, traffic: Option<&mut traffi
 pub(crate) fn gloomy_weather(weather: Option<&omsi_content::weather::Weather>) -> bool {
     weather.map(|w| {
         let (kind, rate) = precip_of(w);
-        w.fog.0 < 600.0 || (kind != 0 && rate > 0.05) || w.clouds.0.trim().to_ascii_lowercase().starts_with("overcast")
+        w.fog.0 < 600.0 || (kind != 0 && rate > 0.05) || w.clouds.0.trim().as_bytes().get(..8).is_some_and(|p| p.eq_ignore_ascii_case(b"overcast"))
     }).unwrap_or(false)
 }
 
@@ -271,7 +274,7 @@ pub(crate) fn career_from_humans(career: &mut career::Career, h: &humans::Humans
 /// `game_clock`: the clock the journey's head line is written with (none: the bus's own).
 /// `learn_loaded`: the stops of the tiles loaded are learnt first. `plugin_events`: where
 /// skipped stops and the end of a trip are told to the plugins (none: a trip's end is
-/// dropped, the skipped stops are kept). The trip that ended (its index), if it did.
+/// dropped, the skipped stops are kept).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn duty_step(
     d: &mut schedule::PlayerDuty,
@@ -284,7 +287,7 @@ pub(crate) fn duty_step(
     game_clock: Option<&omsi_sim::SimClock>,
     learn_loaded: bool,
     plugin_events: Option<&mut Vec<omsi_plugin::GameEvent>>,
-) -> Option<usize> {
+) {
     if let Some(stop) = p.html_next_stop.take() {
         if d.skip_to(stop) {
             let (trip, k) = d.trip_for_ibis();
@@ -308,8 +311,11 @@ pub(crate) fn duty_step(
     {
         let clock = game_clock.unwrap_or(&p.vehicle.host.clock);
         let career = &*career;
-        let odo = crate::journey::odometer_km(&p.vehicle);
-        crate::journey::note(journey, d, due, served, odo, root, || crate::journey::head(career, &world.global.name, &p.vehicle, clock));
+        crate::journey::note(journey, d, due, served, p.vehicle.odometer_km(), root, || crate::journey::head(career, &world.global.name, &p.vehicle, clock));
+    }
+    // (the trip's summary, for the game to show)
+    if let (Some(f), Some(j)) = (ended.as_ref(), journey.as_mut()) {
+        j.trip_ended(f.index);
     }
     if let Some(events) = plugin_events {
         use omsi_plugin::InfoValue::{Num, Text};
@@ -337,7 +343,6 @@ pub(crate) fn duty_step(
     ) {
         log::warn!("driver timetable paper: {e:#}");
     }
-    ended.map(|f| f.index)
 }
 
 /// The tyres' spray (see `puddles`): what every vehicle's tyres throw up from the water on
@@ -452,19 +457,18 @@ pub(crate) fn departure_boards(
     world: &World,
     traffic: Option<&traffic::Traffic>,
     duty: Option<&schedule::PlayerDuty>,
-    player_hof: Option<&omsi_vehicle::Hof>,
     clock: &omsi_sim::SimClock,
 ) {
     match schedule {
-        Some(s) => s.update_boards(world, traffic, duty, player_hof, clock),
+        Some(s) => s.update_boards(world, traffic, duty, clock),
         None => world.timetable_boards.lock().clock = Some(clock.clone()),
     }
 }
 
 /// The mirror panels follow the bus's mirrors (their aspects and glass from the world).
 pub(crate) fn mirror_hud_sync(hud: &mut crate::mirror_hud::MirrorHud, world: &World, p: &Player, mode: u8) {
-    hud.set_aspects(world.mirror_aspect.lock().clone());
-    hud.set_glass(world.mirror_glass.lock().clone());
+    hud.set_aspects(&world.mirror_aspect.lock());
+    hud.set_glass(&world.mirror_glass.lock());
     hud.sync(p, mode);
 }
 

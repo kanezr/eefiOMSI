@@ -18,6 +18,9 @@ pub struct World {
     pub mirror_glass: Mutex<Vec<Option<MirrorGlass>>>,
     pub(super) object_types: Mutex<HashMap<String, Option<Arc<ObjectType>>>>,
     pub(super) spline_types: Mutex<HashMap<String, Option<Arc<SplineType>>>>,
+    /// The types being read right now (see `OnceByKey`).
+    pub(super) object_type_loads: super::open::OnceByKey<Option<Arc<ObjectType>>>,
+    pub(super) spline_type_loads: super::open::OnceByKey<Option<Arc<SplineType>>>,
     pub textures: Arc<TextureCache>,
     /// World position (with terrain height) and rotation of every loaded map object by id.
     pub object_positions: Mutex<HashMap<i64, (DVec3, [f64; 3])>>,
@@ -145,6 +148,8 @@ pub struct World {
     /// The map's `signalroutes.cfg` (unit `mc_fahrstrasse`): which track pieces each railway
     /// signal protects, its distant signal, the next signal and a speed limit.
     pub signal_routes: Vec<omsi_map::ailists::SignalRoute>,
+    /// The objects `signal_routes` names as signals or distant signals (`set_signals`).
+    pub(super) signal_ids: hashbrown::HashSet<i64>,
     /// Chrono folders active on the sim date, in order, and the merged AI lists / date.
     /// The chrono scenarios in force on the sim date (changed at midnight: `set_date`).
     pub chrono_dirs: parking_lot::RwLock<Vec<PathBuf>>,

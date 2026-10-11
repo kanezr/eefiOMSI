@@ -604,9 +604,7 @@ impl Spray {
                 }
                 let outside = b.outside(p.pos);
                 if cab.iter().any(|c| std::ptr::eq(*c, *b)) {
-                    // a billboard faces the eye: one that reaches into the box from beside
-                    // it is drawn in the cabin, so it has to be clear of it by its size
-                    alpha *= smoothstep(0.6 * size, size + 0.2, outside);
+                    alpha *= cab_clearance(outside, size);
                 } else if outside < UNDER_BODY_BLEND {
                     // under the body: kept below the floor, half seen - and so, fading out,
                     // over the 30 cm round it, not in a step where it comes out
@@ -629,9 +627,61 @@ impl Spray {
     }
 }
 
+/// How much of a puff of half width `size`, `outside` metres out of the body the camera
+/// sits in, may show: a billboard faces the eye, so one that reaches into the box from
+/// beside it is drawn in the cabin - it has to be clear of the box by its size.
+fn cab_clearance(outside: f32, size: f32) -> f32 {
+    smoothstep(0.6 * size, size + 0.2, outside)
+}
+
+/// The vehicles' own particles (`[smoke]`: the stock buses' wheel spray from `spray.osc`,
+/// the exhaust) kept out of the body the camera sits in, as the tyres' spray is (see
+/// [`Spray::sprites`]): from the driver's seat or a passenger's, the spray thrown up in the
+/// wheel arches - inside the body's box - was drawn over the floor and the seats beside them.
+/// `smoke[from..]` are the vehicles' particles; nothing changes while the camera is in no body.
+pub fn keep_out_of_cab(vehicles: &[&omsi_sim::VehicleInstance], eye: DVec3, smoke: &mut Vec<SmokeParticle>, from: usize) {
+    if from >= smoke.len() {
+        return;
+    }
+    let cab: Vec<Body> = vehicles
+        .iter()
+        .filter(|v| (v.position - eye).length() < 60.0)
+        .flat_map(|v| crate::rain::vehicle_boxes(v))
+        .map(|(origin, heading, bb)| Body { origin, heading, bb })
+        .filter(|b| b.contains(eye, 0.0))
+        .collect();
+    if cab.is_empty() {
+        return;
+    }
+    let mut k = 0;
+    smoke.retain_mut(|p| {
+        k += 1;
+        if k <= from {
+            return true;
+        }
+        for b in &cab {
+            p.alpha *= cab_clearance(b.outside(p.position), p.size);
+        }
+        p.alpha > 0.002
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A vehicle's own spray in its wheel arch does not show from inside it, and spray well
+    /// clear of the body does.
+    #[test]
+    fn own_spray_stays_out_of_the_cab() {
+        let b = Body { origin: DVec3::ZERO, heading: 0.0, bb: [2.5, 12.0, 3.0, 0.0, 0.0, 1.5] };
+        let eye = DVec3::new(-0.6, 4.0, 2.0);
+        assert!(b.contains(eye, 0.0));
+        let arch = DVec3::new(1.0, 3.5, 0.4);
+        assert_eq!(cab_clearance(b.outside(arch), 0.3), 0.0);
+        let beside = DVec3::new(3.0, 3.5, 0.4);
+        assert_eq!(cab_clearance(b.outside(beside), 0.3), 1.0);
+    }
 
     fn puddle_coverage(x: f64, y: f64, wet_road: f32) -> f32 {
         water_at(x, y, wet_road).puddle

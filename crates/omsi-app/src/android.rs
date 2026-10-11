@@ -74,7 +74,12 @@ fn android_main(app: AndroidApp) {
     };
     std::env::set_var("OMSI_CONTENT", &content);
     let _ = std::fs::write(content.join("README.txt"), README);
-    hide_from_gallery(&content);
+    // (beside the start, not before it: a folder read and a file written for each of the
+    // content folder's folders, on a slow card storage while the screen stayed empty)
+    {
+        let content = content.clone();
+        std::thread::spawn(move || hide_from_gallery(&content));
+    }
     // `openOMSI/env.txt`: the OMSI_* switches a computer takes from its environment, one
     // `NAME=value` a line (a phone has no environment to set; for looking into problems)
     if let Ok(t) = std::fs::read_to_string(content.join("env.txt")) {
@@ -100,7 +105,7 @@ fn android_main(app: AndroidApp) {
             return;
         }
     };
-    let mut shell = Shell { launcher: None, game: None, instance: None };
+    let mut shell = Shell { launcher: None, game: None, early: None };
     if let Err(e) = event_loop.run_app(&mut shell) {
         log::error!("{e}");
     }
@@ -312,7 +317,38 @@ they are not photos - deleting them breaks buses and maps.\n";
 struct Shell {
     launcher: Option<Box<launcher::Launcher>>,
     game: Option<Box<App>>,
-    instance: Option<()>,
+    /// The window, its graphics device and surface made for the first picture, before the
+    /// launcher is (see `first_picture`).
+    early: Option<Early>,
+}
+
+struct Early {
+    window: Arc<Window>,
+    instance: wgpu::Instance,
+    start: crate::startup::RendererStart,
+    surface: SurfaceState<'static>,
+}
+
+/// The app's first picture, as soon as it has a window: the launcher's background colour.
+/// The window the system hands over has no picture until the app draws one, and the phone's
+/// wallpaper showed through it while the launcher was put together - the installation
+/// looked for, the archives mounted, the renderer built - before its first frame (seconds,
+/// half a minute on a first start). The device opened for it is the launcher's from then on.
+fn first_picture(event_loop: &ActiveEventLoop) -> Option<Early> {
+    let t = std::time::Instant::now();
+    let window = Arc::new(event_loop.create_window(Window::default_attributes().with_title("openOMSI")).ok()?);
+    let mut instance = graphics_instance();
+    let start = crate::startup::RendererStart::begin(&mut instance, &window, launcher::showroom_options(&crate::settings::Settings::load())).ok()?;
+    let size = window.inner_size();
+    let surface = start.early().then(|| SurfaceState::early(&instance, window.clone(), &start.device, start.format, size.width.max(1), size.height.max(1), true).ok()).flatten();
+    let Some(mut surface) = surface else {
+        // (the launcher opens its own: this one's pipelines go once they are built)
+        std::thread::spawn(move || start.abandon());
+        return None;
+    };
+    let shown = crate::startup::present_clear(&mut surface, &start.device, &start.queue, &window, crate::startup::WINDOW_BACKGROUND);
+    log::info!("first picture {} in {:.2} s", if shown { "shown" } else { "not shown" }, t.elapsed().as_secs_f64());
+    Some(Early { window, instance, start, surface })
 }
 
 impl Shell {
@@ -325,11 +361,16 @@ impl Shell {
             }
             // (an installation chosen under Setup is known from here on)
             if let Some(content) = crate::startup::content_dir() {
-                hide_from_gallery(&content);
+                std::thread::spawn(move || hide_from_gallery(&content));
             }
             launcher_statics();
-            self.instance = Some(());
-            self.launcher = Some(Box::new(launcher::Launcher::new(graphics_instance())));
+            let early = self.early.take();
+            let instance = early.as_ref().map(|e| e.instance.clone()).unwrap_or_else(graphics_instance);
+            let mut l = Box::new(launcher::Launcher::new(instance));
+            if let Some(e) = early {
+                l.adopt_early(e.window, e.start, e.surface);
+            }
+            self.launcher = Some(l);
         }
         self.launcher.as_mut().unwrap()
     }
@@ -413,6 +454,9 @@ impl Shell {
 impl ApplicationHandler for Shell {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         log::info!("app in front");
+        if self.game.is_none() && self.launcher.is_none() && self.early.is_none() {
+            self.early = first_picture(event_loop);
+        }
         match self.game.as_mut() {
             Some(g) => g.resumed(event_loop),
             None => self.launcher().resumed(event_loop),

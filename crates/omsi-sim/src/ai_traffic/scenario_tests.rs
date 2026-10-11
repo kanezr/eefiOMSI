@@ -8,13 +8,13 @@ use crate::traffic::{LaneBuilder, LaneKey};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A vehicle type with no model and no scripts, in a folder of its own.
-struct Fixture {
-    dir: std::path::PathBuf,
-    ty: Arc<VehicleType>,
+pub(super) struct Fixture {
+    pub(super) dir: std::path::PathBuf,
+    pub(super) ty: Arc<VehicleType>,
 }
 
 impl Fixture {
-    fn new() -> Fixture {
+    pub(super) fn new() -> Fixture {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
             "omsi-traffic-scenario-{}-{}",
@@ -35,19 +35,19 @@ impl Drop for Fixture {
     }
 }
 
-fn traffic(f: &Fixture, mut net: Network) -> TrafficSim {
+pub(super) fn traffic(f: &Fixture, mut net: Network) -> TrafficSim {
     net.build_grid();
     net.compute_reach();
     let random = RandomTypes { types: Vec::new(), groups: Vec::new(), group_curves: false, group_uvg: Vec::new(), uvg_defaults: Vec::new() };
     TrafficSim::assemble(&f.dir, net, random, Vec::new(), HashMap::new(), (Vec::new(), Vec::new()), Vec::new(), (1.0, 0), 0)
 }
 
-fn add_car(t: &mut TrafficSim, f: &Fixture, lane: usize, s: f32, seed: u64, speed: Option<f32>) -> u64 {
+pub(super) fn add_car(t: &mut TrafficSim, f: &Fixture, lane: usize, s: f32, seed: u64, speed: Option<f32>) -> u64 {
     let vehicle = VehicleInstance::new(f.ty.clone(), crate::VehicleHost::new(crate::SimClock::default()));
     t.place_car(vehicle, LaneKind::Street, lane, s, f.ty.clone(), seed, None, None, speed, None)
 }
 
-fn street(start: DVec3, heading: f64, length: f64) -> crate::traffic::Lane {
+pub(super) fn street(start: DVec3, heading: f64, length: f64) -> crate::traffic::Lane {
     LaneBuilder::arc(start, heading, length, 0.0, 0.0, LaneKind::Street, 3.0)
 }
 
@@ -55,7 +55,7 @@ fn street(start: DVec3, heading: f64, length: f64) -> crate::traffic::Lane {
 /// 150 m of road before each of its paths and `exit` m after: lanes 0..4 the roads in
 /// (from the south, west, north, east), 4..8 the junction's paths, 8..12 the roads out.
 /// Without priorities: everybody gives way to the right.
-fn crossroads(exit: f64) -> Network {
+pub(super) fn crossroads(exit: f64) -> Network {
     let half = 12.0;
     let o = 1.75;
     // (start of the junction path, heading) north, east, south, west bound
@@ -88,14 +88,14 @@ fn crossroads(exit: f64) -> Network {
     net
 }
 
-fn run(t: &mut TrafficSim, secs: f32) {
+pub(super) fn run(t: &mut TrafficSim, secs: f32) {
     for _ in 0..(secs / 0.05) as usize {
         t.tick(0.05, None);
     }
 }
 
 /// The car's front, metres past the junction's middle along its own road (+ = through).
-fn past_middle(t: &TrafficSim, id: u64) -> Option<f64> {
+pub(super) fn past_middle(t: &TrafficSim, id: u64) -> Option<f64> {
     let c = t.cars.iter().find(|c| c.id == id)?;
     let h = c.vehicle.heading.to_radians();
     let fwd = DVec2::new(h.sin(), h.cos());
@@ -154,7 +154,7 @@ fn the_exit_counts_a_crawling_queue_where_it_will_stop() {
 /// A main road west to east (lane 0 in, the junction's path 1, lane 2 out) and a side road
 /// from the south (lane 3) whose path through the junction (4) crosses it, `[rule]`
 /// priorities as the stock maps set them.
-fn side_road() -> Network {
+pub(super) fn side_road() -> Network {
     let key = |path: u16| Some(LaneKey { tile: (0, 0), id: 2, path });
     let main_in = street(DVec3::new(-200.0, 0.0, 0.0), 90.0, 190.0);
     let mut main_j = street(DVec3::new(-10.0, 0.0, 0.0), 90.0, 20.0);
@@ -211,12 +211,11 @@ fn side_road_crossing(v: f32, spacing: f32, secs: f32) -> Option<f32> {
 #[test]
 fn a_side_road_car_gets_into_a_main_road_that_never_leaves_a_gap() {
     // a queue rolling past at 3 or 5 m/s, a car every 9 m: never a gap any driver takes.
-    // After its long wait the side road's car keeps a claim on its way, the cars not yet
-    // at the junction let it across (it used to stand there for good: its claim was taken
-    // for a stalled car's and held nobody back)
+    // After its long wait the queue's drivers let the side road's car in (`lets_in`; it
+    // used to stand there for good)
     for v in [3.0, 5.0] {
         let at = side_road_crossing(v, 9.0, 150.0);
-        assert!(at.is_some_and(|t| t < LONG_WAIT_CLAIM + 40.0), "queue at {v} m/s: across after {at:?} s");
+        assert!(at.is_some_and(|t| t < COURTESY_WAIT + 40.0), "queue at {v} m/s: across after {at:?} s");
     }
     // a queue that crawls (1-1.5 m/s) leaves room enough between its cars
     assert!(side_road_crossing(1.5, 7.5, 150.0).is_some_and(|t| t < 40.0));
@@ -387,3 +386,115 @@ fn cars_still_cross_a_finite_exit_when_its_short_return_is_not_chosen() {
     }
     assert!(crossed.iter().all(|&n| n > 0), "a usable exit lost its traffic: {crossed:?}");
 }
+
+/// `way_lanes` as it was: the plan copied whole, then walked.
+fn way_lanes_reference(t: &TrafficSim, st: &crate::traffic::AiState, within: f32) -> Vec<(usize, f32)> {
+    let mut out = vec![(st.lane, -st.s)];
+    let mut d = t.net.lanes[st.lane].length() - st.s;
+    let plan: Vec<usize> = match st.change {
+        Some(c) => std::iter::once(c.to).chain(st.change_plan.iter().copied()).collect(),
+        None => st.upcoming().collect(),
+    };
+    if let Some(c) = st.change {
+        out.clear();
+        out.push((c.to, -c.s_to));
+        d = t.net.lanes[c.to].length() - c.s_to;
+        for &l in plan.iter().skip(1) {
+            if d > within {
+                break;
+            }
+            out.push((l, d));
+            d += t.net.lanes[l].length();
+        }
+        return out;
+    }
+    for l in plan {
+        if d > within {
+            break;
+        }
+        out.push((l, d));
+        d += t.net.lanes[l].length();
+    }
+    out
+}
+
+/// The way's lanes come out as before, for cars on their way through a junction and for
+/// a car halfway over into another lane.
+#[test]
+fn way_lanes_are_what_they_were() {
+    let f = Fixture::new();
+    let mut t = traffic(&f, crossroads(150.0));
+    for k in 0..4 {
+        add_car(&mut t, &f, k, 100.0 + 10.0 * k as f32, 0x77 + k as u64, Some(8.0));
+    }
+    let mut checked = 0;
+    for _ in 0..200 {
+        t.tick(0.05, None);
+        for c in &t.cars {
+            let mut changing = c.state.clone();
+            changing.change = Some(crate::traffic::LaneChange { to: (c.state.lane + 4) % t.net.lanes.len(), t: 0.3, length: 20.0, s_to: 3.0, dir: 1, wait: 0.0, bypass: false });
+            changing.change_plan = vec![8, 9, 10];
+            for st in [&c.state, &changing] {
+                for within in [0.0, 30.0, 60.0, 100.0, 200.0, 1000.0] {
+                    assert_eq!(t.way_lanes(st, within), way_lanes_reference(&t, st, within));
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked > 1000);
+}
+
+/// Every car of the scene as it stands: id, lane, distance along it and speed.
+pub(super) fn snapshot(t: &TrafficSim) -> Vec<(u64, usize, f32, f32)> {
+    let mut v: Vec<_> = t.cars.iter().map(|c| (c.id, c.state.lane, c.state.s, c.state.speed)).collect();
+    v.sort_by_key(|x| x.0);
+    v
+}
+
+/// Four cars at a crossroads without priorities and one queued behind them, placed in
+/// `order` (with fixed ids, so that only their places in the list differ).
+fn busy_crossroads(f: &Fixture, order: &[usize]) -> TrafficSim {
+    let mut t = traffic(f, crossroads(150.0));
+    let cars = [(0, 135.0), (1, 135.0), (2, 135.0), (3, 135.0), (0, 120.0)];
+    for &k in order {
+        let (lane, s) = cars[k];
+        let vehicle = VehicleInstance::new(f.ty.clone(), crate::VehicleHost::new(crate::SimClock::default()));
+        t.place_car(vehicle, LaneKind::Street, lane, s, f.ty.clone(), 0x51 + k as u64 * 0x1000, None, Some(100 + k as u64), Some(4.0), None);
+    }
+    t
+}
+
+#[test]
+fn the_same_scene_drives_the_same_at_any_frame_rate() {
+    let f = Fixture::new();
+    let run_at = |fps: f32| {
+        let mut t = busy_crossroads(&f, &[0, 1, 2, 3, 4]);
+        for _ in 0..(20.0 * fps).round() as usize {
+            t.advance(1.0 / fps, None);
+        }
+        snapshot(&t)
+    };
+    let slow = run_at(30.0);
+    assert_eq!(slow, run_at(60.0));
+    assert_eq!(slow, run_at(144.0));
+    // (and the scene did move)
+    assert!(slow.iter().any(|c| c.1 >= 8), "{slow:?}");
+}
+
+#[test]
+fn the_order_the_cars_stand_in_the_list_decides_nothing() {
+    let f = Fixture::new();
+    let run = |order: &[usize]| {
+        let mut t = busy_crossroads(&f, order);
+        for _ in 0..1000 {
+            t.advance(SIM_DT_TEST, None);
+        }
+        snapshot(&t)
+    };
+    let a = run(&[0, 1, 2, 3, 4]);
+    assert_eq!(a, run(&[4, 3, 2, 1, 0]));
+    assert_eq!(a, run(&[2, 4, 0, 3, 1]));
+}
+
+const SIM_DT_TEST: f32 = super::fixed_step::SIM_DT;

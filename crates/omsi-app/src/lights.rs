@@ -246,10 +246,131 @@ pub fn vehicle_lights(
             }
         }
     }
+    // [spotlight_cookie] (openOMSI): lamps whose beam is a picture, the leading vehicle's
+    // and its sections'
+    let parts = std::iter::once((&ty.model, v.position, body))
+        .chain(v.trailers.iter().map(|t| (&t.ty.model, t.position, t.body_rotation())));
+    for (part, (model, origin, rot)) in parts.enumerate() {
+        let dir = model.path.parent().unwrap_or(std::path::Path::new(""));
+        for (k, c) in model.spotlight_cookies.iter().enumerate() {
+            let key = (v as *const VehicleInstance as usize, part, k);
+            let on = cookie_fade(key, value_of(c.variable.as_str()).clamp(0.0, 1.0), c.fade);
+            if on <= 0.0 {
+                continue;
+            }
+            let turn = |name: &Option<String>| name.as_deref().map_or(0.0, |n| value_of(n));
+            let local = cookie_direction(Vec3::from(c.dir), turn(&c.yaw), turn(&c.pitch));
+            let at = origin + rot.transform_point3(Vec3::from(c.pos)).as_dvec3();
+            let d = rot.transform_vector3(local).normalize_or_zero();
+            push_cookie(lights, at, d, c, on, cookie_picture_id(dir, &c.picture), night);
+        }
+    }
     // [interiorlight]s light only the meshes listing them and the passengers (per-instance
     // term, see MeshProps::interior); they do not shine on the outside world.
     let _ = &ty.model.interior_lights;
 }
+
+/// A `[spotlight_cookie]`'s direction in its vehicle's frame (x right, y ahead, z up),
+/// turned by its yaw variable (degrees, to the right about the vehicle's up axis) and then
+/// its pitch variable (degrees, up about the lamp's own horizontal axis): a cornering lamp,
+/// a levelling one.
+fn cookie_direction(dir: Vec3, yaw_deg: f32, pitch_deg: f32) -> Vec3 {
+    let d = dir.normalize_or_zero();
+    if d == Vec3::ZERO {
+        return Vec3::Y;
+    }
+    let d = glam::Quat::from_rotation_z(-yaw_deg.to_radians()) * d;
+    let right = d.cross(Vec3::Z);
+    if right.length_squared() < 1e-8 {
+        return d;
+    }
+    glam::Quat::from_axis_angle(right.normalize(), pitch_deg.to_radians()) * d
+}
+
+/// The lights of a `[spotlight_cookie]` at `at` shining along `d`, switched to `on` (0..1),
+/// its picture `picture` (0: not found - its cone lights it): the classic picture's spot, as
+/// `push_spot` makes it, and the enhanced picture's, as bright as one headlamp's beam at
+/// its strongest where the picture is white, lit by the picture within its cone.
+fn push_cookie(lights: &mut Vec<PointLight>, at: DVec3, d: Vec3, c: &omsi_model::SpotlightCookie, on: f32, picture: u16, night: f32) {
+    let color = [c.color[0] / 255.0, c.color[1] / 255.0, c.color[2] / 255.0];
+    let half = |deg: f32| (deg.clamp(1.0, 170.0) * 0.5).to_radians();
+    let tan = [half(c.width).tan(), half(c.height).tan()];
+    let cookie = omsi_render::Cookie { picture, tan };
+    // (the cone round the picture, and inside it the smaller half angle: what the classic
+    // picture and the light in the fog are lit by)
+    let outer = cookie.bounding_cos();
+    let inner = half(c.width.min(c.height)).cos().max(outer);
+    lights.push(PointLight {
+        position: at,
+        radius: spot_reach(c.range, 45.0),
+        color,
+        intensity: VANILLA_HEADLIGHT_INTENSITY * on * (0.3 + 0.7 * night),
+        direction: d,
+        cone: [inner, outer],
+        mode: LightMode::Vanilla,
+        ..Default::default()
+    });
+    let reach = spot_reach(c.range, 60.0);
+    let weaker = (reach / 60.0).min(1.0).powi(2);
+    lights.push(PointLight {
+        position: at,
+        radius: reach,
+        color,
+        // (one lamp of a pair: `HEADLIGHT_INTENSITY` is the two headlamps' together)
+        intensity: HEADLIGHT_INTENSITY * 0.5 * on * weaker,
+        direction: d,
+        cone: [inner, outer],
+        core: 1.0,
+        mode: LightMode::Enhanced,
+        cookie: (picture != 0).then_some(cookie),
+        ..Default::default()
+    });
+}
+
+/// How bright a `[spotlight_cookie]` is now, coming to `target` with its time constant
+/// `fade` (s; 0 at once): kept per vehicle and lamp from frame to frame. A lamp seen for the
+/// first time is at its target (a picture taken offscreen shows it lit).
+fn cookie_fade(key: (usize, usize, usize), target: f32, fade: f32) -> f32 {
+    type Fades = std::collections::HashMap<(usize, usize, usize), (f32, std::time::Instant)>;
+    static FADES: std::sync::Mutex<Option<Fades>> = std::sync::Mutex::new(None);
+    if fade <= 0.0 {
+        return target;
+    }
+    let now = std::time::Instant::now();
+    let mut g = FADES.lock().unwrap_or_else(|e| e.into_inner());
+    let fades = g.get_or_insert_with(Default::default);
+    // (lamps of vehicles gone for a while are forgotten)
+    if fades.len() > 256 {
+        fades.retain(|_, (_, t)| now.duration_since(*t).as_secs_f32() < 5.0);
+    }
+    let (value, last) = fades.entry(key).or_insert((target, now));
+    let dt = now.duration_since(*last).as_secs_f32().min(0.25);
+    *value = target + (*value - target) * (-dt / fade).exp();
+    *last = now;
+    *value
+}
+
+/// The picture id of a `[spotlight_cookie]`'s beam, looked for as the model's own textures
+/// are (see `corona_texture_id`); 0 when there is no such file. A picture found the first
+/// time is read and handed to the renderer with the next `upload_corona_textures`.
+fn cookie_picture_id(model_dir: &std::path::Path, name: &str) -> u16 {
+    let id = corona_texture_id(model_dir, name);
+    if id != 0 {
+        let mut g = COOKIE_PICTURES.lock().unwrap_or_else(|e| e.into_inner());
+        let (known, pending) = g.get_or_insert_with(Default::default);
+        if known.insert(id) {
+            let path = CORONA_TEXTURES.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|t| t.ids.iter().find(|(_, i)| **i == id).map(|(p, _)| p.clone()));
+            if let Some(p) = path {
+                pending.push((id, p));
+            }
+        }
+    }
+    id
+}
+
+/// The beam pictures known and those still to be handed to the renderer.
+type CookiePictures = (std::collections::HashSet<u16>, Vec<(u16, std::path::PathBuf)>);
+static COOKIE_PICTURES: std::sync::Mutex<Option<CookiePictures>> = std::sync::Mutex::new(None);
 
 /// A `[spotlight_2]`'s lamps in its vehicle's frame - position, direction and share of a
 /// spot's light - with its variable at `k`: none when that is off, the lamp and its twin
@@ -308,6 +429,7 @@ fn push_spot(lights: &mut Vec<PointLight>, at: DVec3, d: Vec3, vals: &[f32; 12],
         housed: false,
         shadow_owner: None,
         mode: LightMode::Enhanced,
+        cookie: None,
     });
 }
 
@@ -321,6 +443,39 @@ fn push_spot(lights: &mut Vec<PointLight>, at: DVec3, d: Vec3, vals: &[f32; 12],
 /// 1 lit everything round it like a headlamp, #1541.)
 fn spot_reach(range: f32, low: f32) -> f32 {
     range.clamp(0.5, low).max(range * low / 100.0).min(low * 5.0)
+}
+
+#[cfg(test)]
+mod cookie_tests {
+    use super::*;
+
+    /// A cornering lamp's yaw turns it to the right, a levelling lamp's pitch up.
+    #[test]
+    fn a_cookie_turns_by_its_yaw_and_pitch() {
+        let ahead = Vec3::Y;
+        let right = cookie_direction(ahead, 30.0, 0.0);
+        assert!(right.x > 0.49 && right.x < 0.51 && right.y > 0.86, "{right:?}");
+        let up = cookie_direction(ahead, 0.0, 10.0);
+        assert!(up.z > 0.17 && up.z < 0.18 && up.x.abs() < 1e-5, "{up:?}");
+        assert_eq!(cookie_direction(ahead, 0.0, 0.0), ahead);
+    }
+
+    /// A cookie lamp is a classic spot and an enhanced one with its picture; without a
+    /// picture found the enhanced one keeps the plain cone.
+    #[test]
+    fn a_cookie_lamp_falls_back_to_its_cone() {
+        let c = omsi_model::SpotlightCookie { dir: [0.0, 1.0, 0.0], color: [255.0; 3], range: 80.0, width: 60.0, height: 20.0, ..Default::default() };
+        let mut lights = Vec::new();
+        push_cookie(&mut lights, DVec3::ZERO, Vec3::Y, &c, 1.0, 7, 1.0);
+        let e = lights.iter().find(|l| l.mode == LightMode::Enhanced).unwrap();
+        assert_eq!(e.cookie.map(|c| c.picture), Some(7));
+        assert_eq!(e.beam, 0.0);
+        assert!(e.cone[1] < 30f32.to_radians().cos(), "the cone holds the picture's corners");
+        lights.clear();
+        push_cookie(&mut lights, DVec3::ZERO, Vec3::Y, &c, 1.0, 0, 1.0);
+        assert!(lights.iter().all(|l| l.cookie.is_none()));
+        assert_eq!(lights.len(), 2);
+    }
 }
 
 #[cfg(test)]
@@ -500,6 +655,7 @@ pub fn collect(
             log::info!("smoke: {} particles from objects, first at ({:.1}, {:.1}, {:.1}) size {:.2} alpha {:.2}", scene.smoke.len(), p.position.x, p.position.y, p.position.z, p.size, p.alpha);
         }
     }
+    let vehicle_smoke = scene.smoke.len();
     for v in vehicles {
         vehicle_lights(v, &mut scene.coronas, &mut scene.lights, night);
         particle_sprites(&v.particles, &mut scene.smoke, &mut scene.coronas);
@@ -507,6 +663,7 @@ pub fn collect(
             particle_sprites(&t.particles, &mut scene.smoke, &mut scene.coronas);
         }
     }
+    crate::puddles::keep_out_of_cab(vehicles, camera_pos, &mut scene.smoke, vehicle_smoke);
     // the lamps' cones in fog: drawn only while the visibility is
     // under 2 km, the fan's radius 2 m times 3 sqrt(100 / visibility) times the glow's
     // strength ((1 - ambient)^2 + 0.8) 0.6 brightness and the light's size; its colour the
@@ -739,6 +896,14 @@ pub fn upload_corona_textures(renderer: &mut omsi_render::Renderer) {
         match omsi_texture::decode_file(&path) {
             Ok(img) => renderer.set_corona_texture(id, &img),
             Err(e) => log::warn!("corona picture {}: {e}", path.display()),
+        }
+    }
+    // (and the `[spotlight_cookie]` pictures: see `cookie_picture_id`)
+    let cookies = COOKIE_PICTURES.lock().unwrap_or_else(|e| e.into_inner()).as_mut().map(|c| std::mem::take(&mut c.1)).unwrap_or_default();
+    for (id, path) in cookies {
+        match omsi_texture::decode_file(&path) {
+            Ok(img) => renderer.set_cookie_picture(id, &img),
+            Err(e) => log::warn!("spotlight cookie picture {}: {e}", path.display()),
         }
     }
 }

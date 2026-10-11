@@ -341,7 +341,9 @@ impl GpuCache {
         selection: &[usize],
         root: &Path,
         images: &HashMap<PathBuf, Arc<TextureData>>,
-    ) -> Option<Vec<Vec<Option<(MaterialId, MaterialId)>>>> {
+    ) -> Option<Arc<Vec<Vec<Option<(MaterialId, MaterialId)>>>>> {
+        // (shared, not copied: every scripted object with such textures asks for its rows
+        // on every frame)
         if let Some(found) = self
             .types
             .get(&type_key)?
@@ -426,10 +428,11 @@ impl GpuCache {
                 rows[mesh_index][slot] = Some((base_ctc, item_ctc));
             }
         }
+        let rows = Arc::new(rows);
         self.types
             .get_mut(&type_key)?
             .dynamic_texture_variants
-            .insert(selection.to_vec(), rows.clone());
+            .insert(selection.to_vec(), Arc::clone(&rows));
         Some(rows)
     }
 

@@ -663,6 +663,20 @@ running through its line where they do not fit (ten characters on Dmitrij's "Mag
 P3ta's SOR buses and its kin, whose first line then shows the map's frequency for the
 place, e.g. `94.6 MHz`). Without stations, or with the radio off, a display shows its own texts.
 
+**Where it is heard.** In the cab the radio sounds from the driver's corner, a little ahead
+of the driver's eyes - from half as far as it really is, since a bus's speakers are spread
+along it: towards the back it is heard from the front but does not fade away. Changing the
+view, the sound glides to its new side in a quarter of a second. From outside it is the bus
+playing through its windows.
+
+**The radio's own sound.** Settings → Sound (in the game: Options → Sound) has three sliders,
+all off at first: *Radio: small speaker* plays it through a small dashboard speaker (no deep
+bass, no bright treble, nearly mono and a little pushed on the loud parts), *Radio: FM hiss*
+adds the hiss and crackle of a weak signal, *Radio: signal dropouts* loses the signal now
+and then for a moment (a bridge, a tall building). With all three at 0 the stream is played
+untouched. They are `radio_speaker`, `radio_hiss` and `radio_dropouts` (0..1) in
+`settings.cfg`.
+
 **When nothing plays.** `~/.openomsi/game.log` says what happened:
 `radio: 23 stations` (the list), `radio: station 1 Radiozurnal (https://…)` (a button
 pressed), then `Radio 1: Radiozurnal - buffering …` and the song, or `no signal (…)` with
@@ -699,6 +713,34 @@ Saving writes each changed tile as a copy into the content folder's map folder
 original map is never written; delete the copy to have the original back. Only a tile's own
 `[object]` records can be edited: splines, the ground, spline rows, new objects and the
 timetable are not part of it.
+
+## Developer tools
+
+For those who build vehicles: **Ctrl+Shift+D** opens a panel at the right of the picture
+over the running game (again: closes it; closed it costs nothing). The game goes on under it;
+the mouse works the panel where it is over it and the cab everywhere else. Four pages:
+
+* **Variables**: the search lists the bus's script variables (`$` before the text: its string
+  variables) with their values; a click puts one on the watch list at the top, which is kept
+  per bus in `~/.openomsi/devtools/<bus file>.watch`. A watched variable chosen can be **Set**
+  to a value once, or **Held** at it - written into the bus before its scripts run and after
+  them, every frame, until *Let go* or until the panel closes.
+* **Overlays** over the picture: the paths and their points (with the entries and exits), the
+  seats and standing places (and the way they face), the bounding boxes, the axles and
+  wheels, the interior lights with their variables and values, the ticket and stamper
+  points, the mirrors, the centre of gravity and the views - of every part of an articulated
+  bus in its own place.
+* **Mirrors**: each mirror moved, turned and widened while you look at it, and *Copy the
+  block* puts it on the clipboard as the `[add_camera_reflexion_2]` block it has become, to
+  paste into the `.bus` (the block is shown under the buttons, and written to the log too).
+* **Files**: what changes in the bus's files is read again within a second while the panel
+  is open (or on its button): paths.cfg and `[passengercabin]` (not while people are aboard
+  and places, doors or points would go), sound.cfg, the `.bus` (physics, cameras, mirrors,
+  bounding box; not when its axles change), model.cfg (animations, visibility and lights, as
+  long as it names the same meshes) and the constfiles (as long as the scripts and their
+  variables stay). A changed script needs the bus placed anew. *Open the log* opens the
+  game's log. Change a copy of a bus in your content folder, never the installation's own
+  files.
 
 ## Mirror panels
 

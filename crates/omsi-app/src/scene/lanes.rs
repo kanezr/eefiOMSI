@@ -238,6 +238,7 @@ pub(super) fn object_lanes(
                 path: pi as u16,
             });
             l.blocks = sco.path_blocks.get(pi).map(|b| b.iter().filter(|(n, _)| *n >= 0).map(|(n, _)| *n as u16).collect()).unwrap_or_default();
+            l.crossing_problem = sco.path_crossing_problem.get(pi).copied().unwrap_or(false);
             l.reversed = reverse;
             l.traffic_light = controller.and_then(|c| {
                 sco.path_traffic_light

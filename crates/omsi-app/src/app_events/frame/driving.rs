@@ -9,6 +9,9 @@ impl App {
     pub(super) fn frame_player(&mut self, dt: f32) {
         // the on-screen wheel and pedals (a phone)
         self.touch_frame(dt);
+        // a walker stepping into or out of the bus hears its cab by degrees
+        let walker = self.foot_sound_amount(dt);
+        omsi_audio::soundset::set_cab_amount(walker);
         if self.player.is_none() || self.renderer.is_none() || self.scene.is_none() {
             return;
         }
@@ -61,12 +64,15 @@ impl App {
             }
         }
         if !self.paused && ground_here {
+            // (the developer tools' held variables: before the scripts and after them)
+            crate::devtools::apply_holds(self.devtools.as_deref(), &mut p.vehicle);
             p.tick(
                 dt,
                 self.sound.audio.as_ref(),
                 self.cam.in_cab,
                 !matches!(self.view.as_str(), "free" | "foot"),
             );
+            crate::devtools::apply_holds(self.devtools.as_deref(), &mut p.vehicle);
             crate::plugins::plugin_impacts(&p.vehicle, &mut self.integrations);
             steps::deliver_player_impacts(p, self.session.traffic.as_mut());
             // After scripts: zero-movement `_drag` for a held switch. Running this
@@ -222,12 +228,14 @@ impl App {
                 Some(p) => {
                     let inside = self.cam.in_cab;
                     self.sound.radio.set_map(&self.args.root, &self.args.map);
+                    self.sound.radio.fx = self.settings.radio_fx;
                     if let Some(m) = self.sound.radio.update(a, &p.vehicle, inside) {
                         self.service_msg = Some((m, 6.0));
                     }
                     // (a radio whose display is a text of its script shows the station)
                     p.vehicle.radio_text = self.sound.radio.display_text();
                     p.vehicle.radio_frequency = self.sound.radio.frequency(p.vehicle.position.x, p.vehicle.position.y);
+                    (p.vehicle.host.radio_name, p.vehicle.host.radio_song) = self.sound.radio.now_playing();
                 }
                 None => self.sound.radio.stop(a),
             }

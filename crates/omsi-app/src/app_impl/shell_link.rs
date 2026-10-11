@@ -47,6 +47,11 @@ impl App {
         if self.photo.is_some() {
             return;
         }
+        // the developer tools, while the pause menu is closed
+        if self.devtools.is_some() && self.menus.game_menu.is_none() {
+            self.frame_devtools(dt);
+            return;
+        }
         if !self.shell_takes_mouse() {
             if self.shell.showing() {
                 self.shell.clear();

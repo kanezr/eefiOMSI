@@ -221,7 +221,7 @@ impl Traffic {
         while i < self.sim.cars.len() {
             match self.sim.cars[i].park {
                 Some(p) if p.done => {
-                    let c = self.sim.cars.swap_remove(i);
+                    let c = self.sim.take_off(i, omsi_sim::ai_traffic::control::Removal::Finished);
                     if world.return_parked(renderer, scene, p.key) {
                         if let Some(list) = self.sim.parked.get_mut(&p.lane) {
                             list.push((p.s, p.lat));
@@ -241,9 +241,13 @@ impl Traffic {
         for r in std::mem::take(&mut view.released) {
             world.release_vehicle(renderer, scene, r);
         }
+        // (drawn between the traffic's last two steps, where this frame falls: see
+        // `TrafficSim::advance`; back where they stand once drawn)
+        let actual = self.sim.show_between();
         self.sync_drivers(view, world, renderer, scene);
         self.sync_lamps(world, renderer, scene);
         self.sync_cars(view, world, renderer, scene);
+        self.sim.show_actual(actual);
     }
 
     /// The traffic light lamps (see `sync`).
@@ -443,6 +447,9 @@ impl Traffic {
                 c.vehicle.set_var("Envir_Brightness", b);
             }
         }
+        // one buffer for the per-mesh alpha of every car: a fresh copy for each mesh of each
+        // car was thousands of small allocations a frame in a busy street
+        let mut alpha: Vec<f32> = Vec::new();
         for c in &mut self.sim.cars {
             let Some(r) = view.cars.get_mut(&c.id) else { continue };
             let (render, trailer_renders) = (&mut r.body, &mut r.trailers);
@@ -522,7 +529,8 @@ impl Traffic {
                 // translucent and reveals the interior through its panels.  Opaque slots
                 // are never allowed to be faded by a dynamic alpha value; windows and
                 // explicitly alpha-tested/blended slots retain their authored behavior.
-                let mut alpha = p.slot_alpha.clone();
+                alpha.clear();
+                alpha.extend_from_slice(&p.slot_alpha);
                 for (slot, mat) in scene.instances[*inst].materials.iter().enumerate() {
                     if scene
                         .materials
@@ -546,7 +554,8 @@ impl Traffic {
                     let def = &t.ty.model.meshes[t.ty.meshes[i].def_index];
                     let vp = def.viewpoint;
                     let vp_ok = vp == 0 || vp & 4 != 0;
-                    let mut alpha = p.slot_alpha.clone();
+                    alpha.clear();
+                    alpha.extend_from_slice(&p.slot_alpha);
                     for (slot, mat) in scene.instances[*inst].materials.iter().enumerate() {
                         if scene
                             .materials

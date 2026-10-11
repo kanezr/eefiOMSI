@@ -87,6 +87,40 @@ Normal, roughness, metalness and occlusion maps beside a texture, up to 4096 × 
   `[spotlight]`'s, it is not moved onto the vehicle's front. A rear section's model may have
   its own; their variables are the bus's.
 
+- `[spotlight_cookie]` in the `model.cfg` is a lamp whose beam is a picture: what it would
+  show on a wall in front of it, its brightness and colour every way the lamp shines. One
+  value a line: position (x, y, z), direction (x, y, z), red, green, blue, range, the angle the
+  picture covers across and the one up and down (degrees), the picture, the switching variable;
+  then, if you want them, the fade time in seconds, a variable that turns the lamp to the
+  right (degrees) and one that turns it up (degrees):
+
+  ```
+  [spotlight_cookie]
+  0.9
+  5.85
+  0.75
+  0
+  1
+  -0.04
+  255
+  250
+  235
+  80
+  70
+  30
+  lowbeam_right.png
+  lights_main
+  0.15
+  cornering_yaw
+  ```
+
+  The picture's right is the lamp's right as seen from behind it. White is as bright as a
+  headlamp's beam at its strongest, black is no light. The enhanced graphics draw up to eight
+  different pictures at once; the classic graphics, and a lamp whose picture is missing, light
+  a plain cone round the picture's field instead.
+- With shadows on, the player's headlamps cast shadows too (Enhanced): the
+  lamps on the front that light the road share one shadow map, taken from between them.
+
 ## Screens: static cameras
 
 `[add_camera_reflexion_static]` in the `.bus` adds a camera for a screen - a CCTV monitor
@@ -104,6 +138,10 @@ that camera sees from the rear section.
 
 ## Models
 
+- `[led_glow_effect]` after a `[matl]` (a number from 0 to 1) says how much an LED panel's
+  dots glow in the enhanced picture: 1 the full `LED glow` setting, 0.5 half of it, 0 not at
+  all (the slot is no LED panel). Without it openOMSI guesses: a slot with a `\S:n` script
+  mask and a white light map is taken for an LED panel. See FORMATS.md.
 - `.o3d` files with 32-bit indices (the long-index flag) are drawn with their full vertex
   and face count; everything is drawn with 32-bit indices.
 - There is no limit on the number of meshes, materials, `[matl_change]` items, `[CTC]`
@@ -165,6 +203,14 @@ then x, y, z of the device, as usual); OMSI 2 still takes the last of them.
 - Script variables and string variables have no count limit.
 - Lua plugins can read and write script variables, fire triggers and react to game events:
   see [Plugins](PLUGINS.md).
+- `(M.V.GetRadioName)` and `(M.V.GetRadioSong)` put what the bus radio plays on the string
+  stack: the station's name (as the stream gives it in `icy-name`, else as the station list
+  names it) and the title it gives (`StreamTitle`); both empty while the radio is off or the
+  station says nothing. Not in OMSI 2: check for an empty string.
+- The developer tools (**Ctrl+Shift+D**, see the [user guide](USER_GUIDE.md#developer-tools))
+  show and hold the variables, draw the paths, places, boxes, axles, lights, mirrors and views
+  over the bus, and read its paths.cfg, `[passengercabin]`, sound.cfg, `.bus`, model.cfg and
+  constfiles again while it drives.
 
 ## Radio: a map's stations and a bus's display
 

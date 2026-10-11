@@ -329,8 +329,18 @@ pub fn sync_vehicle_damage(
         // shown with the pane it lies on: a bus's inner and outer window meshes (one for the
         // cab view, one for outside) both crack, and drawn always, both crack stars showed
         let visible = render.instances.get(mesh).is_none_or(|&i| scene.instances[i].visible);
-        let alpha = scene.instances[instance].slot_alpha.clone();
-        renderer.set_params(scene, instance, &alpha, visible, &[]);
+        // (a crack has its two materials: their alpha is copied onto the stack, not into a
+        // fresh vector for every crack of every car each frame)
+        let own = &scene.instances[instance].slot_alpha;
+        let mut buf = [1.0f32; 4];
+        if own.len() <= buf.len() {
+            let n = own.len();
+            buf[..n].copy_from_slice(own);
+            renderer.set_params(scene, instance, &buf[..n], visible, &[]);
+        } else {
+            let alpha = own.clone();
+            renderer.set_params(scene, instance, &alpha, visible, &[]);
+        }
     }
     for glass in vehicle.take_broken_glass() {
         let Some(transform) = vehicle.mesh_transforms.get(glass.mesh) else { continue };

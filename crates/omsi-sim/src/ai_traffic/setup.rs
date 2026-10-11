@@ -75,7 +75,14 @@ impl TrafficSim {
             cars: Vec::new(),
             dormant: Vec::new(),
             dormant_time: 0.0,
-            rng: 0x9E37_79B9_7F4A_7C15,
+            // the session's own traffic (as the scripts' `random`, see
+            // `omsi_script::set_session_seed`): which cars come, where and when differs from
+            // session to session as in OMSI, and OMSI_SEED=n repeats one exactly. Without a
+            // session seed (tests, tools) always the same. A LAN room sets its own after
+            // (`set_lan_seed`).
+            rng: omsi_script::session_seed()
+                .map(|s| omsi_script::mix_seed(s ^ 0x7472_6166_6669_6321) | 1)
+                .unwrap_or(0x9E37_79B9_7F4A_7C15),
             target,
             lights_only: false,
             spawn_radius: 400.0,
@@ -90,7 +97,6 @@ impl TrafficSim {
             stop_wishes: None,
             bus_loads: hashbrown::HashMap::new(),
             player_still: 0.0,
-            player_turn: 0.0,
             day_time: 0.0,
             time_scale: 1.0,
             weekday: 0,
@@ -122,6 +128,9 @@ impl TrafficSim {
             framed_spawns: Vec::new(),
             player: None,
             player_priority: false,
+            other_priority: Default::default(),
+            emergency: Default::default(),
+            player_turn: 0.0,
             player_blinker: 0,
             player_signal_age: f32::MAX,
             player_signalling: 0.0,
@@ -142,7 +151,16 @@ impl TrafficSim {
             lan_eyes: Vec::new(),
             retired: Vec::new(),
             stats: stats::TrafficStats::from_env(),
+            scenery_through: Vec::new(),
+            sim_accum: 0.0,
+            frame_alpha: 1.0,
+            pose_before: HashMap::new(),
+            change_claims: Vec::new(),
+            scenery_probe: None,
             others_now: Vec::new(),
+            berths: Default::default(),
+            removals: [0; Removal::COUNT],
+            admission: Default::default(),
         };
         t.sort_parked(parked_cars, lanes);
         t

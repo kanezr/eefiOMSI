@@ -11,6 +11,9 @@ pub const PEOPLE_LEVEL: f64 = 2.5;
 /// is not in it (m): the road under a bridge is some 4.5 m below the deck.
 pub const BODY_LEVEL: f64 = 3.0;
 
+/// What a manoeuvre's way keeps clear of what stands beside it (m, `ghost_blocked`).
+pub const GHOST_CLEARANCE: f64 = 0.2;
+
 /// How far ahead a car looks for other vehicles at least (m).
 pub const LOOK_AHEAD: f32 = 70.0;
 /// ... and at most, when it is fast.
@@ -236,7 +239,7 @@ impl TrafficSim {
     pub fn body_in_way(
         &self,
         i: usize,
-        feet: &[Footprint],
+        feet: &super::foot_grid::Feet,
         by_lane: &HashMap<usize, Vec<(usize, f32, f32, bool)>>,
     ) -> Option<(Lead, usize)> {
         let car = &self.cars[i];
@@ -267,7 +270,7 @@ impl TrafficSim {
         };
         let me = car.id;
         let near: Vec<&Footprint> = feet
-            .iter()
+            .near(pos, reach as f64 + 2.0)
             .filter(|f| f.car != i && !rounding.contains(&f.car) && (f.z - z).abs() < BODY_LEVEL + 6.0)
             .filter(|f| (f.center - pos).length() < reach as f64 + f.half_len + f.half_w + 2.0)
             .filter(|f| {
@@ -328,6 +331,120 @@ impl TrafficSim {
             d += step;
         }
         None
+    }
+
+    /// Would car `i`, driven along `way(d)` (the point of its origin `d` metres on, for d
+    /// in 0..`len`), run into anything there: the body of a vehicle standing (or of one
+    /// moving that would still be in the way within the first second), the player's or a
+    /// LAN player's vehicle standing, the boxes `extra` (parked cars), somebody on foot,
+    /// the scenery (`scenery_blocks`)? In every place the body is the whole rectangle,
+    /// turned as the car will be turned there - along the line from where its rear axle
+    /// will be - so the corner that swings out of an S-bend counts, not the middle of its
+    /// way only. What touches the car where it stands now is not the manoeuvre's doing and
+    /// is left out, as is `skip`: what it pulls out round (its own steering is measured
+    /// against that, `AiBody::sweep_clearance`; `usize::MAX` the player's bus), the cars
+    /// ahead in its own lane that it follows anyway. Moving vehicles further on are the
+    /// lane's gaps' business (`can_merge`, `oncoming_block`).
+    /// Returns what is in the way.
+    pub fn ghost_blocked(&self, i: usize, way: &dyn Fn(f32) -> DVec3, len: f32, feet: &super::foot_grid::Feet, skip: &[usize], extra: &[Obb]) -> Option<String> {
+        let car = &self.cars[i];
+        let st = &car.state;
+        let (front, rear, hw) = (st.front as f64, st.rear as f64, car.half_width as f64);
+        let height = car.vehicle.ty.def.bounding_box.map(|b| b[2] as f64).filter(|h| *h > 0.5).unwrap_or(1.5);
+        let pivot = (st.rear * 0.6).clamp(1.0, 3.0);
+        let h = car.vehicle.heading.to_radians();
+        let heading_fwd = DVec2::new(h.sin(), h.cos());
+        let ghost = |d: f32| -> Footprint {
+            let p = way(d);
+            let fwd = (p - way(d - pivot)).truncate().normalize_or_zero();
+            let fwd = if fwd == DVec2::ZERO { heading_fwd } else { fwd };
+            Footprint { car: usize::MAX, center: p.truncate() + fwd * ((front - rear) * 0.5), fwd, right: DVec2::new(fwd.y, -fwd.x), half_len: (front + rear) * 0.5, half_w: hw, speed: 0.0, z: p.z }
+        };
+        let pos = car.vehicle.position.truncate();
+        let reach = len as f64 + front + 10.0;
+        let start = ghost(0.0);
+        let margin = GHOST_CLEARANCE * 0.5;
+        let bodies: Vec<&Footprint> = feet
+            .near(pos, reach)
+            .filter(|f| f.car != i && !skip.contains(&f.car) && (f.center - pos).length() < reach + f.half_len + f.half_w)
+            .filter(|f| !start.overlaps(f, 0.0))
+            .collect();
+        let players: Vec<Footprint> = if skip.contains(&usize::MAX) {
+            Vec::new()
+        } else {
+            self.player
+                .iter()
+                .chain(self.others_now.iter())
+                .filter(|p| p.4.abs() < 0.5 && (p.0.truncate() - pos).length() < reach + p.2 as f64)
+                .map(|&(c, ph, hl, phw, _)| {
+                    let hr = ph.to_radians();
+                    Footprint { car: usize::MAX, center: c.truncate(), fwd: DVec2::new(hr.sin(), hr.cos()), right: DVec2::new(hr.cos(), -hr.sin()), half_len: hl as f64, half_w: phw as f64, speed: 0.0, z: c.z }
+                })
+                .filter(|f| !start.overlaps(f, 0.0))
+                .collect()
+        };
+        let parked: Vec<Footprint> = extra.iter().map(|b| Footprint::from_obb(usize::MAX, b, 0.0)).filter(|f| !start.overlaps(f, 0.0)).collect();
+        let people: Vec<&(DVec3, DVec2, bool)> = self.people.iter().filter(|(p, _, _)| (p.truncate() - pos).length() < reach + 3.0).collect();
+        let v = st.speed.max(3.0);
+        let mut d = 0.0f32;
+        let mut k = 0usize;
+        while d <= len {
+            let g = ghost(d);
+            let t = d / v;
+            for f in &bodies {
+                if (f.z - g.z).abs() > BODY_LEVEL {
+                    continue;
+                }
+                let mut at = **f;
+                if f.speed.abs() > 0.5 {
+                    if t > 1.0 {
+                        continue;
+                    }
+                    at.center += f.fwd * (f.speed * t) as f64;
+                }
+                if g.overlaps(&at, margin) {
+                    return Some(format!("the body of car {} {d:.1} m on", self.cars[f.car].id));
+                }
+            }
+            if let Some(f) = players.iter().find(|f| (f.z - g.z).abs() < 4.0 && g.overlaps(f, margin)) {
+                return Some(format!("a player's vehicle at ({:.1}, {:.1})", f.center.x, f.center.y));
+            }
+            if parked.iter().any(|f| g.overlaps(f, margin)) {
+                return Some(format!("a parked car {d:.1} m on"));
+            }
+            for (p, pv, _) in &people {
+                if (p.z - g.z).abs() > PEOPLE_LEVEL {
+                    continue;
+                }
+                let rel = p.truncate() + *pv * t.min(2.0) as f64 - g.center;
+                if rel.dot(g.fwd).abs() <= g.half_len + 0.3 && rel.dot(g.right).abs() <= g.half_w + 0.3 {
+                    return Some(format!("somebody on foot {d:.1} m on"));
+                }
+            }
+            if k.is_multiple_of(2) {
+                let p = way(d);
+                let mut b = Obb::vehicle(p.truncate(), g.fwd.x.atan2(g.fwd.y).to_degrees(), front, rear, hw);
+                b.z0 = p.z + 0.15;
+                b.z1 = p.z + height;
+                if self.scenery_blocks(&b) {
+                    return Some(format!("the scenery {d:.1} m on"));
+                }
+            }
+            d += 1.0;
+            k += 1;
+        }
+        None
+    }
+
+    /// Does the box (with its heights) touch the scenery: the map's objects with a
+    /// collision box or mesh? Asked through `scenery_probe` where the game has set one,
+    /// else in the player's collision world (`occluders`); without either, no.
+    pub fn scenery_blocks(&self, b: &Obb) -> bool {
+        match (&self.scenery_probe, &self.occluders) {
+            (Some(probe), _) => probe(b),
+            (None, Some(world)) => world.hit(b).is_some(),
+            _ => false,
+        }
     }
 
     /// Where the player's vehicle is in car `i`'s way: the gap to it and how fast it moves
@@ -391,11 +508,10 @@ impl TrafficSim {
         let behind = half_len as f64 + ((-speed).max(0.0) * horizon) as f64;
         let wide = (half_w + half_width + 0.35) as f64;
         let margin = PLAYER_BOX_MARGIN as f64;
-        // (the stretch ahead of the nose follows the circle the bus is driving:
-        // straight ahead of it on a bend it would reach over into the opposite
-        // lane, where an oncoming car had the bus for its obstacle)
-        let kappa = self.player_turn;
-        let inside = |p: DVec3| in_player_path(p, centre, fwd, right, wide, ahead + margin, behind + margin, kappa);
+        // (the player's own bus bends its reach along its turn; a LAN player's goes straight)
+        let turn = if player.0 == self.player.map_or(DVec3::NAN, |p| p.0) { self.player_turn } else { 0.0 };
+        let body = half_len as f64 + margin;
+        let inside = |p: DVec3| in_player_sweep(p, centre, fwd, right, wide, body, ahead + margin, behind + margin, turn);
         let look = (st.speed * st.speed / (2.0 * st.decel) + st.speed * 2.0 + 15.0)
             .clamp(15.0, look_ahead(st.speed));
         let mut d = 0.0f32;
@@ -436,35 +552,45 @@ impl TrafficSim {
     }
 }
 
-/// Whether the point `p` of a car's way lies in the player's corridor round
-/// `centre`: the box the bus's motion sweeps, its stretch ahead of the nose
-/// following the circle the bus is driving (`kappa` rad/m, positive = heading
-/// increasing, a right turn; 0 the straight box of `in_player_box`). On the
-/// same level only: a bus under a bridge held up the traffic on the bridge
-/// above it (#753). 4 m, as for the other vehicles' bodies.
+/// `in_player_box` with the stretch ahead of the bus bent along the arc it is turning on
+/// (`turn`: its curvature, 1/m, positive to the right): the body itself (`body` ahead of
+/// `centre`) and a band `wide` to either side of the arc its centre will run along for
+/// `ahead` metres. Straight ahead, as before, the reach of a bus driving through a bend at
+/// speed lay across the oncoming lane, and the cars coming the other way braked hard for a
+/// bus that was never going to be where they were.
 #[allow(clippy::too_many_arguments)]
-pub fn in_player_path(p: DVec3, centre: DVec3, fwd: DVec2, right: DVec2, wide: f64, ahead: f64, behind: f64, kappa: f64) -> bool {
-    let rel = p.truncate() - centre.truncate();
-    let (u, v) = (rel.dot(right), rel.dot(fwd));
+pub fn in_player_sweep(p: DVec3, centre: DVec3, fwd: DVec2, right: DVec2, wide: f64, body: f64, ahead: f64, behind: f64, turn: f64) -> bool {
+    if turn.abs() < 1e-4 || ahead <= body {
+        return in_player_box(p, centre, fwd, right, wide, ahead, behind);
+    }
+    if in_player_box(p, centre, fwd, right, wide, body, behind) {
+        return true;
+    }
     if (p.z - centre.z).abs() >= 4.0 {
         return false;
     }
-    if kappa.abs() < 1e-6 {
-        return u.abs() <= wide && v <= ahead && v >= -behind;
+    // in the bus's frame (x right, y ahead) the arc runs round the turning centre (1/turn, 0)
+    let rel = p.truncate() - centre.truncate();
+    let (x, y) = (rel.dot(right), rel.dot(fwd));
+    let radius = 1.0 / turn.abs();
+    let (vx, vy) = (x - 1.0 / turn, y);
+    let along = vy.atan2(-turn.signum() * vx) * radius;
+    ((vx * vx + vy * vy).sqrt() - radius).abs() <= wide && along >= 0.0 && along <= ahead
+}
+
+/// The curvature (1/m, positive to the right) of the player's path from its last two boxes
+/// `dt` apart, smoothed into `before`: none for a bus creeping or standing, whose heading
+/// says little about where it goes.
+pub fn player_turn_of(before: f64, last: Option<PlayerBox>, now: Option<PlayerBox>, dt: f32) -> f64 {
+    let (Some(a), Some(b)) = (last, now) else { return 0.0 };
+    let speed = b.4.abs() as f64;
+    if speed < 1.0 || dt <= 0.0 || (b.0 - a.0).length() > 5.0 + speed * dt as f64 * 2.0 {
+        return 0.0;
     }
-    // the circle the bus drives: its centre `r` to the side it turns to. A point
-    // is in the corridor when it is that close to the circle (`lateral`) and its
-    // place on it (`s`, negative behind the bus) is within the bus's reach.
-    let r = 1.0 / kappa;
-    let lateral = (f64::hypot(u - r, v) - r.abs()).abs();
-    // (the angles from the circle's centre to the bus's start and to the point,
-    // wrapped to a half turn: the corridor never runs further than half round)
-    let beta = f64::atan2(v, u - r);
-    let gamma = if r > 0.0 { std::f64::consts::PI } else { 0.0 };
-    let two_pi = 2.0 * std::f64::consts::PI;
-    let delta = (gamma - beta + std::f64::consts::PI).rem_euclid(two_pi) - std::f64::consts::PI;
-    let s = r * delta;
-    lateral <= wide && s <= ahead && s >= -behind
+    let turned = (b.1 - a.1 + 540.0).rem_euclid(360.0) - 180.0;
+    let k = (turned.to_radians() / (speed * dt as f64) * (b.4 as f64).signum()).clamp(-0.2, 0.2);
+    // (over about a third of a second: a frame's heading jitters)
+    before + (k - before) * (dt as f64 / 0.3).min(1.0)
 }
 
 /// Whether the point `p` of a car's way lies in the player's box round `centre` (`wide` to

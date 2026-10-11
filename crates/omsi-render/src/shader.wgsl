@@ -35,6 +35,10 @@ struct Camera {
     inside2_a: vec4<f32>,
     inside2_b: vec4<f32>,
     inside2_c: vec4<f32>,
+    // Enhanced: the field each light cookie layer covers (xy: the tangents of its half
+    // angles across and up; z: its first record in the light buffer), see enhanced.wgsl
+    // `cookie_light`
+    cookies: array<vec4<f32>, 8>,
 };
 
 // 1 when the point lies inside the player's vehicle (its [boundingbox], shrunk a little so
@@ -366,7 +370,8 @@ struct MaterialParams {
     wipe_bounds: vec4<f32>,
     // x: [matl_glow] strength (0 = the keyword is not there; the material is its own light -
     // its `t_light` is a greyscale mask of how much shines where, its colour is its own, see
-    // the enhanced pass), y/z/w free
+    // the enhanced pass), y an LED panel's share of the `Led glow` ([led_glow_effect],
+    // 1 without it), z/w free
     glow: vec4<f32>,
 };
 @group(1) @binding(2) var<uniform> material: MaterialParams;
@@ -657,8 +662,16 @@ fn vs_main(in: VsIn) -> VsOut {
         // over the road it lies on - with the road's own pull alone the two fought for
         // every pixel and the road mostly won; a few centimetres more bring it through the
         // road and still leave it behind the body and the wheels standing on it)
-        let decal = select(select(0.0, 0.01 + 0.001 * d, surf > 1.1 && surf < 1.5), 0.05 + 0.002 * d, surf > 1.5);
-        let pull = min(0.003 * d + decal, d * 0.3);
+        // The share stops growing at 5 cm. The pull is a depth, not a place - the picture
+        // does not move - but the pole of a traffic light that a mod's map tagged as a
+        // surface is pulled with the road under it, and a share still growing at distance
+        // (a third of a metre at 90 m) carried the pole through the signal head it stands
+        // beside. Capped, the pole stays behind what it stands by, and the depth a road
+        // needs over flush ground is a few millimetres at most (a floor raised 3 cm above
+        // the road is still seen - `surface_bias_keeps_raised_floors_visible_at_a_distance`).
+        let share = select(select(0.003, 0.004, surf > 1.1 && surf < 1.5), 0.005, surf > 1.5);
+        let fixed = select(select(0.0, 0.01, surf > 1.1 && surf < 1.5), 0.05, surf > 1.5);
+        let pull = min(min(share * d, 0.05) + fixed, d * 0.3);
         cp = wp.xyz - to / max(d, 1e-3) * pull;
     }
     out.clip = camera.view_proj * vec4<f32>(cp, 1.0);

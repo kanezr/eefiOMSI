@@ -1578,10 +1578,24 @@ pub(super) fn custom_weather_summary(c:&crate::weather_setup::CustomWeather)->St
 
 pub(super) fn selected_weather_as_custom(root:&str,file:&str)->Option<String>{
     if file.is_empty()||file=="cycle"||file.to_ascii_lowercase().starts_with("metar:")||crate::weather_setup::custom_weather(Some(file)).is_some(){return None}
-    let path=omsi_cfg::resolve_path(std::path::Path::new(root),file);
-    let w=omsi_content::weather::Weather::load(&path).ok()?;
-    let wet=(w.ground_wet[0]/255.0).clamp(0.0,1.0);
-    Some(crate::weather_setup::CustomWeather::from_weather(&w,1.0,wet).encode())
+    // (asked every frame the weather step is drawn: the file was read and parsed each time;
+    // kept for the weather chosen until another one is)
+    static LAST: std::sync::Mutex<Option<((String, String), Option<String>)>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(((r, f), v)) = last.as_ref() {
+        if r == root && f == file {
+            return v.clone();
+        }
+    }
+    let read = || {
+        let path=omsi_cfg::resolve_path(std::path::Path::new(root),file);
+        let w=omsi_content::weather::Weather::load(&path).ok()?;
+        let wet=(w.ground_wet[0]/255.0).clamp(0.0,1.0);
+        Some(crate::weather_setup::CustomWeather::from_weather(&w,1.0,wet).encode())
+    };
+    let v = read();
+    *last = Some(((root.to_string(), file.to_string()), v.clone()));
+    v
 }
 
 pub(crate) fn nearest_airport(root: &str, map: &str) -> String {

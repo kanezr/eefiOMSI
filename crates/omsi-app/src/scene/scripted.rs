@@ -32,6 +32,10 @@ pub struct DayKind {
     pub school_holiday: bool,
 }
 
+/// A scripted object's dynamic texture change: its type, the variants chosen, its mesh
+/// instances and the slots' switches.
+type TextureUpdate = (Arc<ObjectType>, Vec<usize>, Vec<usize>, Vec<((usize, usize), bool)>);
+
 impl InUse {
     /// The window of object `seed` (its map id: the same building keeps its hours).
     pub fn new(mode: i32, seed: u64) -> InUse {
@@ -136,7 +140,8 @@ impl World {
                 *e = e.max(aspects.get(&n).copied().unwrap_or(0.0));
             }
         }
-        let ids: hashbrown::HashSet<i64> = self.signal_routes.iter().flat_map(|r| std::iter::once(r.signal.0).chain(r.dist_signal)).collect();
+        // (the signals of the routes, gathered once when the map opened)
+        let ids = &self.signal_ids;
         let mut scripted = self.scripted.lock();
         for o in scripted.iter_mut() {
             if !ids.contains(&o.map_id) {
@@ -389,8 +394,17 @@ impl World {
             return;
         }
         let mut scripted = self.scripted.lock();
+        // The objects asked for, found in one pass over the list - the first of each id, as
+        // a search would find it: every train asks for the points of its next five lanes on
+        // every frame, and each of them was a search of all the scripted objects.
+        let mut owners: HashMap<i64, Option<usize>> = requests.iter().map(|&(id, _)| (id, None)).collect();
+        for (i, o) in scripted.iter().enumerate() {
+            if let Some(slot) = owners.get_mut(&o.map_id) {
+                slot.get_or_insert(i);
+            }
+        }
         for &(id, path) in requests {
-            let Some(o) = scripted.iter_mut().find(|o| o.map_id == id) else { continue };
+            let Some(o) = owners.get(&id).copied().flatten().map(|i| &mut scripted[i]) else { continue };
             if let Some(Some(d)) = o.ty.sco.path_switch_dir.get(path as usize) {
                 let was = o.inst.var("Switch");
                 if o.inst.set_var("Switch", *d as f32) && was != Some(*d as f32) && omsi_cfg::flags::OMSI_DEBUG_SWITCHES.is_set() {
@@ -491,12 +505,7 @@ impl World {
         let mut boards = self.timetable_boards.lock();
         let mut wanted: Vec<i64> = Vec::new();
         let mut wanted_names: Vec<String> = Vec::new();
-        let mut texture_updates: Vec<(
-            Arc<ObjectType>,
-            Vec<usize>,
-            Vec<usize>,
-            HashMap<(usize, usize), bool>,
-        )> = Vec::new();
+        let mut texture_updates: Vec<TextureUpdate> = Vec::new();
         // First what every object's script is given (in order: the light programs and the
         // boards are read here), then the scripts themselves, side by side on the worker
         // threads (a city's hundreds of scripted objects took a core's worth of a frame),
@@ -542,19 +551,31 @@ impl World {
             if let (true, Some(stop)) = (o.arrivals, o.var_parent) {
                 wanted.push(stop);
                 let now = boards.clock.as_ref().map(|c| c.time).unwrap_or(0.0);
-                o.inst.host.arrivals = boards
-                    .by_stop
-                    .get(&stop)
-                    .map(|l| {
-                        l.iter()
+                // The list changes about once a second, the times to go every frame: the
+                // same buses keep their names and only count down (the whole list was made
+                // anew, its names copied, every frame for every board).
+                let arrivals = &mut o.inst.host.arrivals;
+                match boards.by_stop.get(&stop) {
+                    Some(l)
+                        if arrivals.len() == l.len()
+                            && arrivals.iter().zip(l).all(|(a, (line, terminus, _))| a.line == *line && a.terminus == *terminus) =>
+                    {
+                        for (a, (_, _, t)) in arrivals.iter_mut().zip(l) {
+                            a.due = (t - now) as f32;
+                        }
+                    }
+                    Some(l) => {
+                        *arrivals = l
+                            .iter()
                             .map(|(line, terminus, t)| omsi_sim::host::Arrival {
                                 line: line.clone(),
                                 terminus: terminus.clone(),
                                 due: (t - now) as f32,
                             })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                            .collect();
+                    }
+                    None => arrivals.clear(),
+                }
             }
             // an HTML page that asks for departures by stop name
             if !o.htmls.is_empty() && dist < HTML_OBJECT_NEAR && !o.inst.host.html_departure_wants.is_empty() {
@@ -714,39 +735,7 @@ impl World {
         boards.wanted_names = wanted_names;
         drop(scripted);
         drop(boards);
-        // Scenery placement takes the GPU-cache lock before the script list. Apply dynamic
-        // texture changes after releasing the script-list lock to keep that lock order
-        // consistent.
-        for (ty, selection, instances, switches) in texture_updates {
-            let variant = {
-                let mut gpu = self.gpu.lock();
-                gpu.dynamic_texture_variant(
-                    renderer,
-                    scene,
-                    Arc::as_ptr(&ty) as usize,
-                    &selection,
-                    &self.root,
-                    &HashMap::new(),
-                )
-            };
-            if let Some(rows) = variant {
-                for (mi, row) in rows.iter().enumerate() {
-                    let Some(&mesh_inst) = instances.get(mi) else {
-                        continue;
-                    };
-                    for (slot, pair) in row.iter().enumerate() {
-                        let Some((base, item)) = pair else { continue };
-                        let item_on = switches.get(&(mesh_inst, slot)).copied().unwrap_or(false);
-                        renderer.set_material(
-                            scene,
-                            mesh_inst,
-                            slot,
-                            if item_on { *item } else { *base },
-                        );
-                    }
-                }
-            }
-        }
+        self.apply_texture_updates(renderer, scene, texture_updates);
         // the lamps' own sounds (a level crossing's bell): their scripts run with the light
         // programs (`Traffic::sync`), what they fired is heard here
         for lamp in self.light_objects.lock().iter() {
@@ -771,6 +760,47 @@ impl World {
             }
         }
         updated
+    }
+
+    /// The dynamic texture changes the scripts asked for this frame. Scenery placement takes
+    /// the GPU-cache lock before the script list, so they are applied after the script-list
+    /// lock is released, to keep that lock order consistent.
+    fn apply_texture_updates(&self, renderer: &Renderer, scene: &mut Scene, texture_updates: Vec<TextureUpdate>) {
+    for (ty, selection, instances, switches) in texture_updates {
+        let variant = {
+            let mut gpu = self.gpu.lock();
+            gpu.dynamic_texture_variant(
+                renderer,
+                scene,
+                Arc::as_ptr(&ty) as usize,
+                &selection,
+                &self.root,
+                &HashMap::new(),
+            )
+        };
+        if let Some(rows) = variant {
+            for (mi, row) in rows.iter().enumerate() {
+                let Some(&mesh_inst) = instances.get(mi) else {
+                    continue;
+                };
+                for (slot, pair) in row.iter().enumerate() {
+                    let Some((base, item)) = pair else { continue };
+                    // (the last switch of a slot, as a map collected from them kept it)
+                    let item_on = switches
+                        .iter()
+                        .rev()
+                        .find(|(k, _)| *k == (mesh_inst, slot))
+                        .is_some_and(|&(_, on)| on);
+                    renderer.set_material(
+                        scene,
+                        mesh_inst,
+                        slot,
+                        if item_on { *item } else { *base },
+                    );
+                }
+            }
+        }
+    }
     }
 
     /// Play a scenery object's `[sound]` (the config at `path`) while the listener is within

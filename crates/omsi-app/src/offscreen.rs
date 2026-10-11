@@ -192,6 +192,8 @@ fn world_lights(
     lights::upload_corona_textures(renderer);
     world.update_light_map_atlas(renderer, eye);
     lights::collect(world, scene, daylight, eye, vehicles);
+    // (and the pictures the lights asked for first now: a picture has the one frame)
+    lights::upload_corona_textures(renderer);
 }
 
 /// The offscreen loop's fixed steps kept to the clock when other games take part (a LAN

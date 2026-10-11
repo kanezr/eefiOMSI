@@ -35,6 +35,7 @@ struct Camera {
     inside2_a: vec4<f32>,
     inside2_b: vec4<f32>,
     inside2_c: vec4<f32>,
+    cookies: array<vec4<f32>, 8>,
 };
 @group(0) @binding(0) var<uniform> camera: Camera;
 

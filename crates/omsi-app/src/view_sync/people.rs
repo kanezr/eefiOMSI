@@ -251,10 +251,11 @@ impl Humans {
         if let Some(m) = self.sim.money.as_mut() {
             crate::money::sync(m, renderer, scene, bus);
         }
-        if let Some(pack) = self.sim.tickets.as_ref().map(|t| t.path.clone()) {
-            let fresh = view.ticket_blocks.as_ref().is_none_or(|b| b.made_for != (bus.ty.def.path.clone(), pack.clone()));
+        if let Some(pack) = self.sim.tickets.as_ref().map(|t| &t.path) {
+            // (compared in place: both paths were copied for it every frame)
+            let fresh = view.ticket_blocks.as_ref().is_none_or(|b| b.made_for.0 != bus.ty.def.path || b.made_for.1 != *pack);
             if fresh && !bus.ty.def.attachments.is_empty() {
-                view.ticket_blocks = Some(crate::money::TicketBlocks::new(world, renderer, scene, bus, &pack));
+                view.ticket_blocks = Some(crate::money::TicketBlocks::new(world, renderer, scene, bus, pack));
             }
         }
         if let Some(b) = view.ticket_blocks.as_ref() {

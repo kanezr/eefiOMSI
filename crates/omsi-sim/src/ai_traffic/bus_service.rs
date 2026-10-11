@@ -6,6 +6,7 @@
 //! aboard. Nothing of the player's bus is involved: no driver inputs, no throttle and brake
 //! for the script to turn into motion - the car moves, the script only animates it.
 
+use super::berths::{BerthKey, BerthScene, Berths, QUEUE_STANDOFF, SERVE_BEHIND_REACH};
 use crate::traffic::{AiState, LaneKind, Network};
 use crate::VehicleInstance;
 use std::collections::VecDeque;
@@ -91,6 +92,17 @@ pub enum Phase {
     TripDone,
 }
 
+/// Something went wrong at a stop that the bus could not mend by itself (it is kept for the
+/// diagnostics; the bus goes on as best it can).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceFault {
+    /// The doors are open and the script never says they are shut: the bus stands.
+    DoorsOpenUnanswered,
+    /// The script never said the doors are shut, and nobody knows whether they are: the
+    /// bus left after `CLOSE_MAX`.
+    DoorsUnanswered,
+}
+
 #[derive(Debug, Clone)]
 pub struct BusService {
     pub stops: VecDeque<Stop>,
@@ -134,6 +146,97 @@ pub struct BusService {
     /// time is just the running time shared out by distance, so an early bus serves it and
     /// drives on instead of standing there until its time (`waits_here`).
     pub holds: Vec<i64>,
+    /// The berth it holds (`berths`), with the stop's place on its route (route index and
+    /// distance along that lane): kept from when it is handed the berth until its rear has
+    /// left it after pulling out.
+    held: Option<(BerthKey, usize, f32)>,
+    /// It serves (or served) its front stop from behind the bus holding the berth: it holds
+    /// no berth, and on a layover it moves up once the berth is free (`move_up`).
+    pub behind: bool,
+    /// Moving up onto the berth from behind, doors shut.
+    moving_up: bool,
+    /// Seconds it has been at rest on its way to the front stop (`DOCK_SPEED`).
+    rest_t: f32,
+    /// The stops it could not serve (overshot, or could not get to): their ids in order.
+    pub missed: Vec<i64>,
+    pub fault: Option<ServiceFault>,
+}
+
+/// Docked: the origin within `DOCK_LONG` of its stop point along the lane, the body within
+/// `DOCK_LAT` of where it moves across to, at rest (m, m, m/s).
+const DOCK_LONG: f32 = 0.5;
+const DOCK_LAT: f32 = 0.25;
+const DOCK_SPEED: f32 = 0.1;
+/// At rest this near its point (along, across) for `SERVE_HERE_AFTER` seconds, a bus serves
+/// the stop from where it stands: people reach the doors all the same, and creeping on to
+/// the exact point would keep the buses behind waiting.
+const SERVE_HERE_LONG: f32 = 2.5;
+const SERVE_HERE_LAT: f32 = 0.8;
+const SERVE_HERE_AFTER: f32 = 1.5;
+/// At rest this long at its point but where it cannot dock from (across), the stop is
+/// missed: it drives on rather than back up or stand there for good. Held short of its point
+/// (within `UNREACHABLE_NEAR` m) by something that came to stand in the berth, it serves the
+/// stop from there after `berths::BLOCKED_LONG`.
+const UNREACHABLE_AFTER: f32 = 8.0;
+const UNREACHABLE_NEAR: f32 = 12.0;
+/// Pulling out of a bay is held for traffic only when the bus stands this far or more off
+/// the lane's middle (m): one already in line with the lane just drives.
+const ALIGNED: f32 = 0.3;
+/// Where the trip's track runs on more than this past its last stop (m, to a place to stand
+/// on the layover), the trip ends at the end of the track, not at the stop.
+const TRACK_ON: f32 = 30.0;
+
+/// Whether the vehicle's script answers `AI_Scheduled_AtStation` (writes it back to 0 once
+/// its doors are shut, as the stock `door_X10_AI.osc` does): only then is there an answer to
+/// wait for.
+fn script_answers(vehicle: &VehicleInstance) -> bool {
+    let p = &vehicle.ty.program;
+    p.var("AI_Scheduled_AtStation").is_some_and(|v| p.stores(v))
+}
+
+/// Whether the script's doors stand open: None when the script has no door variables the
+/// traffic knows (`door_0` .. `door_3`, the stock buses' door positions, 0 shut .. 1 open).
+fn doors_open(vehicle: &VehicleInstance) -> Option<bool> {
+    let mut known = false;
+    let mut open = false;
+    for name in ["door_0", "door_1", "door_2", "door_3"] {
+        if vehicle.has_script_var(name) || vehicle.ty.program.var(name).is_some_and(|v| vehicle.ty.program.stores(v)) {
+            known = true;
+            open |= vehicle.var(name).is_some_and(|v| v > 0.1);
+        }
+    }
+    known.then_some(open)
+}
+
+/// How far the rear of a bus with state `st` has got past point `s` of its route's lane
+/// `ri` (m, negative before it).
+fn past_by(st: &AiState, net: &Network, ri: usize, s: f32) -> f32 {
+    if st.route.get(ri).is_none() {
+        return f32::INFINITY;
+    }
+    let origin = if ri >= st.route_index {
+        -st.route_distance(net, ri, s)
+    } else {
+        // the point carried on to the lane the bus is on, as `AiState::route_distance` goes
+        // the other way: a lane's length on to the next, the offset to a lane beside (a route
+        // that moves over to the lane beside at a stop)
+        let mut x = s;
+        for k in ri..st.route_index.min(st.route.len().saturating_sub(1)) {
+            let (a, b) = (st.route[k], st.route[k + 1]);
+            if net.parallel(a, b) {
+                x += net.beside_delta(a, b);
+            } else {
+                x -= net.lanes[a].length();
+            }
+        }
+        st.s - x
+    };
+    origin - st.rear
+}
+
+/// The way left on a bus's route from its origin (m).
+fn route_left(st: &AiState, net: &Network) -> f32 {
+    st.route.iter().skip(st.route_index).map(|&l| net.lanes[l].length()).sum::<f32>() - st.s
 }
 
 /// The side the bus pulls out towards: left (1) from a bay on the right, else right (2).
@@ -225,6 +328,10 @@ pub struct Ctx<'a> {
     /// `TrafficSim::timed_waits_only`: an early bus waits only where `waits_here` says so
     /// (off: at every stop it serves, as Omsi.exe does).
     pub timed_waits_only: bool,
+    /// The traffic's time (s), what the berths are timed by.
+    pub time: f32,
+    /// The front stop's berth as the traffic stands (`TrafficSim::berth_scene`).
+    pub berth: BerthScene,
 }
 
 impl BusService {
@@ -275,7 +382,24 @@ impl BusService {
             always: Vec::new(),
             serve_early: Vec::new(),
             holds: Vec::new(),
+            held: None,
+            behind: false,
+            moving_up: false,
+            rest_t: 0.0,
+            missed: Vec::new(),
+            fault: None,
         }
+    }
+
+    /// The berth it holds, if any.
+    pub fn held_berth(&self) -> Option<BerthKey> {
+        self.held.map(|h| h.0)
+    }
+
+    /// The network changed and every berth was given up (`Berths::begin_step`).
+    pub fn forget_berth(&mut self) {
+        self.held = None;
+        self.moving_up = false;
     }
 
     /// Doors open for people (`AI_Scheduled_AtStation`).
@@ -303,7 +427,7 @@ impl BusService {
     /// minute later, and on again twenty seconds before it leaves. The buses took their
     /// breaks at the termini with the engines running (#1404).
     pub fn engine_running(&self, day_time: f64) -> bool {
-        let standing = matches!(self.phase, Phase::Boarding | Phase::Waiting);
+        let standing = matches!(self.phase, Phase::Boarding | Phase::Waiting) && !self.moving_up;
         !(standing
             && self.leave_at - self.arrived_at > ENGINE_OFF_WAIT
             && day_time - self.arrived_at > ENGINE_OFF_AFTER
@@ -322,6 +446,8 @@ impl BusService {
             Phase::Running => 0.0,
             Phase::Boarding => self.boarding.max(0.0) + 2.0 + wait,
             Phase::Waiting => wait + 2.0,
+            // (doors open that the script never shuts: it stands until somebody sees to it)
+            Phase::Closing if self.fault == Some(ServiceFault::DoorsOpenUnanswered) => 600.0,
             Phase::Closing => 1.0,
             Phase::TripDone => 600.0,
         }
@@ -351,6 +477,12 @@ impl BusService {
         self.held_over = 0.0;
         self.boarded = false;
         self.layover = layover;
+        // (the berths it held are given back by `TrafficSim::reroute`)
+        self.held = None;
+        self.behind = false;
+        self.moving_up = false;
+        self.rest_t = 0.0;
+        self.fault = None;
     }
 
     fn set_phase(&mut self, p: Phase) {
@@ -430,6 +562,7 @@ impl BusService {
         self.boarding = boarding_time(ctx.id);
         self.held_over = 0.0;
         self.boarded = false;
+        self.rest_t = 0.0;
         // a layover opens the doors for the last minute only; anywhere else people get off
         // straight away
         if layover && wait > LAYOVER_BOARDING + 10.0 {
@@ -462,9 +595,15 @@ impl BusService {
         self.stops.pop_front();
         self.near_d = f32::INFINITY;
         self.serve = None;
+        self.rest_t = 0.0;
+        self.behind = false;
         super::model::ibis_to_next_stop(vehicle, self.stops.len());
         let air = ctx.net.lanes[st.lane].kind == LaneKind::Air;
-        if self.stops.is_empty() && !self.route_open && !air {
+        // the end of the trip: at its last stop, unless the timetable's track runs on past it
+        // (to where the bus stands out its layover) - then at the end of the track, where
+        // `Traffic::end_of_way` stops it and ends the trip
+        let track_on = route_left(st, ctx.net) > TRACK_ON + st.front;
+        if self.stops.is_empty() && !self.route_open && !air && !track_on {
             self.set_phase(Phase::TripDone);
             st.signal = 0;
             st.signal_time = 0.0;
@@ -496,23 +635,54 @@ impl BusService {
         }
     }
 
+    /// Whether the doors are shut for pulling out (`Phase::Closing`), as the script tells
+    /// it: a script that answers (writes `AI_Scheduled_AtStation` back to 0) after
+    /// `CLOSE_MIN`; one that never writes the variable, which has nothing to answer with,
+    /// after `CLOSE_MIN` as well. A script that has the variable and never answers is waited for
+    /// `CLOSE_MAX`: then, with its doors open, the bus stands (it does not drive off with
+    /// people in the doorway), else it leaves - both kept as a fault.
+    fn doors_shut(&mut self, vehicle: &VehicleInstance, ctx: &Ctx) -> bool {
+        if !script_answers(vehicle) {
+            return self.phase_t >= CLOSE_MIN;
+        }
+        let answered = vehicle.station_released() && vehicle.var("AI_Scheduled_AtStation").map(|v| v.abs() < 0.5).unwrap_or(true);
+        if answered {
+            return self.phase_t >= CLOSE_MIN;
+        }
+        if self.phase_t < CLOSE_MAX {
+            return false;
+        }
+        let open = doors_open(vehicle) == Some(true);
+        let fault = if open { ServiceFault::DoorsOpenUnanswered } else { ServiceFault::DoorsUnanswered };
+        if self.fault != Some(fault) {
+            self.fault = Some(fault);
+            log::warn!("t={:.1}: timetable bus {}: its script never said the doors are shut ({fault:?})", ctx.day_time, ctx.id);
+        }
+        !open
+    }
+
     /// One frame of the service: where the bus has to stop (distance from its origin along
     /// its way), if anywhere; it also sets its blinker and its place across the lane.
-    pub fn step(&mut self, st: &mut AiState, vehicle: &mut VehicleInstance, ctx: &Ctx) -> Option<f32> {
+    /// `berths`: the stops' berths, who holds and who waits for which.
+    pub fn step(&mut self, st: &mut AiState, vehicle: &mut VehicleInstance, ctx: &Ctx, berths: &mut Berths) -> Option<f32> {
         self.phase_t += ctx.dt;
         let here = Some(st.front);
+        self.keep_berth(st, ctx, berths);
         match self.phase {
             Phase::TripDone => here,
             Phase::Waiting => {
+                let up = self.move_up(st, ctx, berths);
                 let board_at = self.leave_at - LAYOVER_BOARDING;
-                if !self.boarded && ctx.day_time >= board_at {
+                if up.is_some() {
+                    // (doors shut while it moves)
+                } else if !self.boarded && ctx.day_time >= board_at {
                     self.boarded = true;
                     self.boarding = self.boarding.max((self.leave_at - ctx.day_time) as f32 - 3.0);
                     self.set_phase(Phase::Boarding);
                 } else if self.boarded && ctx.day_time >= self.leave_at {
                     self.set_phase(Phase::Closing);
                 }
-                here
+                up.or(here)
             }
             Phase::Boarding => {
                 self.boarding -= ctx.dt;
@@ -532,13 +702,14 @@ impl BusService {
                 // comes off. The bus leaves when its script says the doors are shut (it
                 // writes AI_Scheduled_AtStation back to 0), as OMSI's buses do; leaving
                 // after a fixed 3.5 s drove buses off with their doors still closing, and
-                // each type at its own moment. A script that never answers is not waited
-                // for longer than CLOSE_MAX.
+                // each type at its own moment (`doors_shut`). Out of a bay it waits for a
+                // gap: not in front of something coming up close behind, nor into
+                // something standing just ahead.
                 let bay = self.stops.front().map(|s| s.bay).unwrap_or(0.0);
                 st.signal = out_signal(bay);
                 st.signal_time = st.signal_time.max(1.0);
-                let answered = vehicle.station_released() && vehicle.var("AI_Scheduled_AtStation").map(|v| v.abs() < 0.5).unwrap_or(true);
-                if (answered && self.phase_t >= CLOSE_MIN) || self.phase_t >= CLOSE_MAX {
+                let in_bay = st.lateral.abs() > ALIGNED;
+                if self.doors_shut(vehicle, ctx) && !(in_bay && ctx.berth.pull_out_blocked) {
                     self.depart(st, vehicle, ctx);
                     if self.phase == Phase::TripDone {
                         return here;
@@ -547,12 +718,85 @@ impl BusService {
                 }
                 here
             }
-            Phase::Running => self.approach(st, vehicle, ctx),
+            Phase::Running => self.approach(st, vehicle, ctx, berths),
         }
     }
 
+    /// The berth it holds: the holder tells how long it will stand there yet, and gives it
+    /// back once its rear has left it after pulling out. At its stop a bus that lost the
+    /// berth with a change of the network takes it again (it stands in it).
+    fn keep_berth(&mut self, st: &AiState, ctx: &Ctx, berths: &mut Berths) {
+        if let Some((key, ri, s)) = self.held {
+            if self.at_stop() {
+                berths.note_standing(key, ctx.id, self.standing_for(ctx.day_time));
+            } else if self.phase == Phase::Running && past_by(st, ctx.net, ri, s) > super::berths::CLEAR_PAST {
+                berths.release(key, ctx.id);
+                self.held = None;
+            }
+        } else if self.at_stop() && !self.behind && ctx.berth.applies {
+            if let Some(stop) = self.stops.front() {
+                let key = BerthKey { stop: stop.id, lane: st.route.get(stop.ri).copied().unwrap_or(st.lane) };
+                berths.ask(key, ctx.id, true, 0.0);
+                if berths.grant(key, ctx.id, ctx.berth.free) {
+                    self.held = Some((key, stop.ri, stop.s));
+                }
+            }
+        }
+    }
+
+    /// A bus that stands out its layover behind the berth (it served the stop from there)
+    /// moves up onto the berth once that is free, doors shut: its tail held the lanes
+    /// behind it the whole layover otherwise. Where to stop, while it moves.
+    fn move_up(&mut self, st: &mut AiState, ctx: &Ctx, berths: &mut Berths) -> Option<f32> {
+        self.moving_up = false;
+        if !self.behind || !ctx.berth.applies || self.boarded {
+            return None;
+        }
+        let stop = *self.stops.front()?;
+        let key = BerthKey { stop: stop.id, lane: st.route.get(stop.ri).copied().unwrap_or(st.lane) };
+        let d = st.route_distance(ctx.net, stop.ri, stop.s);
+        berths.ask(key, ctx.id, ctx.berth.there, d);
+        if !berths.grant(key, ctx.id, ctx.berth.free) {
+            return None;
+        }
+        self.held = Some((key, stop.ri, stop.s));
+        if !ctx.passing && d < BAY_REACH {
+            st.lateral_target = stop.bay;
+        }
+        self.rest_t = if st.speed < DOCK_SPEED { self.rest_t + ctx.dt } else { 0.0 };
+        let lat_err = (st.lateral - st.lateral_target).abs();
+        let docked = d.abs() < DOCK_LONG && lat_err < DOCK_LAT && st.speed < DOCK_SPEED;
+        if docked || (d.abs() < SERVE_HERE_LONG && lat_err < SERVE_HERE_LAT && self.rest_t >= SERVE_HERE_AFTER) {
+            self.behind = false;
+            self.rest_t = 0.0;
+            return None;
+        }
+        self.moving_up = true;
+        Some(d.max(0.0) + st.front - 0.3)
+    }
+
+    /// The front stop is missed (`why`): no doors there, the berth given back, on to the next.
+    fn miss(&mut self, vehicle: &mut VehicleInstance, ctx: &Ctx, berths: &mut Berths, key: Option<BerthKey>, why: &str) {
+        if let Some(stop) = self.stops.pop_front() {
+            if ctx.debug || omsi_cfg::flags::OMSI_DEBUG_STOPS.is_set() {
+                log::info!("t={:.1}: timetable bus {} missed its stop {} ({why})", ctx.day_time, ctx.id, stop.id);
+            }
+            self.missed.push(stop.id);
+        }
+        if let Some(k) = key {
+            berths.release(k, ctx.id);
+            if self.held.is_some_and(|h| h.0 == k) {
+                self.held = None;
+            }
+        }
+        self.near_d = f32::INFINITY;
+        self.serve = None;
+        self.rest_t = 0.0;
+        super::model::ibis_to_next_stop(vehicle, self.stops.len());
+    }
+
     /// Driving: brake for the next stop, pull into its bay.
-    fn approach(&mut self, st: &mut AiState, vehicle: &mut VehicleInstance, ctx: &Ctx) -> Option<f32> {
+    fn approach(&mut self, st: &mut AiState, vehicle: &mut VehicleInstance, ctx: &Ctx, berths: &mut Berths) -> Option<f32> {
         loop {
             let Some(stop) = self.stops.front().copied() else {
                 if !ctx.passing {
@@ -561,21 +805,28 @@ impl BusService {
                 return None;
             };
             let speed = st.speed;
+            // a road stop has a berth; trains and aircraft keep to their stations
+            let key = ctx.berth.applies.then(|| BerthKey { stop: stop.id, lane: st.route.get(stop.ri).copied().unwrap_or(st.lane) });
             // A bus creeping the last metres to its stop point is at its stop, even when the
             // point lies past the end of the stop's lane and the lane ahead takes over first:
             // measured from the new lane the stop was suddenly 20-30 m behind, and the bus -
             // blinker on, pulled into the bay - drove on without opening its doors.
             let crept_past = self.near_d < 12.0 && speed < 4.0;
+            let holds = key.is_none_or(|k| berths.holder(k) == Some(ctx.id));
             if stop.ri < st.route_index {
-                if crept_past {
+                if crept_past && holds {
                     self.near_d = f32::INFINITY;
                     self.arrive(ctx, stop.depart, (st.lane, st.s));
                     return Some(st.front);
                 }
                 // behind it already (the route was cut short)
-                self.stops.pop_front();
-                self.near_d = f32::INFINITY;
-                self.serve = None;
+                if key.is_some() {
+                    self.miss(vehicle, ctx, berths, key, "behind it");
+                } else {
+                    self.stops.pop_front();
+                    self.near_d = f32::INFINITY;
+                    self.serve = None;
+                }
                 continue;
             }
             let d = st.route_distance(ctx.net, stop.ri, stop.s);
@@ -587,6 +838,9 @@ impl BusService {
             if self.serve == Some(false) {
                 if ctx.debug || omsi_cfg::flags::OMSI_DEBUG_STOPS.is_set() {
                     log::info!("t={:.1}: timetable bus {} passes its stop {}: nobody gets off or on", ctx.day_time, ctx.id, stop.id);
+                }
+                if let Some(k) = key {
+                    berths.withdraw(k, ctx.id);
                 }
                 self.stops.pop_front();
                 self.near_d = f32::INFINITY;
@@ -618,31 +872,96 @@ impl BusService {
                     ctx.kerb_swerve.unwrap_or(0.0)
                 };
             }
-            // queued behind something standing at its stop (another bus, the player's):
-            // after a while it serves the stop where it stands, as drivers do
-            let queued = speed < 0.3 && ctx.stopped > 6.0 && (2.0..45.0).contains(&d);
-            if (d < 2.0 && speed < 0.3) || queued || (d < -2.0 && crept_past) {
+            let Some(key) = key else {
+                // a station of a train or an aircraft: queued behind something standing at
+                // it (another train), after a while it serves it where it stands
+                let queued = speed < 0.3 && ctx.stopped > 6.0 && (2.0..45.0).contains(&d);
+                if (d < 2.0 && speed < 0.3) || queued || (d < -2.0 && crept_past) {
+                    self.near_d = f32::INFINITY;
+                    self.arrive(ctx, stop.depart, (st.lane, st.s));
+                    return Some(st.front);
+                }
+                self.near_d = d;
+                if d < -2.0 {
+                    if ctx.debug || omsi_cfg::flags::OMSI_DEBUG_STOPS.is_set() {
+                        log::info!("t={:.1}: timetable bus {} missed its stop ({:.1} m past, {:.1} m/s, stood {:.1} s, passing {})", ctx.day_time, ctx.id, -d, speed, ctx.stopped, ctx.passing);
+                    }
+                    self.stops.pop_front();
+                    self.near_d = f32::INFINITY;
+                    self.serve = None;
+                    continue;
+                }
+                return (d < STOP_REACH).then(|| d.max(0.0) + st.front - 0.3);
+            };
+            self.rest_t = if speed < DOCK_SPEED { self.rest_t + ctx.dt } else { 0.0 };
+            if self.serve.is_none() {
+                // not settled yet whether it stops there: braking for it all the same
+                self.near_d = d;
+                return (d < STOP_REACH).then(|| d.max(0.0) + st.front - 0.3);
+            }
+            berths.ask(key, ctx.id, ctx.berth.there, d);
+            if !berths.grant(key, ctx.id, ctx.berth.free) {
+                if let Some(at) = self.wait_for_berth(st, ctx, berths, key, &stop, d) {
+                    return at;
+                }
+                self.miss(vehicle, ctx, berths, Some(key), "past it while waiting for the berth");
+                continue;
+            }
+            // the berth is its own: dock
+            self.held = Some((key, stop.ri, stop.s));
+            let lat_err = (st.lateral - st.lateral_target).abs();
+            let docked = d.abs() < DOCK_LONG && lat_err < DOCK_LAT && speed < DOCK_SPEED;
+            let near = d.abs() < SERVE_HERE_LONG && lat_err < SERVE_HERE_LAT && self.rest_t >= SERVE_HERE_AFTER;
+            // (the stop point measured from the next lane all at once metres behind: see
+            // `crept_past`; one it crept past by itself is overshot)
+            let jumped = crept_past && d < -2.0 && self.near_d - d > 5.0;
+            if docked || near || jumped {
+                self.near_d = f32::INFINITY;
+                self.arrive(ctx, stop.depart, (st.lane, st.s));
+                return Some(st.front);
+            }
+            if d < -SERVE_HERE_LONG {
+                self.miss(vehicle, ctx, berths, Some(key), "overshot");
+                continue;
+            }
+            if self.rest_t >= UNREACHABLE_AFTER && d.abs() < SERVE_HERE_LONG {
+                self.miss(vehicle, ctx, berths, Some(key), "cannot get to it");
+                continue;
+            }
+            // something came to stand in the berth after it was handed it (a queue at the
+            // lights beyond the stop, a car pulled in): the first bus serves the stop where it
+            // stands, short of its point, once it has waited for long - nobody waits ahead
+            if self.rest_t >= super::berths::BLOCKED_LONG && !ctx.berth.free && (0.0..UNREACHABLE_NEAR).contains(&d) {
                 self.near_d = f32::INFINITY;
                 self.arrive(ctx, stop.depart, (st.lane, st.s));
                 return Some(st.front);
             }
             self.near_d = d;
-            if d < -2.0 {
-                // missed it
-                if ctx.debug || omsi_cfg::flags::OMSI_DEBUG_STOPS.is_set() {
-                    log::info!("t={:.1}: timetable bus {} missed its stop ({:.1} m past, {:.1} m/s, stood {:.1} s, passing {})", ctx.day_time, ctx.id, -d, speed, ctx.stopped, ctx.passing);
-                }
-                self.stops.pop_front();
-                self.near_d = f32::INFINITY;
-                self.serve = None;
-                continue;
-            }
-            if d < STOP_REACH {
-                // the stop point is where the front of the bus comes to rest
-                return Some(d.max(0.0) + st.front - 0.3);
-            }
+            return (d < STOP_REACH).then(|| d.max(0.0) + st.front - 0.3);
+        }
+    }
+
+    /// Waiting for the berth of its front stop (`d` m ahead): where it stops, `QUEUE_STANDOFF`
+    /// before a bus docked there - or Some(Some(front)) when it serves the stop from where it
+    /// stands because the berth is taken for long (`berths::HELD_LONG`). None: it has got
+    /// past the stop, which it has missed.
+    fn wait_for_berth(&mut self, st: &AiState, ctx: &Ctx, berths: &mut Berths, key: BerthKey, stop: &Stop, d: f32) -> Option<Option<f32>> {
+        berths.note_blocked(key, !ctx.berth.free, ctx.time);
+        self.near_d = d;
+        if d < -SERVE_HERE_LONG {
             return None;
         }
+        if self.rest_t >= SERVE_HERE_AFTER && (0.0..SERVE_BEHIND_REACH).contains(&d) && berths.held_long(key, ctx.time) {
+            if ctx.debug || omsi_cfg::flags::OMSI_DEBUG_STOPS.is_set() {
+                log::info!("t={:.1}: timetable bus {} serves its stop {} from {d:.0} m behind: the berth is taken for long", ctx.day_time, ctx.id, stop.id);
+            }
+            berths.withdraw(key, ctx.id);
+            self.behind = true;
+            self.near_d = f32::INFINITY;
+            self.arrive(ctx, stop.depart, (st.lane, st.s));
+            return Some(Some(st.front));
+        }
+        Some((d < STOP_REACH).then(|| (d - st.rear - QUEUE_STANDOFF).max(st.front)))
     }
 }
 
@@ -831,7 +1150,8 @@ mod tests {
 
     fn service_context(net: &Network, day_time: f64, dt: f32) -> Ctx<'_> {
         Ctx { net, way: &[], day_time, dt, id: 1, stopped: 0.0, passing: false,
-            kerb_swerve: None, wanted: Some(false), debug: false, timed_waits_only: false }
+            kerb_swerve: None, wanted: Some(false), debug: false, timed_waits_only: false,
+            time: day_time as f32, berth: BerthScene::default() }
     }
 
     fn service_network() -> Network {
@@ -855,9 +1175,9 @@ mod tests {
             let depart = visit as f64 * 100.0;
             service.arrive(&service_context(&net, depart, 0.0), depart, (0, 10.0));
             assert_eq!(service.phase, Phase::Boarding);
-            service.step(&mut state, &mut vehicle, &service_context(&net, depart + 8.0, 8.0));
+            service.step(&mut state, &mut vehicle, &service_context(&net, depart + 8.0, 8.0), &mut Berths::default());
             assert_eq!(service.phase, Phase::Closing);
-            service.step(&mut state, &mut vehicle, &service_context(&net, depart + 9.5, CLOSE_MIN));
+            service.step(&mut state, &mut vehicle, &service_context(&net, depart + 9.5, CLOSE_MIN), &mut Berths::default());
             assert_eq!(service.stops.len(), 3 - visit as usize);
             assert_eq!(service.trip_done(), visit == 3);
             if visit != 3 {
@@ -889,13 +1209,13 @@ mod tests {
         service.arrive(&service_context(&net, 100.0, 0.0), 400.0, (0, 10.0));
         assert_eq!(service.phase, Phase::Waiting);
         assert!(!service.at_station());
-        service.step(&mut state, &mut vehicle, &service_context(&net, 354.0, 254.0));
+        service.step(&mut state, &mut vehicle, &service_context(&net, 354.0, 254.0), &mut Berths::default());
         assert_eq!(service.phase, Phase::Waiting);
-        service.step(&mut state, &mut vehicle, &service_context(&net, 355.0, 1.0));
+        service.step(&mut state, &mut vehicle, &service_context(&net, 355.0, 1.0), &mut Berths::default());
         assert_eq!(service.phase, Phase::Boarding);
-        service.step(&mut state, &mut vehicle, &service_context(&net, 396.0, 41.0));
+        service.step(&mut state, &mut vehicle, &service_context(&net, 396.0, 41.0), &mut Berths::default());
         assert_eq!(service.phase, Phase::Boarding);
-        service.step(&mut state, &mut vehicle, &service_context(&net, 400.0, 4.0));
+        service.step(&mut state, &mut vehicle, &service_context(&net, 400.0, 4.0), &mut Berths::default());
         assert_eq!(service.phase, Phase::Closing);
     }
 
@@ -912,7 +1232,7 @@ mod tests {
         while t < 400.0 && service.phase == Phase::Boarding {
             service.hold(Some(1), 2.5);
             t += 0.5;
-            service.step(&mut state, &mut vehicle, &service_context(&net, t, 0.5));
+            service.step(&mut state, &mut vehicle, &service_context(&net, t, 0.5), &mut Berths::default());
         }
         assert_ne!(service.phase, Phase::Boarding, "still boarding at {t}");
         assert!(t < 100.0 + 90.0, "held until {t}");
@@ -942,5 +1262,93 @@ mod tests {
             assert_eq!(service.at_station_side(), side);
             assert_eq!(service.stops.front().unwrap().depart, 200.0);
         }
+    }
+    /// The doors closing at a stop: how long until the bus pulls out (None: still there
+    /// after a minute), and the fault it notes.
+    fn close_doors(vehicle: &mut VehicleInstance, at_station: f32, door: Option<f32>) -> (Option<f32>, Option<ServiceFault>) {
+        let net = service_network();
+        let mut state = AiState::new(0, 0.0, 1);
+        let stop = |id: i64| Stop::from_tuple((0, 10.0 * id as f32, 0.0, 100.0, id, 0.0));
+        let mut service = BusService::new(vec![stop(1), stop(2)]);
+        service.set_phase(Phase::Closing);
+        vehicle.set_var("AI_Scheduled_AtStation", at_station);
+        if let Some(d) = door {
+            vehicle.set_var("door_0", d);
+        }
+        let mut t = 0.0;
+        while t < 60.0 {
+            t += 0.1;
+            service.step(&mut state, vehicle, &service_context(&net, 100.0 + t as f64, 0.1), &mut Berths::default());
+            if service.phase != Phase::Closing {
+                return (Some(t), service.fault);
+            }
+        }
+        (None, service.fault)
+    }
+
+    #[test]
+    fn the_bus_pulls_out_when_its_script_says_the_doors_are_shut() {
+        let answering = "{frame_ai}\n0 (S.L.AI_Scheduled_AtStation)\n{end}\n";
+        let vars = "AI_Scheduled_AtStation\ndoor_0\n";
+        // the script has answered: after the short close
+        let mut v = crate::timetable_run::tests::script_test_vehicle(answering, vars, "");
+        let (left, fault) = close_doors(&mut v, 0.0, Some(0.0));
+        assert!(left.is_some_and(|t| (CLOSE_MIN..CLOSE_MIN + 0.3).contains(&t)), "{left:?}");
+        assert_eq!(fault, None);
+        // it has not, and its doors stand open: the bus does not drive off
+        let mut v = crate::timetable_run::tests::script_test_vehicle(answering, vars, "");
+        let (left, fault) = close_doors(&mut v, -1.0, Some(1.0));
+        assert_eq!(left, None);
+        assert_eq!(fault, Some(ServiceFault::DoorsOpenUnanswered));
+        // it has not, and nobody knows about the doors: off after the longest wait
+        let mut v = crate::timetable_run::tests::script_test_vehicle(answering, "AI_Scheduled_AtStation\n", "");
+        let (left, fault) = close_doors(&mut v, -1.0, None);
+        assert!(left.is_some_and(|t| (CLOSE_MAX..CLOSE_MAX + 0.3).contains(&t)), "{left:?}");
+        assert_eq!(fault, Some(ServiceFault::DoorsUnanswered));
+        // a script that never answers at all has nothing to wait for: the short close
+        let mut v = crate::timetable_run::tests::script_test_vehicle("{frame_ai}\n{end}\n", "AI_Scheduled_AtStation\n", "");
+        let (left, fault) = close_doors(&mut v, -1.0, None);
+        assert!(left.is_some_and(|t| (CLOSE_MIN..CLOSE_MIN + 0.3).contains(&t)), "{left:?}");
+        assert_eq!(fault, None);
+    }
+
+    /// A trip whose track runs on past its last stop ends at the end of the track: the bus
+    /// drives on from the stop instead of ending its trip there.
+    #[test]
+    fn the_trip_ends_where_the_track_ends() {
+        let net = service_network();
+        let mut vehicle = service_vehicle();
+        for (route_on, done) in [(false, true), (true, false)] {
+            let mut state = AiState::new(0, 10.0, 1);
+            if route_on {
+                state.route = vec![0];
+            }
+            let mut service = BusService::new(vec![Stop::from_tuple((0, 10.0, 0.0, 100.0, 1, 0.0))]);
+            service.set_phase(Phase::Closing);
+            service.phase_t = CLOSE_MIN;
+            service.step(&mut state, &mut vehicle, &service_context(&net, 100.0, 0.1), &mut Berths::default());
+            assert_eq!(service.trip_done(), done, "the track runs on: {route_on}");
+            assert!(service.stops.is_empty());
+        }
+    }
+    /// A route that moves over to the lane beside at its stop (a stop lane of a junction
+    /// object): the bus on the lane beside is as far past the stop as it is along, not a
+    /// whole lane further - it keeps its berth until its rear has left it.
+    #[test]
+    fn the_way_past_a_stop_counts_a_lane_beside_as_beside() {
+        let key = |path: u16| Some(crate::traffic::LaneKey { tile: (0, 0), id: 9, path });
+        let mut a = crate::traffic::LaneBuilder::arc(glam::DVec3::ZERO, 0.0, 100.0, 0.0, 0.0, LaneKind::Street, 3.0);
+        let mut b = crate::traffic::LaneBuilder::arc(glam::DVec3::new(3.5, 0.0, 0.0), 0.0, 100.0, 0.0, 0.0, LaneKind::Street, 3.0);
+        a.key = key(0);
+        b.key = key(1);
+        let net = Network { lanes: vec![a, b], ..Default::default() };
+        assert!(net.parallel(0, 1));
+        let mut st = AiState::new(1, 21.5, 1);
+        st.route = vec![0, 1];
+        st.route_index = 1;
+        let past = past_by(&st, &net, 0, 21.4);
+        assert!((past - (0.1 - st.rear)).abs() < 1e-3, "{past}");
+        st.s = 21.4 + st.rear + 2.0;
+        assert!(past_by(&st, &net, 0, 21.4) > super::super::berths::CLEAR_PAST);
     }
 }

@@ -611,7 +611,7 @@ impl Devices {
             for (_, pad) in g.gamepads() {
                 let mapped = pad.mapping_source() != gilrs::MappingSource::None;
                 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-                let force_feedback_wheel = mapped && self.linux_ff_wheel(pad.name());
+                let force_feedback_wheel = self.linux_ff_wheel(pad.name());
                 #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
                 let force_feedback_wheel = false;
                 #[allow(unused_mut)]
@@ -652,7 +652,7 @@ impl Devices {
                         gamepad_triggers(&mut slots, trigger(gilrs::Button::LeftTrigger2), trigger(gilrs::Button::RightTrigger2));
                     }
                     slots
-                }, gamepad, ff: pad.is_ff_supported(), ff_capable: pad.is_ff_supported(), buttons });
+                }, gamepad, ff: pad.is_ff_supported() || force_feedback_wheel, ff_capable: pad.is_ff_supported() || force_feedback_wheel, buttons });
             }
         }
         // (and a wheel gilrs does not list at all: one whose only axes are the simulation
@@ -1227,6 +1227,8 @@ impl Controllers {
         Controllers { settled: Vec::new(), devices, focused: true, cfg, held: HeldButtons::default(), editing: false, raw_buttons: Vec::new(), deadzone: 0.0, right_stick_look: true, pad_deadzone: 0.08, pad_presets: true, pedal_throttle: 1.0, pedal_brake: 1.0, disabled: Vec::new(), ff_invert: false, ff_enabled: true, ff_road: 1.0, ff_engine: 1.0, ff_fade: FF_FADE, steer_gain: 1.0, enabled: true, actions: Vec::new(), announced: Vec::new(), moved: Vec::new(), notice: None, steer: None, ff_t: 0.0, ff_lateral: 0.0, ff_bump: 0.0, ff_bump_age: 0.0, ff_micro: Micro::default(), ff_vib: ScriptVib::default(), ff_rumble: 0.0, ff_source_logged: None, rumble: Vec::new(), #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel: None, #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel_tried: None }
     }
 
+    /// Whether this device steers the bus (set up so, or steering now): the photo mode's camera takes none for its gamepad (a wheel turned it).
+    pub(crate) fn steers(&self, name: &str) -> bool { self.steer.as_ref().is_some_and(|s| names_match(&s.0, name)) || find_device_cfg(&self.cfg, name).is_some_and(|d| d.axes.iter().flatten().any(|(f, _)| matches!(f, Func::Steering))) }
     /// A wheel or joystick steers the bus (then the arrow keys look around, as in OMSI:
     /// a G29's buttons set to the arrow keys turned the view there).
     pub fn wheel_steering(&self) -> bool {

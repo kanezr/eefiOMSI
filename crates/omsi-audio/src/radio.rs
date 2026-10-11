@@ -103,6 +103,8 @@ fn play(agent: &ureq::Agent, buf: &StreamBuf, url: &str) -> anyhow::Result<()> {
         Some(n) if n > 0 => Box::new(IcyReader { inner: reader, every: n, left: n, title: title.clone() }),
         _ => reader,
     };
+    // (a new connection: what the last one said of the station counts no longer)
+    buf.set_meta(&name, "");
     let mss = MediaSourceStream::new(Box::new(ReadOnlySource::new(reader)), Default::default());
     let mut hint = Hint::new();
     if ctype.contains("mpeg") || ctype.contains("mp3") {
@@ -163,6 +165,7 @@ fn play(agent: &ureq::Agent, buf: &StreamBuf, url: &str) -> anyhow::Result<()> {
         );
         let now = {
             let t = title.lock();
+            buf.set_meta(&name, &t);
             if t.is_empty() { name.clone() } else { t.clone() }
         };
         let status = if buf.is_playing() { now } else { "buffering …".to_string() };

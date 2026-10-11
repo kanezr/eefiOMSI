@@ -98,7 +98,8 @@ impl App {
                     .as_ref()
                     .map(|w| street_condition(w, self.session.wetness))
                     .unwrap_or(0.0);
-                let muffled = self.cam.in_cab;
+                // (a walker in the doorway: muffled by as much as the eyes are in, see `on_foot`)
+                let muffled = self.cam.in_cab || self.sound.foot_in.is_some_and(|w| w > 0.0);
                 // heard round the camera (the ear), not round the player's bus: a
                 // free camera following an AI bus lost its sound 250 m from the bus
                 let ear = self.camera.as_ref().map(|c| c.position).unwrap_or(center);

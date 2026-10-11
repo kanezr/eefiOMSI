@@ -70,11 +70,14 @@ impl App {
             crate::support_bundle::record(self);
             self.perf.log_state.support_recorded = true;
         }
-        let msg = self.service_msg.as_ref().map(|m| m.0.clone());
-        if msg.is_some() && msg != self.perf.log_state.last_msg {
-            log::info!("on screen: {}", msg.as_deref().unwrap_or_default());
+        // (compared in place: the message was copied every frame it stood on the screen)
+        if self.service_msg.as_ref().map(|m| &m.0) != self.perf.log_state.last_msg.as_ref() {
+            let msg = self.service_msg.as_ref().map(|m| m.0.clone());
+            if msg.is_some() {
+                log::info!("on screen: {}", msg.as_deref().unwrap_or_default());
+            }
+            self.perf.log_state.last_msg = msg;
         }
-        self.perf.log_state.last_msg = msg;
         if self.view != self.perf.log_state.last_view {
             log::info!("view: {}", self.view);
             self.perf.log_state.last_view = self.view.clone();

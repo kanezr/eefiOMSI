@@ -327,35 +327,37 @@ mod group_density_tests {
     }
 
     #[test]
-    fn on_a_bend_the_look_ahead_follows_the_bus_s_circle() {
-        use super::in_player_path;
+    fn the_bus_in_a_bend_is_looked_for_along_its_turn() {
+        use super::{in_player_box, in_player_sweep, player_turn_of};
         use glam::DVec3;
-        // the bus driving north, turning right (a 20 m radius bend),
-        // the corridor 3.5 m wide either side, 30 m ahead and behind
-        let (c, f, r) = (DVec3::new(0.0, 0.0, 0.0), DVec2::new(0.0, 1.0), DVec2::new(1.0, 0.0));
-        let (wide, ahead, behind, kappa) = (3.5, 30.0, 30.0, 0.05);
-        // straight ahead of the nose on the bend: the box reaches over into
-        // the opposite lane (west of the road), the circle does not
-        let over = DVec3::new(-3.0, 25.0, 0.0);
-        assert!(super::in_player_box(over, c, f, r, wide, ahead, behind));
-        assert!(!in_player_path(over, c, f, r, wide, ahead, behind, kappa));
-        // the road itself, curved to the right: the circle has it, the
-        // straight box misses it (arc s = 25 m of a 20 m radius)
-        let on_road = DVec3::new(20.0 * (1.0 - (25.0f64 / 20.0).cos()), 20.0 * (25.0f64 / 20.0).sin(), 0.0);
-        assert!(in_player_path(on_road, c, f, r, wide, ahead, behind, kappa));
-        assert!(!super::in_player_box(on_road, c, f, r, wide, ahead, behind));
-        // beside the bus (inside the corridor's width), and off it to the left
-        assert!(in_player_path(DVec3::new(2.0, 0.0, 0.0), c, f, r, wide, ahead, behind, kappa));
-        assert!(!in_player_path(DVec3::new(-5.0, 0.0, 0.0), c, f, r, wide, ahead, behind, kappa));
-        // far too long a turn (a 1 m radius) is clamped by the caller, not here
-        assert!(!in_player_path(DVec3::new(0.0, 40.0, 0.0), c, f, r, wide, ahead, behind, kappa));
-        // no turn: the circle is the straight box again
-        let straight = DVec3::new(2.0, 10.0, 0.0);
-        assert!(in_player_path(straight, c, f, r, wide, ahead, behind, 0.0));
-        assert_eq!(
-            in_player_path(straight, c, f, r, wide, ahead, behind, 0.0),
-            super::in_player_box(straight, c, f, r, wide, ahead, behind)
-        );
+        let (c, f, r) = (DVec3::ZERO, DVec2::new(0.0, 1.0), DVec2::new(1.0, 0.0));
+        // a bus heading north through a right-hand bend of 25 m radius at 14 m/s, reaching
+        // 27 m ahead; the oncoming lane runs round the same bend 3.5 m further out
+        let on_arc = |radius: f64, deg: f64| {
+            let a = deg.to_radians();
+            DVec3::new(25.0 - radius * a.cos(), radius * a.sin(), 0.0)
+        };
+        let oncoming = on_arc(28.5, 30.0);
+        // straight ahead, the reach lay across the oncoming lane
+        assert!(in_player_box(oncoming, c, f, r, 2.6, 27.0, 6.5));
+        assert!(!in_player_sweep(oncoming, c, f, r, 2.6, 6.5, 27.0, 6.5, 1.0 / 25.0));
+        // along the turn, the bus's own lane round the bend is in its way
+        let own = on_arc(25.0, 50.0);
+        assert!(!in_player_box(own, c, f, r, 2.6, 27.0, 6.5));
+        assert!(in_player_sweep(own, c, f, r, 2.6, 6.5, 27.0, 6.5, 1.0 / 25.0));
+        // but not beyond its reach, nor behind it
+        assert!(!in_player_sweep(on_arc(25.0, 70.0), c, f, r, 2.6, 6.5, 27.0, 6.5, 1.0 / 25.0));
+        assert!(!in_player_sweep(DVec3::new(0.0, -10.0, 0.0), c, f, r, 2.6, 6.5, 27.0, 6.5, 1.0 / 25.0));
+        // the body itself always counts, and a straight path is the old box
+        assert!(in_player_sweep(DVec3::new(-2.0, 5.0, 0.0), c, f, r, 2.6, 6.5, 27.0, 6.5, 1.0 / 25.0));
+        assert!(in_player_sweep(oncoming, c, f, r, 2.6, 6.5, 27.0, 6.5, 0.0));
+        // the curvature from two boxes 0.1 s apart: 14 m/s turning 3.2 degrees to the right
+        let a = (DVec3::ZERO, 0.0, 6.0, 1.25, 14.0);
+        let b = (DVec3::new(0.0, 1.4, 0.0), 14.0 * 0.1 / 25.0 * 57.29578, 6.0, 1.25, 14.0);
+        let k = player_turn_of(1.0 / 25.0, Some(a), Some(b), 0.1);
+        assert!((k - 0.04).abs() < 1e-3, "{k}");
+        // standing: no turn
+        assert_eq!(player_turn_of(0.04, Some(a), Some((b.0, b.1, 6.0, 1.25, 0.2)), 0.1), 0.0);
     }
 
     #[test]

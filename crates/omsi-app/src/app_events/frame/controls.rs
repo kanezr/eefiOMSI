@@ -29,7 +29,11 @@ impl App {
         ctl.ff_engine = self.settings.ff_engine_vib;
         ctl.ff_fade = self.settings.ff_fade;
         ctl.steer_gain = if self.settings.wheel_lock >= 45.0 { (self.settings.wheel_range / self.settings.wheel_lock).clamp(0.1, 20.0) } else { 1.0 };
-        ctl.disabled = self.settings.ctrl_off.split('|').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        // (made anew only when the setting no longer says what the list holds)
+        let off = || self.settings.ctrl_off.split('|').map(str::trim).filter(|s| !s.is_empty());
+        if !ctl.disabled.iter().map(String::as_str).eq(off()) {
+            ctl.disabled = off().map(str::to_string).collect();
+        }
         ctl.set_editing(self.menus.game_menu.is_some() || self.menus.chooser.is_some() || self.photo.is_some());
         let analog = ctl.poll();
         let actions = std::mem::take(&mut ctl.actions);
@@ -86,6 +90,12 @@ impl App {
             dt,
         });
         crate::game_controller_menu::frame(self);
+        // In the photo mode the wheel, the pedals and the joystick do nothing: its camera
+        // listens to a gamepad of its own (`photo::pad`), and a wheel's axes and buttons went
+        // on turning the view and switching things while the picture was being framed.
+        if self.photo.is_some() {
+            return (crate::controllers::Analog::default(), Vec::new());
+        }
         (analog, actions)
     }
 
@@ -138,7 +148,7 @@ impl App {
         let bus_view = self.mouse_steers_in_view();
         // (the plugins' panels having the mouse hold the wheel and the pedals as
         // looking round does: the cursor goes to their buttons)
-        let panels_mouse = self.plugin_focus();
+        let panels_mouse = self.plugin_focus() || self.game_panels_mouse();
         // (the cursor locked while a mouse button looks round, held while the mouse steers,
         // let go when it is wanted: mouse_grab.rs)
         self.sync_look_hold();

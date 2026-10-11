@@ -96,7 +96,7 @@ fn route_numbers(app: &App) -> Vec<String> {
             }
         }
     }
-    if let Some(sch) = app.session.schedule.as_ref() {
+    if let Some(sch) = crate::duty_book::timetable(app) {
         for l in &sch.data.lines {
             let n = l.name.trim().to_string();
             if !n.is_empty() && !out.contains(&n) {
@@ -455,7 +455,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
             return out;
         }
         ListKind::Lines => {
-            if let Some(sch) = app.session.schedule.as_ref() {
+            if let Some(sch) = crate::duty_book::timetable(app) {
                 let mut lines: Vec<&omsi_timetable::Line> = sch.data.lines.iter().filter(|l| l.user_allowed && l.tours.iter().any(|t| tour_listed(sch, &l.name, t, app.clock.time))).collect();
                 lines.sort_by(|a, b| natural(&a.name, &b.name));
                 for l in lines {
@@ -467,8 +467,8 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Vec<(String, String)> {
             }
         }
         ListKind::Tours(line, _) => {
-            if let Some(l) = app.session.schedule.as_ref().and_then(|s| s.data.lines.iter().find(|l| l.name == *line)) {
-                for t in sorted_tours(l).into_iter().filter(|t| app.session.schedule.as_ref().is_some_and(|s| tour_listed(s, line, t, app.clock.time))) {
+            if let Some(l) = crate::duty_book::timetable(app).and_then(|s| s.data.lines.iter().find(|l| l.name == *line)) {
+                for t in sorted_tours(l).into_iter().filter(|t| crate::duty_book::timetable(app).is_some_and(|s| tour_listed(s, line, t, app.clock.time))) {
                     // (the tours in order of the time they start)
                     out.push((format!("{} {}", tr("Tour"), t.number.trim()), format!("tour {}\u{1}{}", line, t.number)));
                 }
@@ -816,6 +816,7 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
                         app.menus.menu_edit = Some(String::new());
                     }
                 }
+                "view_editor" if step => { crate::game_panels::view_editor::open(app); return None; }
                 "seat_reset" if step => {
                     // (this bus's views as its .bus file has them again)
                     app.settings.seat = [0.0; 3];
@@ -904,7 +905,7 @@ pub(crate) fn run_move(app: &mut App, kind: &ListKind, action: &str, mv: Move) -
         ListKind::Tours(_, pick) => {
             if let Some((line, tour)) = arg.split_once('\u{1}') {
                 let chosen = pick.as_ref().filter(|p| p.0 == tour).map(|p| p.1).unwrap_or(0);
-                let trip = pick.as_ref().filter(|p| p.0 == tour).map(|p| p.2).unwrap_or_else(|| app.session.schedule.as_ref().map(|s| s.tour_trip_now(line, tour, app.clock.time)).unwrap_or(0));
+                let trip = pick.as_ref().filter(|p| p.0 == tour).map(|p| p.2).unwrap_or_else(|| crate::duty_book::timetable(app).map(|s| s.tour_trip_now(line, tour, app.clock.time)).unwrap_or(0));
                 start_duty_at(app, line, tour, trip, chosen);
             }
             None
@@ -1105,7 +1106,7 @@ fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "ui_scale" => (10..=40).map(|v| v as f32 * 0.05).collect(),
         "chat_size" => (5..=30).map(|v| v as f32 * 0.1).collect(),
         "ui_opacity" => (4..=20).map(|v| v as f32 * 0.05).collect(),
-        "vol_ai" | "vol_scenery" | "vol_ambient" => (0..=20).map(|v| v as f32 * 0.05).collect(),
+        "vol_ai" | "vol_scenery" | "vol_ambient" | "radio_speaker" | "radio_hiss" | "radio_dropouts" => (0..=20).map(|v| v as f32 * 0.05).collect(),
         "wheel_range" => (6..=60).map(|v| v as f32 * 30.0).collect(),
         "wheel_lock" => std::iter::once(0.0).chain((2..=60).map(|v| v as f32 * 30.0)).collect(),
         "fov" => std::iter::once(0.0).chain((20..=120).map(|v| v as f32)).collect(),
@@ -1262,6 +1263,7 @@ fn option_now(app: &App, verb: &str, arg: &str) -> Option<f32> {
         "vol_ai" => s.vol_ai,
         "vol_scenery" => s.vol_scenery,
         "vol_ambient" => s.vol_ambient,
+        "radio_speaker" | "radio_hiss" | "radio_dropouts" => *crate::radio::fx_setting(&mut s.radio_fx.clone(), verb).1,
         "wheel_range" => s.wheel_range,
         "wheel_lock" => s.wheel_lock,
         "triple_width_mm" => s.triple.width_mm,
@@ -1412,6 +1414,7 @@ fn option_set(app: &mut App, verb: &str, arg: &str, v: f32) -> Option<(&'static 
             app.settings.vol_ambient = (v * 100.0).round() / 100.0;
             Some(("vol_ambient", app.settings.vol_ambient.to_string()))
         }
+        "radio_speaker" | "radio_hiss" | "radio_dropouts" => Some(crate::radio::set_fx_setting(&mut app.settings.radio_fx, verb, v)),
         "wheel_range" => {
             app.settings.wheel_range = v.round();
             Some(("wheel_range", app.settings.wheel_range.to_string()))
@@ -1593,6 +1596,7 @@ fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "blinker_cancel" => s.blinker_cancel,
         "fps" => s.show_fps,
         "get_up" => s.get_up,
+        "trip_summary" => s.trip_summary,
         "time_sync" => s.time_sync,
         "metar_sync" => s.metar_sync,
         "snow_cover" => app.session.weather.as_ref().is_some_and(|w|w.snow),
@@ -1649,26 +1653,8 @@ fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "notes" => s.notes,
         "chat" => s.chat,
         "name_tags" => s.name_tags,
-        "trip_summary" => s.trip_summary,
         _ => return None,
     })
-}
-
-/// The index of the world page titled `label` (the "World options..." list).
-pub(crate) fn world_tab(app: &App, label: &str) -> usize {
-    world_pages(app).iter().position(|p| p.0 == label).unwrap_or(0)
-}
-
-/// Whether the switch `id` is on (false when there is no such switch).
-pub(crate) fn switch_on(app: &App, id: &str) -> bool {
-    toggle_now(app, id).unwrap_or(false)
-}
-
-/// Switch `id` to the other side, as a click on it does.
-pub(crate) fn flip_switch(app: &mut App, id: &str) {
-    if let Some(on) = toggle_now(app, id) {
-        let _ = toggle_set(app, id, !on);
-    }
 }
 
 /// Switch `id` on or off; the key and value to keep for the next game.
@@ -1748,6 +1734,7 @@ fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static str, String
             app.settings.get_up = on;
             Some(("get_up", bit))
         }
+        "trip_summary" => { app.settings.trip_summary = on; Some(("trip_summary", bit)) }
         // the real-time sync: the clock takes the device's date and time at once (a host's
         // clock runs at real time while it is on, at its time speed again after)
         "time_sync" => {
@@ -1997,10 +1984,6 @@ fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static str, String
         "name_tags" => {
             app.settings.name_tags = on;
             Some(("name_tags", bit))
-        }
-        "trip_summary" => {
-            app.settings.trip_summary = on;
-            Some(("trip_summary", bit))
         }
         _ => None,
     }
@@ -2398,7 +2381,7 @@ fn options_pages(app: &App) -> Vec<Page> {
         switch_row(app, "coll_vehicles", "Collisions with vehicles", "Enables/Disables Collisions with Other Vehicles"),
         switch_row(app, "collision_pedestrians", "Collisions with people", "Enables/disables knocking down people"),
         switch_row(app, "timetable_win", "Timetable window (Insert)", "Displays a list of all stops (only when a tour is active)"),
-        switch_row(app, "trip_summary", "Show a summary after each trip", "A window over the picture when a trip is over: the line and tour's number, the stops' planned and real times and the odometer"),
+        switch_row(app, "trip_summary", "Trip summary", "At the end of each trip: its stops with the times planned and driven, to copy or to save"),
         switch_row(app, "info_bar", "Information bar (Shift+Y)", "Displays information such as the time, speed, and other details at the top of the screen"),
         switch_row(app, "exact_fare", "Passengers pay the exact fare", "No change is given at the cash desk"),
         pick("boarding", "Boarding", "How passengers get their tickets"),
@@ -2530,6 +2513,7 @@ fn options_pages(app: &App) -> Vec<Page> {
         pick("pax_voices", "Passenger voices", "What passengers say"),
     ]
         .into_iter()
+        .chain(crate::radio::option_rows(app, &pct))
         .flatten()
         .collect();
     let mut camera: Vec<(String, String)> = vec![
@@ -2570,6 +2554,7 @@ fn options_pages(app: &App) -> Vec<Page> {
         .flatten()
         .collect();
     camera.push(button("Reset the seat position", "Reset", "Put the seat back where the vehicle has it.", "seat_reset"));
+    if app.player.is_some() && !app.vr_active() { camera.push(button("Edit the view and mirrors", "Open", "A panel at the side of the driver's view: the eye, the direction, the field of view and each mirror, saved for this vehicle.", "view_editor")); }
     if cfg!(windows) {
         camera.extend(
             vec![
@@ -2800,9 +2785,9 @@ fn pages_of(app: &App, kind: &ListKind) -> Option<(Vec<Page>, usize)> {
     Some((pages, tab))
 }
 
-/// Which tab of the Options window is the one titled `title` (the first if none is).
-pub(crate) fn options_tab(app: &App, title: &str) -> usize {
-    pages_of(app, &ListKind::Options(0)).and_then(|(pages, _)| pages.iter().position(|p| p.0 == title)).unwrap_or(0)
+/// Which tab of a window (`kind`: Options, World ...) is the one titled `title` (the first if none is).
+pub(crate) fn tab_of(app: &App, kind: ListKind, title: &str) -> usize {
+    pages_of(app, &kind).and_then(|(pages, _)| pages.iter().position(|p| p.0 == title)).unwrap_or(0)
 }
 
 type TitlesCache = Option<(ListKind, bool, std::time::Instant, (Vec<String>, usize))>;
@@ -3021,7 +3006,7 @@ pub(crate) fn tour_at(app: &App, k: usize) -> Option<(String, String)> {
 /// from, the trip chosen and how many trips the tour has.
 pub(crate) fn tour_choice(app: &App, k: usize) -> Option<(usize, usize, usize, usize)> {
     let (line, tour) = tour_at(app, k)?;
-    let sch = app.session.schedule.as_ref()?;
+    let sch = crate::duty_book::timetable(app)?;
     let trips = sch.tour_trip_count(&line, &tour);
     let (stop, trip) = match app.menus.list_kind.as_ref() {
         Some(ListKind::Tours(_, Some(p))) if p.0 == tour => (p.1, p.2),
@@ -3035,6 +3020,7 @@ pub(crate) fn tour_choice(app: &App, k: usize) -> Option<(usize, usize, usize, u
 /// Start the tour at stop number `chosen` of trip number `trip` of the tour (the trip chosen
 /// by its time): the duty goes on from that stop, the bus stays where it is.
 pub(crate) fn start_duty_at(app: &mut App, line: &str, tour: &str, trip: usize, chosen: usize) {
+    crate::duty_book::timetable_for_duty(app);
     let now = app.clock.time;
     let Some((k, j)) = app.session.schedule.as_ref().and_then(|s| s.tour_trip_stops(line, tour, trip).get(chosen).map(|x| (x.0, x.1))) else {
         return start_duty(app, line, tour);
@@ -3052,9 +3038,8 @@ pub(crate) fn start_duty_at(app: &mut App, line: &str, tour: &str, trip: usize, 
     // (no teleport: the stop chosen is the one the bus drives to next)
     d.start_at_here(k, j);
     if let Some(p) = app.player.as_mut() {
+        // (nothing typed into the IBIS or the blind, as in OMSI 2: Shift+U does that)
         d.update(&mut p.vehicle, now);
-        let (trip, stop) = d.trip_for_ibis();
-        p.set_duty_destination(trip, stop);
         if let Some(w) = app.world.as_ref() {
             let mut fonts = w.fonts.lock();
             if let Err(e) = crate::schedule_paper::update_vehicle(&mut p.vehicle, &d, &mut fonts) {
@@ -3069,14 +3054,13 @@ pub(crate) fn start_duty_at(app: &mut App, line: &str, tour: &str, trip: usize, 
 }
 
 fn start_duty(app: &mut App, line: &str, tour: &str) {
+    crate::duty_book::timetable_for_duty(app);
     let (Some(w), Some(sch)) = (app.world.clone(), app.session.schedule.as_mut()) else { return };
     let now = app.clock.time;
     match sch.player_duty(&w, line, tour, now, None, false) {
         Ok(mut d) => {
             if let Some(p) = app.player.as_mut() {
                 d.update(&mut p.vehicle, now);
-                let (trip, stop) = d.trip_for_ibis();
-                p.set_duty_destination(trip, stop);
                 let mut fonts = w.fonts.lock();
                 if let Err(e) = crate::schedule_paper::update_vehicle(
                     &mut p.vehicle,

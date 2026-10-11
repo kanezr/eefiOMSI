@@ -68,6 +68,9 @@ pub struct VehicleHost {
     pub humans_on_seat: Vec<u32>,
     /// Callbacks a script asked for that this host does not provide (reported once each).
     unknown_callbacks: Vec<String>,
+    /// Per name of the program (`NameId`): the callback it was found to be, as
+    /// `Cb as u8 + 1` (0: not looked at yet).
+    callback_ids: Vec<u8>,
     pub auto_clutch: f32,
     pub no_sound: f32,
     pub fired_triggers: Vec<String>,
@@ -96,6 +99,10 @@ pub struct VehicleHost {
     /// The script's `number` string variable (the fleet number): `NrSpecRandom` is
     /// specific to it.
     pub number_var: Option<u32>,
+    /// What the bus radio plays (`GetRadioName`, `GetRadioSong`): the station's name and
+    /// the title it gives, both empty while the radio is off. The game fills them.
+    pub radio_name: String,
+    pub radio_song: String,
     /// Timetable information for the `GetTT*` callbacks (line, delay in s, stops).
     pub tt_line: String,
     pub tt_delay: f32,
@@ -150,6 +157,87 @@ fn st_load(path: &std::path::Path) -> Result<Arc<omsi_texture::Image>, String> {
     c.1 += bytes;
     c.0.insert(path.to_path_buf(), got.clone());
     got
+}
+
+/// The callbacks the host provides (`(M.V.name)`, by their lower-case names): a script's
+/// call is matched to one once per name of its program (`VehicleHost::callback_kind`), not
+/// compared with every name on every call - the matrix displays call them for every pixel.
+macro_rules! callbacks {
+    ($($v:ident = $n:literal,)*) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum Cb {
+            $($v,)*
+        }
+
+        impl Cb {
+            const ALL: &'static [Cb] = &[$(Cb::$v,)*];
+
+            fn name(self) -> &'static str {
+                match self {
+                    $(Cb::$v => $n,)*
+                }
+            }
+
+            fn of(lname: &str) -> Option<Cb> {
+                match lname {
+                    $($n => Some(Cb::$v),)*
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+callbacks! {
+    GetFontIndex = "getfontindex",
+    TextLength = "textlength",
+    StNewTex = "stnewtex",
+    StLock = "stlock",
+    StUnlock = "stunlock",
+    StFilter = "stfilter",
+    StSetColor = "stsetcolor",
+    StDrawPixel = "stdrawpixel",
+    StDrawRect = "stdrawrect",
+    StTextOut = "sttextout",
+    StReadPixel = "streadpixel",
+    StGetR = "stgetr",
+    StGetG = "stgetg",
+    StGetB = "stgetb",
+    StGetA = "stgeta",
+    StCopyColor = "stcopycolor",
+    StLoadTex = "stloadtex",
+    GetRouteIndex = "getrouteindex",
+    GetRouteTerminusIndex = "getrouteterminusindex",
+    GetTerminusCode = "getterminuscode",
+    GetTerminusIndex = "getterminusindex",
+    GetTerminusString = "getterminusstring",
+    GetBusstopCount = "getbusstopcount",
+    GetRouteBusstopIdent = "getroutebusstopident",
+    GetBusstopIndex = "getbusstopindex",
+    GetBusstopString = "getbusstopstring",
+    GetDepotStringGlobal = "getdepotstringglobal",
+    GetTTLineString = "getttlinestring",
+    GetTTDelay = "getttdelay",
+    GetTTBusstopCount = "getttbusstopcount",
+    GetTTBusstopIndex = "getttbusstopindex",
+    GetTTerminusIndex = "gettterminusindex",
+    GetTTTerminusIndex = "getttterminusindex",
+    GetHeightAbovePoint = "getheightabovepoint",
+    GetHumanCountOnPathLink = "gethumancountonpathlink",
+    GetTTBusstopName = "getttbusstopname",
+    GetTTBusstopDep = "getttbusstopdep",
+    GetTTBusstopArr = "getttbusstoparr",
+    GiveChangeCoin = "givechangecoin",
+    NrSpecRandom = "nrspecrandom",
+    GetTicketName = "getticketname",
+    GetTTicketName = "gettticketname",
+    GetTicketValue = "getticketvalue",
+    GetHumanCountOnSeat = "gethumancountonseat",
+    GetArrBusLine = "getarrbusline",
+    GetArrBusTerminus = "getarrbusterminus",
+    GetArrBusTimeDiff = "getarrbustimediff",
+    GetRadioName = "getradioname",
+    GetRadioSong = "getradiosong",
 }
 
 /// The weather's air temperature and humidity (bits of two f32), known before any vehicle
@@ -228,6 +316,26 @@ impl VehicleHost {
             tt_busstop_index: self.tt_busstop_index,
             ..Default::default()
         }
+    }
+
+    /// The callback `name` (script name `id`) is, found once per name: the one kept for
+    /// `id` is taken when its name is `name` (a host's scripts keep their ids, but the check
+    /// costs one comparison), else it is looked up by its lower-case name.
+    fn callback_kind(&mut self, name: &str, id: NameId) -> Option<Cb> {
+        let i = id as usize;
+        if let Some(cb) = self.callback_ids.get(i).and_then(|&k| Cb::ALL.get((k as usize).wrapping_sub(1))) {
+            if cb.name().eq_ignore_ascii_case(name) {
+                return Some(*cb);
+            }
+        }
+        let cb = omsi_script::compile::with_lower(name, Cb::of)?;
+        if i < 1 << 16 {
+            if self.callback_ids.len() <= i {
+                self.callback_ids.resize(i + 1, 0);
+            }
+            self.callback_ids[i] = cb as u8 + 1;
+        }
+        Some(cb)
     }
 
     /// Callbacks the scripts called that this host does not provide (lower case).
@@ -354,25 +462,13 @@ impl Host for VehicleHost {
         }
     }
 
-    fn callback(&mut self, name: &str, _id: NameId, stacks: &mut Stacks, state: &mut State) {
-        let mut buf = [0u8; 64];
-        let owned;
-        let lname: &str = match buf.get_mut(..name.len()) {
-            Some(b) => {
-                b.copy_from_slice(name.as_bytes());
-                b.make_ascii_lowercase();
-                std::str::from_utf8(b).unwrap_or(name)
-            }
-            None => {
-                owned = name.to_ascii_lowercase();
-                &owned
-            }
-        };
-        if lname.starts_with("st") && debug_text() {
+    fn callback(&mut self, name: &str, id: NameId, stacks: &mut Stacks, state: &mut State) {
+        let cb = self.callback_kind(name, id);
+        if debug_text() && omsi_script::compile::with_lower(name, |l| l.starts_with("st")) {
             log::info!("callback {name} stack {:?} strings {:?}", &stacks.st[..stacks.st.len().min(8)], stacks.sst.last());
         }
-        match lname {
-            "getfontindex" => {
+        match cb {
+            Some(Cb::GetFontIndex) => {
                 let font = stacks.pop_str();
                 let idx = match self.fonts.entries.iter().position(|f| f.0.eq_ignore_ascii_case(&font)) {
                     Some(i) => i,
@@ -392,7 +488,7 @@ impl Host for VehicleHost {
                 let found = self.fonts.entries[idx].1.is_some();
                 stacks.push(if found { idx as f32 } else { -1.0 });
             }
-            "textlength" => {
+            Some(Cb::TextLength) => {
                 let font = arg_i32(stacks.pop());
                 let text = stacks.pop_str();
                 // as Omsi.exe measures it (0x5d6c00): the glyphs and the gaps between them
@@ -403,25 +499,25 @@ impl Host for VehicleHost {
                 stacks.push(w);
             }
             // --- script textures (matrix displays)
-            "stnewtex" => {
+            Some(Cb::StNewTex) => {
                 let i = arg_idx(stacks.pop());
                 if let Some(t) = self.script_textures.get_mut(i) {
                     t.renew();
                 }
             }
-            "stlock" => {
+            Some(Cb::StLock) => {
                 let i = arg_idx(stacks.pop());
                 if let Some(t) = self.script_textures.get_mut(i) {
                     t.locked = true;
                 }
             }
-            "stunlock" => {
+            Some(Cb::StUnlock) => {
                 let i = arg_idx(stacks.pop());
                 if let Some(t) = self.script_textures.get_mut(i) {
                     t.unlock();
                 }
             }
-            "stfilter" => {
+            Some(Cb::StFilter) => {
                 // OMSI creates the mip chain only when the script asks it to, normally
                 // immediately after STUnlock. Remember that request for the renderer; it
                 // must also refresh the chain when this matrix changes again.
@@ -433,7 +529,7 @@ impl Host for VehicleHost {
                     }
                 }
             }
-            "stsetcolor" => {
+            Some(Cb::StSetColor) => {
                 let b = stacks.pop();
                 let g = stacks.pop();
                 let r = stacks.pop();
@@ -443,7 +539,7 @@ impl Host for VehicleHost {
                     t.color = [r, g, b, a].map(|c| arg_i32(c).clamp(0, 255) as u8);
                 }
             }
-            "stdrawpixel" => {
+            Some(Cb::StDrawPixel) => {
                 let y = arg_i32(stacks.pop());
                 let x = arg_i32(stacks.pop());
                 let i = arg_idx(stacks.pop());
@@ -452,7 +548,7 @@ impl Host for VehicleHost {
                     t.put(x, y, c);
                 }
             }
-            "stdrawrect" => {
+            Some(Cb::StDrawRect) => {
                 let y2 = arg_i32(stacks.pop());
                 let x2 = arg_i32(stacks.pop());
                 let y1 = arg_i32(stacks.pop());
@@ -462,7 +558,7 @@ impl Host for VehicleHost {
                     t.rect(x1, y1, x2, y2);
                 }
             }
-            "sttextout" => {
+            Some(Cb::StTextOut) => {
                 let text = stacks.pop_str();
                 let spacing = arg_i32(stacks.pop());
                 let mode = stacks.pop();
@@ -478,7 +574,7 @@ impl Host for VehicleHost {
                     t.text_out(&a, x, y, spacing, arg_i32(mode) as u8, &text);
                 }
             }
-            "streadpixel" => {
+            Some(Cb::StReadPixel) => {
                 let y = arg_i32(stacks.pop());
                 let x = arg_i32(stacks.pop());
                 let i = arg_idx(stacks.pop());
@@ -491,17 +587,17 @@ impl Host for VehicleHost {
                     t.color = color;
                 }
             }
-            "stgetr" | "stgetg" | "stgetb" | "stgeta" => {
+            Some(Cb::StGetR) | Some(Cb::StGetG) | Some(Cb::StGetB) | Some(Cb::StGetA) => {
                 let i = arg_idx(stacks.pop());
-                let k = match lname {
-                    "stgetr" => 0,
-                    "stgetg" => 1,
-                    "stgetb" => 2,
+                let k = match cb {
+                    Some(Cb::StGetR) => 0,
+                    Some(Cb::StGetG) => 1,
+                    Some(Cb::StGetB) => 2,
                     _ => 3,
                 };
                 stacks.push(self.script_textures.get(i).map(|t| t.color[k] as f32).unwrap_or(0.0));
             }
-            "stcopycolor" => {
+            Some(Cb::StCopyColor) => {
                 // colour of texture a → texture b
                 let b = arg_idx(stacks.pop());
                 let a = arg_idx(stacks.pop());
@@ -511,7 +607,7 @@ impl Host for VehicleHost {
                     }
                 }
             }
-            "stloadtex" => {
+            Some(Cb::StLoadTex) => {
                 let i = arg_idx(stacks.pop());
                 let path = stacks.pop_str();
                 // relative to the vehicle's texture folder, like every texture name of the
@@ -537,7 +633,7 @@ impl Host for VehicleHost {
             }
             // --- depot (HOF) callbacks of the IBIS: arguments come off the float stack, the
             // last pushed first
-            "getrouteindex" => {
+            Some(Cb::GetRouteIndex) => {
                 let code = stacks.pop();
                 let code_i = arg_i32(code);
                 let idx = self
@@ -558,7 +654,7 @@ impl Host for VehicleHost {
             // the strings are empty and the codes -1. Reading entry 0 instead put the first
             // terminus of the depot ("LEERFELD") where a mod's display looks for a custom
             // font or an optional sign.
-            "getrouteterminusindex" => {
+            Some(Cb::GetRouteTerminusIndex) => {
                 let route = arg_i32(stacks.pop());
                 let idx = self.hof.as_ref().and_then(|h| {
                     let trip = h.info_trips.get(usize::try_from(route).ok()?)?;
@@ -567,69 +663,72 @@ impl Host for VehicleHost {
                 });
                 stacks.push(idx.map(|i| i as f32).unwrap_or(-1.0));
             }
-            "getterminuscode" => {
+            Some(Cb::GetTerminusCode) => {
                 let idx = arg_i32(stacks.pop());
                 let code = self.terminus(idx).map(|t| t.code as f32).unwrap_or(-1.0);
                 stacks.push(code);
             }
-            "getterminusindex" => {
+            Some(Cb::GetTerminusIndex) => {
                 let code = arg_i32(stacks.pop());
                 let idx = self.hof.as_ref().and_then(|h| h.termini.iter().position(|t| t.code == code)).map(|i| i as f32).unwrap_or(-1.0);
                 stacks.push(idx);
             }
-            "getterminusstring" => {
+            Some(Cb::GetTerminusString) => {
                 let n = arg_i32(stacks.pop());
                 let idx = arg_i32(stacks.pop());
                 let s = self.terminus(idx).and_then(|t| t.strings.get(usize::try_from(n).ok()?)).cloned().unwrap_or_default();
                 stacks.push_str(s);
             }
-            "getbusstopcount" => {
+            Some(Cb::GetBusstopCount) => {
                 let route = arg_i32(stacks.pop());
                 let n = self.hof.as_ref().and_then(|h| h.info_busstop_lists.get(usize::try_from(route).ok()?)).map(|l| l.len() as f32).unwrap_or(0.0);
                 stacks.push(n);
             }
-            "getroutebusstopident" => {
+            Some(Cb::GetRouteBusstopIdent) => {
                 let stop = arg_i32(stacks.pop());
                 let route = arg_i32(stacks.pop());
                 let s = self.hof.as_ref().and_then(|h| h.info_busstop_lists.get(usize::try_from(route).ok()?)).and_then(|l| l.get(usize::try_from(stop).ok()?)).cloned().unwrap_or_default();
                 stacks.push_str(s);
             }
-            "getbusstopindex" => {
+            Some(Cb::GetBusstopIndex) => {
                 let ident = stacks.pop_str();
                 let idx = self.hof.as_ref().and_then(|h| h.bus_stops.iter().position(|b| b.ident.trim().eq_ignore_ascii_case(ident.trim()))).map(|i| i as f32).unwrap_or(-1.0);
                 stacks.push(idx);
             }
-            "getbusstopstring" => {
+            Some(Cb::GetBusstopString) => {
                 let n = arg_i32(stacks.pop());
                 let idx = arg_i32(stacks.pop());
                 let s = self.bus_stop(idx).and_then(|b| b.strings.get(usize::try_from(n).ok()?)).cloned().unwrap_or_default();
                 stacks.push_str(s);
             }
-            "getdepotstringglobal" => {
+            Some(Cb::GetDepotStringGlobal) => {
                 let n = arg_i32(stacks.pop());
                 let s = self.hof.as_ref().and_then(|h| h.global_strings.get(usize::try_from(n).ok()?)).cloned().unwrap_or_default();
                 stacks.push_str(s);
             }
+            // --- the bus radio (openOMSI): the station and its song as strings
+            Some(Cb::GetRadioName) => stacks.push_str(self.radio_name.clone()),
+            Some(Cb::GetRadioSong) => stacks.push_str(self.radio_song.clone()),
             // --- timetable callbacks
-            "getttlinestring" => stacks.push_str(self.tt_line.clone()),
-            "getttdelay" => stacks.push(self.tt_delay),
-            "getttbusstopcount" => stacks.push(self.tt_stops.len() as f32),
+            Some(Cb::GetTTLineString) => stacks.push_str(self.tt_line.clone()),
+            Some(Cb::GetTTDelay) => stacks.push(self.tt_delay),
+            Some(Cb::GetTTBusstopCount) => stacks.push(self.tt_stops.len() as f32),
             // Without a timetable there is no current stop. Returning the first
             // stop (0) makes the Atron repeatedly detect an arrival and clear its
             // sales text after the holding brake has been on for three seconds.
-            "getttbusstopindex" => stacks.push(if self.tt_stops.is_empty() {
+            Some(Cb::GetTTBusstopIndex) => stacks.push(if self.tt_stops.is_empty() {
                 -1.0
             } else {
                 self.tt_busstop_index as f32
             }),
-            "gettterminusindex" | "getttterminusindex" => stacks.push(if self.tt_stops.is_empty() {
+            Some(Cb::GetTTerminusIndex) | Some(Cb::GetTTTerminusIndex) => stacks.push(if self.tt_stops.is_empty() {
                 -1.0
             } else {
                 self.tt_terminus_index as f32
             }),
             // how high a point of the vehicle stands over the ground (the NL/NG ramp
             // measures the kerb this way before extending)
-            "getheightabovepoint" => {
+            Some(Cb::GetHeightAbovePoint) => {
                 let z = stacks.pop();
                 let y = stacks.pop();
                 let x = stacks.pop();
@@ -637,23 +736,23 @@ impl Host for VehicleHost {
                 stacks.push(h);
             }
             // passengers standing on one link of the cabin path network
-            "gethumancountonpathlink" => {
+            Some(Cb::GetHumanCountOnPathLink) => {
                 let i = arg_i32(stacks.pop());
                 stacks.push(self.humans_on_path_link.get(usize::try_from(i).unwrap_or(usize::MAX)).copied().unwrap_or(0) as f32);
             }
-            "getttbusstopname" => {
+            Some(Cb::GetTTBusstopName) => {
                 let i = arg_i32(stacks.pop());
                 stacks.push_str(self.tt_stops.get(usize::try_from(i).unwrap_or(usize::MAX)).map(|s| s.0.clone()).unwrap_or_default());
             }
-            "getttbusstopdep" => {
+            Some(Cb::GetTTBusstopDep) => {
                 let i = arg_i32(stacks.pop());
                 stacks.push(self.tt_stops.get(usize::try_from(i).unwrap_or(usize::MAX)).map(|s| s.2).unwrap_or(0.0));
             }
-            "getttbusstoparr" => {
+            Some(Cb::GetTTBusstopArr) => {
                 let i = arg_i32(stacks.pop());
                 stacks.push(self.tt_stops.get(usize::try_from(i).unwrap_or(usize::MAX)).map(|s| s.1).unwrap_or(0.0));
             }
-            "givechangecoin" => {
+            Some(Cb::GiveChangeCoin) => {
                 let i = arg_i32(stacks.pop());
                 if i >= 0 {
                     self.change_coins.push(i as usize);
@@ -661,43 +760,43 @@ impl Host for VehicleHost {
             }
             // OMSI's number-specific random value: the same for a fleet
             // number and characteristic every time (broken matrix pixels, wear effects)
-            "nrspecrandom" => {
+            Some(Cb::NrSpecRandom) => {
                 let n = arg_i32(stacks.pop());
                 let number = self.number_var.and_then(|i| state.str_vars.get(i as usize)).cloned().unwrap_or_default();
                 stacks.push(omsi_vehicle::sound::spec_random(&number, n));
             }
-            "getticketname" | "gettticketname" => {
+            Some(Cb::GetTicketName) | Some(Cb::GetTTicketName) => {
                 let i = arg_i32(stacks.pop());
                 stacks.push_str(self.tickets.as_ref().and_then(|t| t.tickets.get(usize::try_from(i).unwrap_or(usize::MAX))).map(|t| t.name.clone()).unwrap_or_default());
             }
-            "getticketvalue" => {
+            Some(Cb::GetTicketValue) => {
                 let i = arg_i32(stacks.pop());
                 stacks.push(self.tickets.as_ref().and_then(|t| t.tickets.get(usize::try_from(i).unwrap_or(usize::MAX))).map(|t| t.value).unwrap_or(0.0));
             }
-            "gethumancountonseat" => {
+            Some(Cb::GetHumanCountOnSeat) => {
                 let i = arg_i32(stacks.pop());
                 stacks.push(self.humans_on_seat.get(usize::try_from(i).unwrap_or(usize::MAX)).copied().unwrap_or(0) as f32);
             }
             // --- scenery objects (`program/callbacklist_scenobj.txt`): the n-th bus due at
             // the object's stop. Past the last one the line and terminus are empty (the stock
             // display leaves its line dark on an empty terminus) and the time is 0.
-            "getarrbusline" => {
+            Some(Cb::GetArrBusLine) => {
                 let i = arg_i32(stacks.pop());
                 stacks.push_str(self.arrival(i).map(|a| a.line.clone()).unwrap_or_default());
             }
-            "getarrbusterminus" => {
+            Some(Cb::GetArrBusTerminus) => {
                 let i = arg_i32(stacks.pop());
                 stacks.push_str(self.arrival(i).map(|a| a.terminus.clone()).unwrap_or_default());
             }
-            "getarrbustimediff" => {
+            Some(Cb::GetArrBusTimeDiff) => {
                 let i = arg_i32(stacks.pop());
                 stacks.push(self.arrival(i).map(|a| a.due).unwrap_or(0.0));
             }
-            _ => {
+            None => {
                 // numeric callbacks default to 0; say once which one the host lacks
-                if !self.unknown_callbacks.iter().any(|n| n == lname) {
+                if !omsi_script::compile::with_lower(name, |l| self.unknown_callbacks.iter().any(|n| n == l)) {
                     log::warn!("script callback (M.V.{name}) is not provided; it reads 0");
-                    self.unknown_callbacks.push(lname.to_string());
+                    self.unknown_callbacks.push(name.to_ascii_lowercase());
                 }
                 stacks.push(0.0);
             }
@@ -717,11 +816,10 @@ impl Host for VehicleHost {
     }
     fn sound_trigger_vars(&mut self, name: &str, id: NameId, vars: &[f32]) {
         self.sound_trigger(name, id);
-        if !self.snapshot_triggers.is_empty() {
-            let key = name.to_ascii_lowercase();
-            if self.snapshot_triggers.contains(&key) {
-                self.fired_trigger_vars.push((key, vars.to_vec()));
-            }
+        // (asked in place; the lower-case name is made only for a trigger that is kept - a
+        // copy was made for every trigger fired by a vehicle with such sounds)
+        if !self.snapshot_triggers.is_empty() && omsi_script::compile::with_lower(name, |k| self.snapshot_triggers.contains(k)) {
+            self.fired_trigger_vars.push((name.to_ascii_lowercase(), vars.to_vec()));
         }
     }
 
@@ -742,6 +840,44 @@ mod tests {
     use super::*;
     use crate::scripttex::ScriptTexture;
     use omsi_script::{compile, CompileInput, Vm};
+
+    /// Every callback is found by its name in any letter case, under any script name id,
+    /// also when the id was another name's before; an unknown one is reported once.
+    #[test]
+    fn callbacks_are_found_by_name_under_any_id() {
+        let mut host = VehicleHost::new(SimClock::default());
+        for (k, cb) in Cb::ALL.iter().enumerate() {
+            assert_eq!(cb.name(), cb.name().to_ascii_lowercase());
+            assert_eq!(Cb::of(cb.name()), Some(*cb));
+            let upper = cb.name().to_ascii_uppercase();
+            for id in [k as NameId, 0, 3, 70_000] {
+                assert_eq!(host.callback_kind(&upper, id), Some(*cb), "{upper} as {id}");
+                assert_eq!(host.callback_kind(cb.name(), id), Some(*cb));
+            }
+        }
+        assert_eq!(host.callback_kind("STDrawPixelX", 3), None);
+        assert_eq!(host.callback_kind("STDrawPixel", 3), Some(Cb::StDrawPixel));
+        let p = compile(&CompileInput::default());
+        let mut state = State::new(&p);
+        let mut stacks = Stacks::default();
+        for _ in 0..3 {
+            host.callback("No_Such_Callback", 5, &mut stacks, &mut state);
+        }
+        assert_eq!(host.unknown_callbacks(), ["no_such_callback".to_string()]);
+        assert_eq!(stacks.st[..3], [0.0; 3]);
+    }
+
+    /// A trigger whose sounds read variables keeps them as they stand (by its lower-case
+    /// name, whatever case the script writes); the others only fire.
+    #[test]
+    fn a_snapshot_trigger_keeps_the_variables() {
+        let mut host = VehicleHost::new(SimClock::default());
+        host.snapshot_triggers.insert("ev_door_open".to_string());
+        host.sound_trigger_vars("EV_Door_Open", 0, &[1.0, 2.0]);
+        host.sound_trigger_vars("ev_other", 1, &[3.0]);
+        assert_eq!(host.fired_triggers, ["EV_Door_Open", "ev_other"]);
+        assert_eq!(host.fired_trigger_vars, vec![("ev_door_open".to_string(), vec![1.0, 2.0])]);
+    }
 
     #[test]
     fn departure_wants_keep_the_stops_asked_most_recently() {
@@ -780,6 +916,22 @@ mod tests {
         // a half goes to the even number, as under Delphi's control word
         assert_eq!((arg_i32(0.5), arg_i32(1.5), arg_i32(2.5), arg_i32(-0.5)), (0, 2, 2, 0));
         assert_eq!(arg_idx(-1.0), usize::MAX);
+    }
+
+    #[test]
+    fn the_radio_callbacks_give_the_station_and_its_song() {
+        let p = compile(&CompileInput::default());
+        let mut state = State::new(&p);
+        let mut host = VehicleHost::new(SimClock::default());
+        let mut stacks = Stacks::default();
+        host.callback("GetRadioName", 0, &mut stacks, &mut state);
+        assert_eq!(stacks.pop_str(), "", "the radio off");
+        host.radio_name = "radioeins".into();
+        host.radio_song = "Artist - Title".into();
+        host.callback("GetRadioName", 0, &mut stacks, &mut state);
+        host.callback("getradiosong", 0, &mut stacks, &mut state);
+        assert_eq!(stacks.pop_str(), "Artist - Title");
+        assert_eq!(stacks.pop_str(), "radioeins");
     }
 
     #[test]

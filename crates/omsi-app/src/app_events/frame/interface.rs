@@ -57,6 +57,8 @@ impl App {
         // under the game's own interface; not under its menus, nor in VR
         let plugin_focus = crate::plugin_ui::focused(&self.integrations.plugins);
         self.frame_plugin_panels(dt, hud, vr_active);
+        // the game's own panels (the quick menu, the trip summary, ...: `game_panels`)
+        self.frame_game_panels(dt, hud, vr_active);
         // the mirror panels (Ctrl+M): over the picture and the navigator, under the notes
         // and the menus - drawn after them, they covered the pause menu (#1880)
         if self.cam.in_cab {

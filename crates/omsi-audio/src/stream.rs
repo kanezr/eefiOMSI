@@ -9,6 +9,9 @@ pub struct StreamBuf {
     inner: Mutex<StreamInner>,
     /// What the reader says about the stream: the song playing, or why it is silent.
     status: Mutex<String>,
+    /// What the station says of itself: its name (`icy-name`) and the title playing now
+    /// (`StreamTitle`), each empty while it says nothing.
+    meta: Mutex<(String, String)>,
 }
 
 pub struct StreamInner {
@@ -57,6 +60,7 @@ impl Default for StreamBuf {
                 closed: false,
             }),
             status: Mutex::new(String::new()),
+            meta: Mutex::new((String::new(), String::new())),
         }
     }
 }
@@ -101,6 +105,24 @@ impl StreamBuf {
 
     pub fn status(&self) -> String {
         self.status.lock().clone()
+    }
+
+    /// The station's name and the title playing (see `meta`).
+    pub fn set_meta(&self, name: &str, title: &str) {
+        let mut m = self.meta.lock();
+        if m.0 != name || m.1 != title {
+            *m = (name.to_string(), title.to_string());
+        }
+    }
+
+    /// The station's name as it gives it (empty when it gives none).
+    pub fn station_name(&self) -> String {
+        self.meta.lock().0.clone()
+    }
+
+    /// The title playing now as the station gives it (empty when it gives none).
+    pub fn title(&self) -> String {
+        self.meta.lock().1.clone()
     }
 
     pub fn is_closed(&self) -> bool {

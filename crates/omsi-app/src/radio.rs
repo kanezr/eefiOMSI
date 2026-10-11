@@ -107,6 +107,34 @@ pub(crate) fn save_stations(list: &[(String, String)]) -> std::io::Result<()> {
     std::fs::write(&p, with_stations(&text, list))
 }
 
+/// The setting of the radio's effects named `key` (`radio_speaker`, `radio_hiss`,
+/// `radio_dropouts`) in `fx`: its key as written to the settings, and its amount.
+pub(crate) fn fx_setting<'a>(fx: &'a mut omsi_audio::radio_fx::RadioFxParams, key: &str) -> (&'static str, &'a mut f32) {
+    match key {
+        "radio_speaker" => ("radio_speaker", &mut fx.speaker),
+        "radio_hiss" => ("radio_hiss", &mut fx.hiss),
+        _ => ("radio_dropouts", &mut fx.dropouts),
+    }
+}
+
+/// The options' slider `key` of the radio's effects set to `v` (in steps of a hundredth):
+/// the key and value kept for the next game.
+pub(crate) fn set_fx_setting(fx: &mut omsi_audio::radio_fx::RadioFxParams, key: &str, v: f32) -> (&'static str, String) {
+    let (key, at) = fx_setting(fx, key);
+    *at = ((v * 100.0).round() / 100.0).clamp(0.0, 1.0);
+    (key, at.to_string())
+}
+
+/// The options' rows of the radio's effects (the Sound tab), with their percentages.
+pub(crate) fn option_rows(app: &crate::App, pct: &dyn Fn(f32) -> String) -> [Option<(String, String)>; 3] {
+    use crate::game_lists::slider_row;
+    [
+        slider_row(app, "radio_speaker", "Radio: small speaker", "The bus radio through a small dashboard speaker: no deep bass, no bright treble", pct),
+        slider_row(app, "radio_hiss", "Radio: FM hiss", "The hiss and crackle of a weak FM signal", pct),
+        slider_row(app, "radio_dropouts", "Radio: signal dropouts", "Now and then the signal is lost for a moment", pct),
+    ]
+}
+
 fn config_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     Some(PathBuf::from(home).join(".openomsi").join("radio.cfg"))
@@ -254,6 +282,8 @@ pub struct Radio {
     /// Shift+R: how far the list is turned from the bus's own station numbers.
     offset: usize,
     playing: Option<Playing>,
+    /// The radio's own sound (the settings' `radio_speaker`, `radio_hiss`, `radio_dropouts`).
+    pub fx: omsi_audio::radio_fx::RadioFxParams,
 }
 
 struct Playing {
@@ -264,6 +294,44 @@ struct Playing {
     shown: String,
     /// The line a text display runs through (see `Radio::display_text`), and since when.
     line: (String, std::time::Instant),
+    /// Where the speaker is heard from in the cab: its place relative to the listener in
+    /// the bus's frame, as it follows a camera that moves (see `cab_place`), and when it
+    /// was last moved.
+    heard_at: Option<(Vec3, std::time::Instant)>,
+    /// The effects the voice was last given.
+    fx: omsi_audio::radio_fx::RadioFxParams,
+}
+
+/// How far the radio's sound is from the listener in the cab, of the true distance: the
+/// bus's speakers are spread along it, so the sound comes from the driver's corner but does
+/// not fade away towards the back as one loudspeaker there would.
+const SPREAD: f32 = 0.5;
+
+/// Seconds the radio's place takes to follow a camera that jumped (a view changed): it
+/// glides over instead of jumping from one ear to the other.
+const GLIDE: f32 = 0.25;
+
+/// Where the radio sits in a bus (its frame: x right, y forward, z up): a little ahead of
+/// and under the driver's eyes, in the dashboard or the panel above the windscreen.
+fn radio_point(v: &omsi_sim::VehicleInstance) -> Vec3 {
+    let def = &v.ty.def;
+    let eye = def
+        .cameras_driver
+        .get(def.camera_std.min(def.cameras_driver.len().saturating_sub(1)))
+        .map(|c| Vec3::from(c.pos))
+        .unwrap_or(Vec3::new(-0.5, 0.0, 1.8));
+    eye + Vec3::new(0.25, 0.5, -0.25)
+}
+
+/// The place in the bus's frame, relative to the listener, the radio's sound comes from
+/// now: `want` (its true place, nearer by `SPREAD`) reached over `GLIDE` seconds from
+/// `was`, `dt` seconds after it.
+fn cab_place(was: Option<Vec3>, want: Vec3, dt: f32) -> Vec3 {
+    let want = want * SPREAD;
+    match was {
+        Some(w) => w + (want - w) * (1.0 - (-dt.max(0.0) / GLIDE).exp()),
+        None => want,
+    }
 }
 
 /// Characters in a line of a radio's text display (the "Magnitola" radio of P3ta's SOR
@@ -369,7 +437,7 @@ impl Radio {
         if !stations.is_empty() {
             log::info!("radio: {} stations", stations.len());
         }
-        Radio { stations: stations.clone(), own: stations, frequencies: frequencies.clone(), own_frequencies: frequencies, map: String::new(), relisted: false, volume, offset: 0, playing: None }
+        Radio { stations: stations.clone(), own: stations, frequencies: frequencies.clone(), own_frequencies: frequencies, map: String::new(), relisted: false, volume, offset: 0, playing: None, fx: Default::default() }
     }
 
     /// The frequency the station that plays is on where the bus is (`94.6 MHz`), for a
@@ -437,21 +505,34 @@ impl Radio {
                 log::info!("radio: station {} {name} ({url})", station + 1);
                 let buf = omsi_audio::radio::open(url);
                 let voice = audio.play_stream(buf.clone(), VoiceParams { gain: 0.0, ..Default::default() });
-                self.playing = Some(Playing { station, buf, voice, shown: String::new(), line: (String::new(), std::time::Instant::now()) });
+                self.playing = Some(Playing { station, buf, voice, shown: String::new(), line: (String::new(), std::time::Instant::now()), heard_at: None, fx: Default::default() });
             }
         }
         let p = self.playing.as_mut()?;
         // the volume knob, where the radio has one (0..1, some go to 2)
         let knob = v.var("SndVol_Radio").map(|x| x.clamp(0.0, 2.0)).unwrap_or(1.0);
         let gain = self.volume * knob;
-        // heard through the bodywork from outside
-        let pos = v.position.as_vec3() + Vec3::Z * 1.5;
         let params = if inside {
-            VoiceParams { gain, ..Default::default() }
+            // from the driver's corner of the cab, half as far as it is, and following the
+            // camera along the bus's own axes rather than jumping with it
+            let xf = v.world_transform();
+            let ear = audio.listener_position();
+            let want = radio_point(v) - xf.inverse().transform_point3(ear);
+            let now = std::time::Instant::now();
+            let rel = cab_place(p.heard_at.map(|h| h.0), want, p.heard_at.map_or(0.0, |h| (now - h.1).as_secs_f32()));
+            p.heard_at = Some((rel, now));
+            VoiceParams { gain, position: Some(ear + xf.transform_vector3(rel)), range: 3.0, doppler: false, ..Default::default() }
         } else {
+            // heard through the bodywork from outside
+            p.heard_at = None;
+            let pos = v.position.as_vec3() + Vec3::Z * 1.5;
             VoiceParams { gain, position: Some(pos), range: 4.0, lowpass_hz: 700.0, ..Default::default() }
         };
         audio.set_params(p.voice, params);
+        if p.fx != self.fx {
+            p.fx = self.fx;
+            audio.set_radio_fx(p.voice, self.fx);
+        }
         let status = p.buf.status();
         if status != p.shown && !status.is_empty() && status != "connecting …" {
             p.shown = status.clone();
@@ -475,6 +556,16 @@ impl Radio {
             p.line = (line, std::time::Instant::now());
         }
         Some(marquee(&p.line.0, DISPLAY_WIDTH, p.line.1.elapsed().as_secs_f32()))
+    }
+
+    /// What plays, for the scripts' `GetRadioName` and `GetRadioSong`: the station's name
+    /// (as it gives it, else as the list has it) and the title it gives; both empty while
+    /// the radio is off.
+    pub fn now_playing(&self) -> (String, String) {
+        let Some(p) = self.playing.as_ref() else { return Default::default() };
+        let name = p.buf.station_name();
+        let name = if name.is_empty() { self.stations.get(p.station).map(|s| s.0.clone()).unwrap_or_default() } else { name };
+        (name, p.buf.title())
     }
 
     /// Shift+R: the next station of the list on every button.
@@ -538,7 +629,7 @@ mod tests {
         std::fs::create_dir_all(&map).unwrap();
         std::fs::write(map.join("radio.cfg"), "# the town's stations\nvolume = 0.1\nMestske radio = http://example.org/mesto.mp3\nSecond = http://example.org/own.mp3\n").unwrap();
         let own = vec![("Mine".to_string(), "http://example.org/mine.mp3".to_string()), ("Own".to_string(), "http://EXAMPLE.org/own.mp3".to_string())];
-        let mut r = Radio { stations: own.clone(), own, frequencies: Default::default(), own_frequencies: Default::default(), map: String::new(), relisted: false, volume: 0.7, offset: 2, playing: None };
+        let mut r = Radio { stations: own.clone(), own, frequencies: Default::default(), own_frequencies: Default::default(), map: String::new(), relisted: false, volume: 0.7, offset: 2, playing: None, fx: Default::default() };
         r.set_map(&dir, "maps/Mesto/global.cfg");
         let names: Vec<&str> = r.stations.iter().map(|s| s.0.as_str()).collect();
         assert_eq!(names, ["Mestske radio", "Second", "Mine"]);
@@ -563,6 +654,19 @@ mod tests {
         assert_eq!(frequency_at(&on["http://example.org/z.mp3"], 24000.0, 0.0), Some("94.6"));
         assert_eq!(frequency_at(&on["http://example.org/z.mp3"], 5000.0, 0.0), Some("90.9"));
         assert_eq!(frequency_at(&on["http://example.org/k.mp3"], 5000.0, 0.0), Some("98.1"));
+    }
+
+    #[test]
+    fn the_cab_radio_comes_from_half_as_far_and_glides_after_a_jump() {
+        let want = Vec3::new(2.0, 8.0, -0.4);
+        assert_eq!(cab_place(None, want, 0.0), want * SPREAD);
+        // a camera that jumped to the back: a quarter second later most of the way, not all
+        let was = Vec3::new(0.2, 0.3, 0.0);
+        let half = cab_place(Some(was), want, GLIDE);
+        let k = (half - was).length() / (want * SPREAD - was).length();
+        assert!((k - (1.0 - (-1.0f32).exp())).abs() < 1e-4, "{k}");
+        assert!((cab_place(Some(was), want, 5.0) - want * SPREAD).length() < 1e-3);
+        assert_eq!(cab_place(Some(was), want, 0.0), was);
     }
 
     #[test]

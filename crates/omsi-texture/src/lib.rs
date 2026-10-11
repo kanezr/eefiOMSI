@@ -402,6 +402,9 @@ pub struct TextureCache {
     gpu: Mutex<HashMap<PathBuf, Arc<TextureData>>>,
     misses: Mutex<HashMap<String, ()>>,
     alpha: Mutex<HashMap<PathBuf, bool>>,
+    /// The sidecars read, by the name asked for and the file found, with the content
+    /// generation they were read in (`omsi_cfg::content_generation`).
+    cfgs: Mutex<HashMap<(String, PathBuf), (u64, TextureCfg)>>,
 }
 
 /// Where the `.cfg` sidecar of a texture is. OMSI names it after the texture as the model
@@ -447,14 +450,26 @@ impl TextureCache {
 
     /// The `<texture>.cfg` sidecar of a texture, if it has one: `[moisture]` marks a
     /// surface that darkens in the wet, `[puddles]` one that collects puddles.
+    /// Read once per texture while the content stays as it was: every material slot of
+    /// every placed type asked, each time looking for the sidecar under four names and
+    /// reading it.
     pub fn cfg(&self, name: &str, dirs: &[&Path]) -> TextureCfg {
-        match find_texture(name, dirs) {
-            Some(p) => match cfg_path(name, &p) {
-                Some(c) => TextureCfg::load(&c),
-                None => TextureCfg::default(),
-            },
-            None => TextureCfg::default(),
+        let Some(p) = find_texture(name, dirs) else {
+            return TextureCfg::default();
+        };
+        let generation = omsi_cfg::content_generation();
+        let key = (name.to_string(), p);
+        if let Some((g, c)) = self.cfgs.lock().get(&key) {
+            if *g == generation {
+                return c.clone();
+            }
         }
+        let c = match cfg_path(name, &key.1) {
+            Some(c) => TextureCfg::load(&c),
+            None => TextureCfg::default(),
+        };
+        self.cfgs.lock().insert(key, (generation, c.clone()));
+        c
     }
 
     /// Load (or fetch from cache) a texture found through `find_texture`.

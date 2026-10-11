@@ -43,9 +43,6 @@ impl App {
         if let Some(s) = self.gfx.surface.as_ref() {
             let (w, h) = (s.config.width, s.config.height);
             self.touch_prepare(w, h);
-            // the quick menu and the trip summary, laid out over the picture
-            self.quick_prepare(w, h);
-            self.summary_prepare(w, h);
         }
         if self.gfx.surface.is_some()
             && self.renderer.is_some()
@@ -332,9 +329,6 @@ impl App {
         self.shell.render(r, &view, s.config.width, s.config.height);
         // the on-screen controls over the picture (a phone)
         self.input.touch.render(r, &view, s.config.width, s.config.height);
-        // the quick menu and the trip summary over the picture
-        self.quick.render(r, &view, s.config.width, s.config.height);
-        self.summary.render(r, &view, s.config.width, s.config.height);
         *self.perf.profile.entry("render").or_default() += __t.elapsed().as_secs_f64();
         if omsi_cfg::flags::OMSI_PROFILE_GPU.is_set() {
             // wait for the GPU here, so that its time shows as a stage of its own
@@ -503,7 +497,18 @@ impl App {
         // machine (with V-sync off and no limit an M4 drew 300 frames a second in the
         // depot and ran hot); 1000 and more = no limit at all
         let max_fps = if max_fps == 0 {
-            self.window.as_ref().and_then(|w| w.current_monitor()).and_then(|m| m.refresh_rate_millihertz()).map(|mhz| (mhz as f64 / 1000.0).round() as u32).filter(|r| *r >= 30).unwrap_or(120)
+            // (asked of the system once a second, not every frame: it is a round trip to
+            // the window server, and a window only moves to another screen now and then)
+            static RATE: parking_lot::Mutex<Option<(Instant, u32)>> = parking_lot::Mutex::new(None);
+            let mut rate = RATE.lock();
+            match *rate {
+                Some((at, r)) if now.duration_since(at) < std::time::Duration::from_secs(1) => r,
+                _ => {
+                    let r = self.window.as_ref().and_then(|w| w.current_monitor()).and_then(|m| m.refresh_rate_millihertz()).map(|mhz| (mhz as f64 / 1000.0).round() as u32).filter(|r| *r >= 30).unwrap_or(120);
+                    *rate = Some((now, r));
+                    r
+                }
+            }
         } else if max_fps >= 1000 {
             0
         } else {

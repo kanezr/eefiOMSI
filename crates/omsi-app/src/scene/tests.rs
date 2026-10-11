@@ -1069,3 +1069,13 @@ fn scenery_mouseevent_hit_and_trigger() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+
+#[test]
+fn a_trees_cards_turn_against_its_object_as_in_omsi() {
+    // An object turned 30 degrees clockwise (its x axis towards south-east): Omsi.exe stands
+    // the cards of its `[tree]` 30 degrees counter-clockwise, the card along x pointing
+    // north-east.
+    let card = terrain_paint::tree_card_turn(30.0).transform_vector3(glam::Vec3::X);
+    let (s, c) = 30f32.to_radians().sin_cos();
+    assert!((card - glam::Vec3::new(c, s, 0.0)).length() < 1e-5, "{card:?}");
+}

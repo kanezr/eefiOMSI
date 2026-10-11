@@ -178,7 +178,10 @@ impl MapIndex {
             Vec<omsi_map::MapObject>,
         );
         let t0 = std::time::Instant::now();
-        let signal_types = parking_lot::Mutex::new(HashMap::new());
+        // (each type read once, the others that want it waiting for it; the lock itself is
+        // held only to find its cell - held while the file was read, it had the tiles read
+        // their light types one after another)
+        let signal_types: parking_lot::Mutex<HashMap<String, std::sync::Arc<std::sync::OnceLock<bool>>>> = parking_lot::Mutex::new(HashMap::new());
         // (per tile: the parents its children name a light of, and its objects' files - the
         // objects by id, the files once each - to tell afterwards which of those parents
         // are crossings with a light program)
@@ -190,7 +193,8 @@ impl MapIndex {
                 let mut part = MapIndex::default();
                 part.traffic_light_parents = traffic_light_parents(&tile, |file| {
                     let key = file.replace('/', "\\").to_ascii_lowercase();
-                    *signal_types.lock().entry(key).or_insert_with(|| {
+                    let cell = signal_types.lock().entry(key).or_default().clone();
+                    *cell.get_or_init(|| {
                         let path = omsi_cfg::resolve_path(root, file);
                         match omsi_scenery::SceneryObject::load(&path) {
                             Ok(sco) => sco.is_traffic_light,

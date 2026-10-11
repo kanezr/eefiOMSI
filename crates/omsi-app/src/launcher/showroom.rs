@@ -56,6 +56,9 @@ pub struct Showroom {
     /// The last look that could not be shown (not read again until something changes).
     failed: Option<Look>,
     loading: Option<(Look, Receiver<Result<Ready, String>>)>,
+    /// The map the bus being read opened on its worker, for this thread to give it the
+    /// renderer's prefetch (see `start_loading`).
+    opening: Option<(Receiver<Arc<scene::World>>, std::sync::mpsc::Sender<scene::VehiclePrefetch>)>,
     pub error: Option<String>,
     /// Orbit: yaw and pitch (degrees) and distance factor, eased towards the targets.
     pub yaw: f32,
@@ -127,6 +130,7 @@ impl Showroom {
             wanted: None,
             failed: None,
             loading: None,
+            opening: None,
             error: None,
             yaw: 215.0,
             pitch: 8.0,
@@ -153,6 +157,17 @@ impl Showroom {
         }
     }
 
+    /// `want` the launcher's choice: compared first, the look is made only when it changed
+    /// (it was made, five strings cloned, every frame).
+    pub fn want_choice(&mut self, root: &str, c: &super::state::Choice) {
+        let same = self.wanted.as_ref().is_some_and(|w| {
+            w.map == c.map && w.bus == c.bus && w.paint == c.paint && w.weather == c.weather && w.time == c.time && w.date == c.date && w.root.as_os_str() == root
+        });
+        if !same {
+            self.want(Look { root: PathBuf::from(root), map: c.map.clone(), bus: c.bus.clone(), paint: c.paint.clone(), weather: c.weather.clone(), time: c.time, date: c.date.clone() });
+        }
+    }
+
     /// The mouse dragged over the empty part of the window (degrees), or turned the wheel.
     pub fn orbit(&mut self, dx: f32, dy: f32) {
         self.yaw_to += dx * 0.35;
@@ -168,6 +183,18 @@ impl Showroom {
     /// camera. Returns true when a new scene was put in place.
     pub fn update(&mut self, renderer: &Renderer, dt: f32) -> bool {
         let mut swapped = false;
+        // the map of the bus being read is open: the worker goes on with the renderer's
+        // prefetch of the bus's textures and meshes
+        if let Some((worlds, prefetch)) = self.opening.as_ref() {
+            match worlds.try_recv() {
+                Ok(world) => {
+                    let _ = prefetch.send(world.vehicle_prefetch(renderer));
+                    self.opening = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(_) => self.opening = None,
+            }
+        }
         // what finished loading
         if let Some((look, rx)) = self.loading.as_ref() {
             match rx.try_recv() {
@@ -213,7 +240,7 @@ impl Showroom {
                     }
                     self.dirty = true;
                 } else {
-                    self.start_loading(renderer, w);
+                    self.start_loading(w);
                 }
             }
         }
@@ -241,7 +268,7 @@ impl Showroom {
         swapped
     }
 
-    fn start_loading(&mut self, renderer: &Renderer, look: Look) {
+    fn start_loading(&mut self, look: Look) {
         // A preview that never came (the launcher hung while placing it, and had to be
         // ended) is not tried again for that bus: the bus is remembered and the launcher hung
         // at every start, whatever version (#1478, #1635).
@@ -265,24 +292,21 @@ impl Showroom {
         let root = look.root.clone();
         let map_cfg = omsi_cfg::resolve_path(&root, &look.map);
         let date = start_clock(&args).date_code();
-        let t0 = std::time::Instant::now();
-        let world = match scene::World::open(&root, &map_cfg, date) {
-            Ok(w) => {
-                log::info!("showroom: {} opened in {:.2} s", map_cfg.display(), t0.elapsed().as_secs_f64());
-                Arc::new(w)
-            }
-            Err(e) => {
-                let _ = std::fs::remove_file(placing_mark());
-                self.error = Some(format!("{e:#}"));
-                self.wanted = None;
-                return;
-            }
-        };
-        let prefetch = world.vehicle_prefetch(renderer);
         let (tx, rx) = channel();
+        // (the map is opened on the worker as well: on this thread it held the launcher's
+        // frames up - a big map's, or any on a phone's storage, for a second and more)
+        let (world_tx, world_rx) = channel();
+        let (prefetch_tx, prefetch_rx) = channel::<scene::VehiclePrefetch>();
         let l2 = look.clone();
         std::thread::spawn(move || {
             let r = (|| -> Result<Ready> {
+                let t0 = std::time::Instant::now();
+                let world = Arc::new(scene::World::open(&root, &map_cfg, date)?);
+                log::info!("showroom: {} opened in {:.2} s", map_cfg.display(), t0.elapsed().as_secs_f64());
+                let _ = world_tx.send(world.clone());
+                // (made by the launcher's thread, which has the renderer; gone with the
+                // showroom when the device is given up meanwhile)
+                let prefetch = prefetch_rx.recv().map_err(|_| anyhow!("the preview was let go of"))?;
                 if l2.bus.is_empty() {
                     return Err(anyhow!("no bus"));
                 }
@@ -308,6 +332,7 @@ impl Showroom {
             })();
             let _ = tx.send(r.map_err(|e| format!("{e:#}")));
         });
+        self.opening = Some((world_rx, prefetch_tx));
         self.loading = Some((look, rx));
     }
 

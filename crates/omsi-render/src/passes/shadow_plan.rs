@@ -149,7 +149,7 @@ impl Renderer {
         // (3..: each street lamp's map, every caster within that lamp's reach under its head;
         // a source embedded in a pole's fixture leaves its own fixture out, see `PointLight::shadow_owner`)
         let mut shadow_batches: [Vec<Batch>; SHADOW_LISTS] = std::array::from_fn(|_| Vec::new());
-        let lamp_reaches = |l: &LampShadow, c: Vec3, r: f32| c.z - r < l.position.z && (c - l.position).length() < l.range + r;
+        let lamp_reaches = |l: &LampShadow, c: Vec3, r: f32| l.reaches(c, r);
         let lamp_reach = |c: Vec3, r: f32| lamp_shadows.iter().any(|l| lamp_reaches(l, c, r));
         // an instance's screen size as the camera pass measures it for the LOD choice
         let lod_fov = camera.fov_deg.to_radians().max(1e-3);

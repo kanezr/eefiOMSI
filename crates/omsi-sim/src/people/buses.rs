@@ -15,7 +15,7 @@ impl PeopleSim {
     /// The others open with the eighth, as in Omsi.exe (0x62d31e reads the open state of door
     /// min(i, 7)), and ask through its `_Req` ([`PeopleSim::write_door_requests`]).
     pub fn own_pax_door(v: &VehicleInstance, kind: &str, i: usize) -> bool {
-        i < OMSI_PAX_DOORS || (i < crate::vehicle::PAX_DOORS && Self::script_reports(v, &format!("PAX_{kind}{i}_Open")))
+        i < OMSI_PAX_DOORS || (i < crate::vehicle::PAX_DOORS && v.pax_reports_open(kind, i))
     }
 
     /// The passengers' requests into the bus's `PAX_Entry<n>_Req` / `PAX_Exit<n>_Req`, and
@@ -38,7 +38,7 @@ impl PeopleSim {
                 }
             }
             for (i, r) in slots.iter().enumerate() {
-                v.set_var(&format!("PAX_{kind}{i}_{what}"), if *r { 1.0 } else { 0.0 });
+                v.set_pax_var(kind, i, what, if *r { 1.0 } else { 0.0 });
             }
         }
         for (name, on) in &doors.places {
@@ -54,9 +54,7 @@ impl PeopleSim {
         let base = if n_entry <= 1 { 1 } else { 2 };
         [("Entry", n_entry, 0), ("Exit", n_exit, base)].into_iter().any(|(kind, count, offset)| {
             (0..count).any(|i| {
-                Self::script_reports(v, &format!("PAX_{kind}{i}_Open"))
-                    || v.var(&format!("door_{}", offset + i)).is_some()
-                    || v.var(&format!("door{}", offset + i)).is_some()
+                v.pax_reports_open(kind, i) || v.door_anim(offset + i).is_some()
             })
         })
     }
@@ -66,12 +64,7 @@ impl PeopleSim {
     /// or `door<i>` animations; an entry or exit past the eighth without variables of its own
     /// is open with the eighth ([`PeopleSim::own_pax_door`]).
     pub fn doors_open(v: &VehicleInstance, n_entry: usize, n_exit: usize) -> (Vec<bool>, Vec<bool>) {
-        let door_val = |k: usize| -> bool {
-            v.var(&format!("door_{k}"))
-                .or_else(|| v.var(&format!("door{k}")))
-                .unwrap_or(0.0)
-                > 0.5
-        };
+        let door_val = |k: usize| -> bool { v.door_anim(k).unwrap_or(0.0) > 0.5 };
         // Exits in standard OMSI city buses (2 or more front door leaves) begin at door_2 (middle door),
         // while coaches with a single front door leaf begin at door_1. Exits must not be offset by
         // n_entry, because buses with all doors configured as entries (e.g. 3-door buses with 6 entries)
@@ -80,11 +73,10 @@ impl PeopleSim {
         let states = |kind: &str, n: usize, door: &dyn Fn(usize) -> bool| -> Vec<bool> {
             let mut out: Vec<bool> = Vec::with_capacity(n);
             for i in 0..n {
-                let name = format!("PAX_{kind}{i}_Open");
                 let open = if !Self::own_pax_door(v, kind, i) {
                     out[OMSI_PAX_DOORS - 1]
-                } else if Self::script_reports(v, &name) {
-                    v.var(&name).unwrap_or(0.0) > 0.5
+                } else if v.pax_reports_open(kind, i) {
+                    v.pax_open(kind, i).unwrap_or(0.0) > 0.5
                 } else {
                     door(i)
                 };
@@ -95,7 +87,7 @@ impl PeopleSim {
         let entry = states("Entry", n_entry, &door_val);
         // Each exit follows its own leaf's animation (an articulated bus's rear doors are
         // door_8, door_9, ...); one past door_7 the bus has no animation for opens with door_7.
-        let has_door = |k: usize| v.var(&format!("door_{k}")).is_some() || v.var(&format!("door{k}")).is_some();
+        let has_door = |k: usize| v.door_anim(k).is_some();
         let exit = states("Exit", n_exit, &|i| {
             let k = exit_door_base + i;
             door_val(if k > 7 && !has_door(k) { 7 } else { k })

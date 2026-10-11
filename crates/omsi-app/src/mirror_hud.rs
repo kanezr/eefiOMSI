@@ -114,13 +114,16 @@ impl MirrorHud {
     }
 
     /// The glass shapes the world has found in the bus's model.
-    pub fn set_aspects(&mut self, a: Vec<f32>) {
-        self.aspects = a;
+    /// (copied into the panels' own lists, which keep their room: this comes every frame)
+    pub fn set_aspects(&mut self, a: &[f32]) {
+        self.aspects.clear();
+        self.aspects.extend_from_slice(a);
     }
 
     /// The glasses the world has found in the bus's model.
-    pub fn set_glass(&mut self, g: Vec<Option<MirrorGlass>>) {
-        self.glass = g;
+    pub fn set_glass(&mut self, g: &[Option<MirrorGlass>]) {
+        self.glass.clear();
+        self.glass.extend_from_slice(g);
     }
 
     /// Width / height a mirror's panel starts with, and whether it sits on the right.
@@ -180,12 +183,13 @@ impl MirrorHud {
             let eye = rot.transform_vector3((crate::camera_util::driver_eye(p) - p.vehicle.position).as_vec3());
             self.turns = self.glass.iter().map(|g| g.map(|g| Turn::of(eye, g.centre, g.du, g.dv)).unwrap_or_default()).collect();
         }
-        let path = p.vehicle.ty.def.path.to_string_lossy().to_string();
-        let key = path.to_ascii_lowercase();
-        if self.key == key {
+        let path = p.vehicle.ty.def.path.to_string_lossy();
+        // (compared without making the key anew every frame)
+        if self.key.len() == path.len() && self.key.bytes().zip(path.bytes()).all(|(k, c)| k == c.to_ascii_lowercase()) {
             return;
         }
-        self.key = key;
+        let path = path.into_owned();
+        self.key = path.to_ascii_lowercase();
         self.drag = None;
         self.edit = false;
         match load(&path) {

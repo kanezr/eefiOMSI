@@ -231,12 +231,16 @@ impl SceneryInstance {
         if self.html_textures.is_empty() {
             return Vec::new();
         }
-        let num: Vec<(String, f32)> = self.program.var_names.iter().enumerate().map(|(i, n)| (n.clone(), self.state.vars[i])).collect();
-        let strs: Vec<(String, String)> = self.program.str_var_names.iter().enumerate().map(|(i, n)| (n.clone(), self.state.str_vars[i].clone())).collect();
+        let vars = crate::htmltex::PageVars {
+            num_names: &self.program.var_names,
+            num: &self.state.vars[..self.program.var_names.len()],
+            str_names: &self.program.str_var_names,
+            strs: &self.state.str_vars[..self.program.str_var_names.len()],
+        };
         // (the basic API only: no vehicle, no depot)
         let env = crate::vehicle_api::environment(&self.host.clock, &crate::vehicle_api::locale());
         let departures = (!self.host.html_departures.is_empty()).then(|| crate::vehicle_api::departures(&self.host.html_departures));
-        let out = crate::htmltex::drive_pages(&mut self.html_textures, &num, &strs, None, &env, None, departures.as_ref());
+        let out = crate::htmltex::drive_pages(&mut self.html_textures, &vars, None, &env, None, departures.as_ref());
         for key in out.departure_wants {
             self.host.want_departures(key);
         }

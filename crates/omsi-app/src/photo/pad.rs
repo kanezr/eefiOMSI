@@ -17,6 +17,9 @@ pub(crate) struct PadState {
     pub zoom: f32,
     /// The buttons held last frame (south, east, north, west).
     held: [bool; 4],
+    /// The pad the camera listens to, and when that was last settled (see `read`).
+    pad: Option<gilrs::GamepadId>,
+    chosen: Option<std::time::Instant>,
 }
 
 fn dead(x: f32) -> f32 {
@@ -29,13 +32,31 @@ impl PadState {
         self.moving
     }
 
-    /// The first gamepad's sticks and buttons this frame; the buttons pressed now as
+    /// The gamepad's sticks and buttons this frame (a wheel is none); the buttons pressed now as
     /// requests.
     pub(crate) fn read(&mut self, ctl: &crate::controllers::Controllers) -> Vec<Request> {
         let mut out = Vec::new();
         let Some(g) = ctl.devices.gilrs.as_ref() else { return out };
-        let Some((_, pad)) = g.gamepads().find(|(_, p)| p.is_connected() && p.mapping_source() != gilrs::MappingSource::None) else {
-            *self = PadState::default();
+        // A gamepad only - not a wheel, pedals or a joystick, nor anything that steers the bus,
+        // whatever layout the system gives it: the devices' own sorting (`Connected::gamepad`)
+        // and the controller setup say which. Settled every two seconds (listing the devices
+        // is not for every frame), so a pad plugged in meanwhile is found.
+        let now = std::time::Instant::now();
+        if self.chosen.is_none_or(|t| now.duration_since(t).as_secs_f32() > 2.0) {
+            self.chosen = Some(now);
+            let devices = ctl.connected();
+            self.pad = g
+                .gamepads()
+                .find(|(_, p)| {
+                    p.is_connected()
+                        && p.mapping_source() != gilrs::MappingSource::None
+                        && !ctl.steers(p.name())
+                        && devices.iter().any(|c| c.gamepad && crate::controllers::names_match(&c.name, p.name()))
+                })
+                .map(|(id, _)| id);
+        }
+        let Some(pad) = self.pad.and_then(|id| g.connected_gamepad(id)) else {
+            (self.moving, self.look, self.roll, self.zoom, self.held) = (Vec3::ZERO, [0.0; 2], 0.0, 0.0, [false; 4]);
             return out;
         };
         let trig = |b: Button| pad.button_data(b).map(|d| d.value()).unwrap_or(0.0);

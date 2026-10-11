@@ -77,7 +77,8 @@ impl TrafficSim {
                 }
             }
             if gone {
-                self.dormant.swap_remove(i);
+                // (the others keep their order: they wake in the order they went to sleep)
+                self.dormant.remove(i);
             } else {
                 i += 1;
             }
@@ -141,5 +142,63 @@ impl TrafficSim {
             self.next_id += 1;
             self.dormant.push(DormantCar { id, ty, kind: LaneKind::Street, lane, s, speed: 8.0, seed, scheme, walk: seed | 1 });
         }
+    }
+
+    /// Car `i` has gone out of range: it is taken off the road (`Removal::Dormant`, giving
+    /// back what it held) and drives on as a dormant car, the same car - its id, type, paint,
+    /// driver and the way it has got along - at the end of the registry, whose order is the
+    /// order they wake in. Its id.
+    pub fn put_to_sleep(&mut self, i: usize) -> u64 {
+        let c = self.take_off(i, Removal::Dormant);
+        let kind = self.net.lanes.get(c.state.lane).map_or(LaneKind::Street, |l| l.kind);
+        self.dormant.push(DormantCar {
+            id: c.id,
+            ty: c.vehicle.ty.clone(),
+            kind,
+            lane: c.state.lane,
+            s: c.state.s,
+            speed: c.state.speed.max(2.0),
+            seed: c.seed,
+            scheme: c.scheme,
+            walk: c.seed ^ c.id.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+        });
+        c.id
+    }
+
+    /// The dormant cars within `radius` of any of `centers`, as requests to wake, in the
+    /// order they went to sleep (`admission::decide_batch` decides them).
+    pub fn wake_requests(&self, centers: &[DVec3], radius: f64) -> Vec<admission::Request> {
+        self.dormant
+            .iter()
+            .enumerate()
+            .filter_map(|(k, d)| {
+                let l = self.net.lanes.get(d.lane)?;
+                let s = d.s.clamp(0.0, (l.length() - 0.1).max(0.0));
+                let (p, heading) = l.at(s);
+                centers.iter().any(|c| (p - *c).truncate().length() < radius).then_some(admission::Request {
+                    ticket: k as u64,
+                    class: admission::Class::Dormant,
+                    lane: d.lane,
+                    s,
+                    pos: p,
+                    heading: heading as f64,
+                    at: self.time,
+                    dormant: Some(d.id),
+                    tries: 0,
+                })
+            })
+            .collect()
+    }
+
+    /// Dormant car `id` leaves the registry (to wake up), the others keeping their order.
+    pub fn unregister_dormant(&mut self, id: u64) -> Option<DormantCar> {
+        let k = self.dormant.iter().position(|d| d.id == id)?;
+        Some(self.dormant.remove(k))
+    }
+
+    /// Put dormant car `d` back on the road as itself (`vehicle` made of its type): its id,
+    /// seed and paint, where it has got to, at about its speed. Its id.
+    pub fn wake(&mut self, d: DormantCar, vehicle: VehicleInstance) -> u64 {
+        self.place_car(vehicle, d.kind, d.lane, d.s, d.ty, d.seed, d.scheme, Some(d.id), Some(d.speed), None)
     }
 }

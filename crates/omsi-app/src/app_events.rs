@@ -63,8 +63,6 @@ impl ApplicationHandler for App {
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         self.gfx.surface = None;
         self.input.touch.drop_gpu();
-        self.quick.drop_gpu();
-        self.summary.drop_gpu();
         self.input_lost();
         self.save_last_situation();
         // (a phone's app in the background is often ended without `exiting`)
@@ -144,7 +142,11 @@ impl ApplicationHandler for App {
                 // releases go on, so that nothing held stays held)
                 if event.state == ElementState::Pressed {
                     if let PhysicalKey::Code(code) = event.physical_key {
-                        if self.plugin_typing_key(code, event.text.as_deref()) {
+                        if self.plugin_typing_key(code, event.text.as_deref()) || self.devtools_typing(code, event.text.as_deref()) {
+                            return;
+                        }
+                        // the game's panels: the field typed into, Esc closing the one on top
+                        if self.game_panel_key(code, event.text.as_deref()) {
                             return;
                         }
                     }
@@ -303,6 +305,11 @@ impl ApplicationHandler for App {
                     self.plugin_click(state == ElementState::Pressed);
                     return;
                 }
+                self.alt_tap_spoilt();
+                // ... and the game's own panels' (the quick menu, the forms, the editor)
+                if self.game_panel_click(state == ElementState::Pressed) {
+                    return;
+                }
                 if self.input.touch.enabled {
                     let p = glam::Vec2::new(self.input.cursor.0, self.input.cursor.1);
                     if state == ElementState::Pressed {
@@ -331,7 +338,12 @@ impl ApplicationHandler for App {
             }
             // a finger (a phone; see touch.rs)
             WindowEvent::Touch(t) => self.on_touch(event_loop, t),
-            WindowEvent::RedrawRequested => self.frame(event_loop),
+            // (while the renderer is still being built, the window's start goes on instead)
+            WindowEvent::RedrawRequested => {
+                if !self.drive_window_start(event_loop) {
+                    self.frame(event_loop);
+                }
+            }
             _ => {}
         }
     }
@@ -395,6 +407,12 @@ impl ApplicationHandler for App {
             return;
         }
         crate::game_lists::flush_settings(false);
+        // The window hidden until its first picture goes on from here: Windows sends no paint
+        // message to a hidden window, so a redraw asked for never came and it was never shown.
+        if self.starts_hidden() {
+            self.drive_window_start(event_loop);
+            return;
+        }
         if let Some(w) = &self.window {
             w.request_redraw();
         }
@@ -445,8 +463,6 @@ impl App {
 
     /// The mouse wheel (or a pinch of two fingers): `amount` notches, up positive.
     pub(crate) fn wheel(&mut self, amount: f32) {
-        // (a wheel in between makes the Alt a modifier again, not a tap)
-        self.quick.alt_armed = false;
         // the photo mode: the lens zooms, or its panel scrolls under the mouse
         if self.photo_on() {
             if self.shell.over_ui {
@@ -457,6 +473,9 @@ impl App {
             return;
         }
         if self.xr.vr_nav_edit.is_some() { self.vr_nav_scroll(amount); return; }
+        if self.devtools_wheel(amount) {
+            return;
+        }
         // over a mirror panel the wheel resizes it (Shift: wider or narrower)
         if let Some(size) = self.mirror_hud_size() {
             let shift =
@@ -501,15 +520,26 @@ impl App {
                 return;
             }
         }
-        // the trip summary's table scrolls with the wheel over it
-        if self.menus.game_menu.is_none() && self.summary_wheel(amount) {
-            return;
-        }
-        // The wheel over a switch of a scenery object turns it: the same
-        // <event>_drag the original fires while the mouse is dragged, with
-        // the notch as the movement (over a switch of the bus the wheel
-        // zooms the view, as everywhere else).
+        // The wheel over a cockpit switch turns it: the same <event>_drag the
+        // original fires while the mouse is dragged, with the notch as the
+        // movement. Knobs, the sun blind and the ignition key are far easier to
+        // set that way than by holding the button down and moving the mouse.
         if self.menus.hover.is_some() && self.view != "free" {
+            let ray = self.camera.as_ref().zip(self.gfx.surface.as_ref())
+                .map(|(cam, s)| self.cockpit_cursor_ray(cam, (s.config.width, s.config.height)));
+            if let (Some(p), Some((o, d, spread))) = (
+                self.player.as_mut(),
+                ray,
+            ) {
+                p.occlude_controls = self.view == "outside";
+                if p.pick(o, d, spread).is_some() {
+                    // a notch is worth a good push of the mouse: the scripts divide
+                    // the movement by 10 (the ignition key), 200 (the parking brake)
+                    // or 500 (the driver's window), so a few pixels would do nothing
+                    p.wheel(o, d, spread, -amount * 40.0);
+                    return;
+                }
+            }
             if let (Some(w), Some((o, d, spread))) = (self.world.as_ref(), self.cursor_ray_now()) {
                 let blocked = self.player.as_ref().and_then(|p| p.opaque_body_hit(o, d));
                 if let Some(hit) = w.scenery_object_hit(o, d, crate::input_script::SCENERY_OBJECT_REACH, spread).filter(|h| blocked.map_or(true, |t| t >= h.t)) {
@@ -541,12 +571,6 @@ impl App {
     /// The left mouse button (or a finger's tap) where the cursor is.
     pub(crate) fn left_button(&mut self, event_loop: &ActiveEventLoop, pressed: bool) {
         if let Some(edit) = self.xr.vr_nav_edit.as_mut() { edit.moving = pressed; return; }
-        // the quick menu's tiles and the trip summary's window are clicked
-        // first (a click anywhere else is the game's, as always; the game
-        // menu takes them while it is open)
-        if self.menus.game_menu.is_none() && (self.quick_menu_click(pressed) || self.summary_click(pressed)) {
-            return;
-        }
         // the pause menu (and the photo mode) of the launcher's toolkit take the clicks
         if self.shell_takes_mouse() {
             if pressed {
@@ -559,6 +583,10 @@ impl App {
                 ph.looking = pressed && !over;
             }
             self.sync_look_hold();
+            return;
+        }
+        // the developer tools' panel takes the clicks on it
+        if self.devtools_click(pressed) {
             return;
         }
         // a mirror panel is dragged with the left button (a release always ends a drag)

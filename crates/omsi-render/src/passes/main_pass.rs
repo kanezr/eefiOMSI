@@ -36,10 +36,12 @@ impl Renderer {
         // reject them first). The prepass still supplies AO; colour rebuilds its depth.
         // A depth-writing window in the colour pass must not replace the road receiver.
         let share_depth = prepass_on && single && self.ao.is_some() && !has_presurface && !f.puddles_wanted;
+        // (the colour only where the picture is drawn into it: not into the HDR targets)
+        let msaa_color = !single && !(f.masked_frame && self.hdr_targets.contains_key(&(width, height)));
         let targets = if share_depth {
             None
         } else {
-            Some(self.msaa_targets(width, height))
+            Some(self.msaa_targets(width, height, msaa_color))
         };
         // With multisampling the prepass above (single-sampled, for the ambient occlusion)
         // cannot be the main pass's depth: the enhanced picture lays its depth again into
@@ -72,7 +74,7 @@ impl Renderer {
             // colour out to white instead) keeps a real gap from ever reading as a rendering
             // bug of its own.
             let sky = if lighting.classic && !enhanced { lighting.sky_color.map(|v| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }) } else { lighting.sky_color };
-            let msaa_color = targets.as_ref().map(|t| &t.0);
+            let msaa_color = targets.as_ref().and_then(|t| t.0.as_ref());
             let depth_view: &wgpu::TextureView = match &targets {
                 Some(t) => &t.1,
                 None => &self.ao.as_ref().unwrap().depth_view,

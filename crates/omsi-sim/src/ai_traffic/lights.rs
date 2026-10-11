@@ -57,13 +57,24 @@ impl TrafficSim {
     /// The light program's verdict for car `i`: where it has to stop (distance from its
     /// origin), or None. A car that can stop comfortably stops at yellow; one too close
     /// drives on and remembers that it did, so the red that follows does not stop it in the
-    /// middle of the junction.
+    /// middle of the junction. That memory holds only for a car that is really on its way
+    /// through: still moving at `AMBER_KEEP_SPEED` or more, or rolling with its front over
+    /// the line. A car that crept up to the line in a queue stops (it can, and it is not in
+    /// anybody's way yet), and one standing with its nose over the line does not set off at
+    /// red. The first car of the queue, standing at the line when the light went green,
+    /// keeps going once it has moved off: a light that is green for a second a cycle
+    /// (Westcountry's lights on its invisible lanes) would otherwise let nobody through.
+    /// (Omsi.exe brakes for every yellow as for red and drives on once its front is on
+    /// the light's path; the comfortable stop at yellow is our own.)
     pub fn light_stop(&mut self, i: usize, way: &[(usize, f32)]) -> Option<f32> {
         let car = &self.cars[i];
         let st = &car.state;
         let v = st.speed;
         let mut stop = None;
         let mut amber = car.amber;
+        // (it stood at this light's line when it went green: it was the first in the queue)
+        let mut started = car.amber_start;
+        let waited_here = car.light_hold;
         for (k, &(_, d)) in way.iter().enumerate().skip(1) {
             if d > 150.0 {
                 break;
@@ -77,6 +88,7 @@ impl TrafficSim {
             let gap = d - st.front;
             let comfortable = v * v / (2.0 * st.decel * 1.4) + 1.0;
             let possible = v * v / (2.0 * MAX_BRAKE * 0.8);
+            let on_its_way = amber_holds(v, gap) || (started && amber == Some((c, li)) && v > 0.3);
             let go = match TrafficLightController::aspect(ctl.state(li)) {
                 Aspect::Green | Aspect::Dark => {
                     // at the line when it showed green: that car goes, whatever comes next
@@ -84,12 +96,15 @@ impl TrafficSim {
                     // its invisible lanes - let nobody through: the first car was still
                     // taking in the green when it went red again, for ever)
                     if gap < 3.0 {
+                        if amber != Some((c, li)) {
+                            started = waited_here;
+                        }
                         amber = Some((c, li));
                     }
                     true
                 }
                 Aspect::Yellow | Aspect::GreenYellow => {
-                    if amber == Some((c, li)) || gap < comfortable {
+                    if on_its_way && (amber == Some((c, li)) || gap < comfortable) {
                         amber = Some((c, li));
                         true
                     } else {
@@ -97,10 +112,13 @@ impl TrafficSim {
                     }
                 }
                 // decided to go on yellow and too close to stop now, or past stopping at all
+                // (a car that stands cannot fail to stop: with its nose over the line it
+                // stays where it is)
                 Aspect::Red | Aspect::RedYellow => {
-                    let go = (amber == Some((c, li)) && gap < comfortable) || gap < possible - 0.5;
+                    let go = (amber == Some((c, li)) && on_its_way && gap < comfortable) || (v > 1.0 && gap < possible - 0.5);
                     if !go && amber == Some((c, li)) {
                         amber = None;
+                        started = false;
                     }
                     go
                 }
@@ -121,6 +139,7 @@ impl TrafficSim {
             }
         }
         self.cars[i].amber = amber;
+        self.cars[i].amber_start = started && amber.is_some();
         stop
     }
 
@@ -368,7 +387,26 @@ pub fn reset_light_runtime(ctl: &mut TrafficLightController, day_time: f64) {
     *ctl = fresh;
 }
 
-/// A declared entry signal remains authoritative without scenery-object identity.
+/// A car keeps going through a light that turned yellow or red while it was at the line
+/// only while it moves at this speed or more (m/s), or rolls on with its front over the line.
+pub const AMBER_KEEP_SPEED: f32 = 3.0;
+
+/// Whether a car at `v` m/s, its front `gap` m before the line (negative: over it), is on
+/// its way through the light rather than standing or creeping up to it.
+pub fn amber_holds(v: f32, gap: f32) -> bool {
+    v >= AMBER_KEEP_SPEED || (gap < 0.0 && v > 0.3)
+}
+
+/// The light that holds a car at the start of `way[k]`.
+///
+/// A declared entry signal remains authoritative without scenery-object identity. Inside a
+/// crossing object a light the car has already gone through on its way there does not hold
+/// it again, nor does the light of another approach on a path its turn joins (a car turning
+/// right went on green and then stopped as it came round the corner, at the light of the
+/// cross traffic - a stop line in mid-junction nobody sees). Another light of the object
+/// on the car's own movement does hold: a second stop line of a turn, the one after a
+/// signalled footpath, which only the object's own paths lead to (the BRT lanes of Berlin
+/// ran through their second red).
 pub fn entry_light(net: &Network, way: &[(usize, f32)], k: usize) -> Option<(usize, usize)> {
     let l = way[k].0;
     let light = net.lanes[l].traffic_light?;
@@ -381,12 +419,14 @@ pub fn entry_light(net: &Network, way: &[(usize, f32)], k: usize) -> Option<(usi
     let Some(here) = object(l) else {
         return Some(light);
     };
+    // (only the paths of this object lead onto it: it is no other approach's entry)
+    let inner = net.prev.get(l).is_some_and(|p| !p.is_empty() && p.iter().all(|&x| object(x) == Some(here)));
     for &(p, _) in way[..k].iter().rev() {
         if object(p) != Some(here) {
             break;
         }
-        if net.lanes[p].traffic_light.is_some() {
-            return None;
+        if let Some(passed) = net.lanes[p].traffic_light {
+            return (passed != light && inner).then_some(light);
         }
     }
     Some(light)

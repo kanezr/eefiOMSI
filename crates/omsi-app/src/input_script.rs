@@ -3,7 +3,7 @@
 use super::*;
 
 // (moved to `app_impl` with the methods they serve; kept reachable at their old path)
-pub(crate) use crate::app_impl::{cab_look_yaw, chase_orbit_step, ease_look, gate_gear_var, look_key_of, on_server, reset_blend, swap_view_look};
+pub(crate) use crate::app_impl::{cab_look_yaw, chase_orbit_step, ease_look, gate_gear_var, look_key_is, look_key_of, on_server, reset_blend, swap_view_look};
 
 
 /// Global actions a controller button should send to the game instead of to the bus script.
@@ -29,6 +29,8 @@ pub(crate) const SCENERY_OBJECT_REACH: f32 = 50.0;
 impl App {
     /// A key of the window, or of an `OMSI_INPUT` script.
     pub(crate) fn on_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, pressed: bool, repeat: bool) {
+        // (Alt tapped alone opens OMSI 2's quick menu: `game_panels`)
+        self.alt_tap(code, pressed, repeat);
         // the photo mode has all the keys
         if self.photo_on() {
             self.photo_key(code, pressed, repeat);
@@ -36,6 +38,10 @@ impl App {
         }
         if self.xr.vr_nav_edit.is_some() {
             self.vr_nav_edit_key(code, pressed, repeat);
+            return;
+        }
+        // the developer tools: Ctrl+Shift+D, and their text fields' keys
+        if self.devtools_key(code, pressed, repeat) {
             return;
         }
         // The mirror panels (see mirror_hud.rs): Ctrl+M shows or hides them, Ctrl+Shift+M
@@ -51,6 +57,10 @@ impl App {
             }
             // and gives the mouse back to the bus when the plugins' panels have it
             if self.release_plugin_focus() {
+                return;
+            }
+            // and closes the game's panel on top (the quick menu, a form, the editor)
+            if self.close_game_panel() {
                 return;
             }
         }
@@ -70,14 +80,6 @@ impl App {
                 self.input.keys.insert(code);
             } else if !pressed {
                 self.input.keys.remove(&code);
-            }
-            // the quick menu (Alt tapped alone) and the trip summary's window
-            // take their keys before the game's own handling of them
-            if self.quick_menu_key(code, pressed, repeat) {
-                return;
-            }
-            if self.summary_key(code, pressed, repeat) {
-                return;
             }
             // Alt+Enter: full screen on and off
             if pressed && !repeat && matches!(code, KeyCode::Enter | KeyCode::NumpadEnter) && (self.input.keys.contains(&KeyCode::AltLeft) || self.input.keys.contains(&KeyCode::AltRight)) {
@@ -877,9 +879,17 @@ impl App {
                 // `click down` / `click up` only press or let go (a drag in between)
                 "click" => {
                     let (press, release) = (arg != "up", arg != "down");
-                    if self.menus.placing.is_some() && self.menus.game_menu.is_none() {
+                    if self.game_panels_mouse() {
+                        // (on the game's panels as the window's button)
+                        if press {
+                            self.game_panel_click(true);
+                        }
+                        if release {
+                            self.game_panel_click(false);
+                        }
+                    } else if self.menus.placing.is_some() && self.menus.game_menu.is_none() {
                         self.placing_click();
-                    } else if self.menus.game_menu.is_some() || self.shell_takes_mouse() {
+                    } else if self.menus.game_menu.is_some() || self.shell_takes_mouse() || (self.devtools.is_some() && self.shell.over_ui) {
                         // (on the menu as the window's button: its lines, its arrows)
                         if press {
                             self.left_button(event_loop, true);
@@ -1036,6 +1046,8 @@ impl App {
                     let riders = self.session.humans.as_ref().map(|h| (h.people_in(crate::humans::BusId::Player), self.session.placed.iter().map(|q| h.people_in(crate::humans::BusId::Ai(crate::humans::placed_bus_id(q.uid)))).collect::<Vec<_>>()));
                     log::info!("input script: menu {arg}: player {:?}, on foot {:?}, placed {}, people in the bus / the placed ones {:?}", self.player.as_ref().map(|p| p.vehicle.position), self.session.on_foot.as_ref().map(|f| f.pos), self.session.placed.len(), riders);
                 }
+                // `devtools <command>`: the developer tools (see `App::devtools_command`)
+                "devtools" => self.devtools_command(cmd.split_once(' ').map(|x| x.1.trim()).unwrap_or("")),
                 // `shot <file>`: the window's own view into a PNG, drawn from the scene the
                 // window is showing (the only way to see what the window path renders)
                 "shot" => self.perf.shot = Some((PathBuf::from(arg), true)),

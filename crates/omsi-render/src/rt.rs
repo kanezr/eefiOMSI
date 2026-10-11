@@ -48,6 +48,52 @@ struct BlasKey {
     glass: u64,
 }
 
+/// A `BlasKey` made of borrowed buffers, to look one up without cloning them (hashed the
+/// same: the same fields in the same order).
+#[derive(Hash)]
+struct BlasKeyRef<'a> {
+    vb: &'a wgpu::Buffer,
+    ib: &'a wgpu::Buffer,
+    gen: u64,
+    first_vertex: u32,
+    first_index: u32,
+    vertex_count: u32,
+    solid: u64,
+    cut: u64,
+    glass: u64,
+}
+
+impl hashbrown::Equivalent<BlasKey> for BlasKeyRef<'_> {
+    fn equivalent(&self, k: &BlasKey) -> bool {
+        *self.vb == k.vb
+            && *self.ib == k.ib
+            && (self.gen, self.first_vertex, self.first_index, self.vertex_count, self.solid, self.cut, self.glass)
+                == (k.gen, k.first_vertex, k.first_index, k.vertex_count, k.solid, k.cut, k.glass)
+    }
+}
+
+impl BlasKeyRef<'_> {
+    fn to_key(&self) -> BlasKey {
+        BlasKey {
+            vb: self.vb.clone(),
+            ib: self.ib.clone(),
+            gen: self.gen,
+            first_vertex: self.first_vertex,
+            first_index: self.first_index,
+            vertex_count: self.vertex_count,
+            solid: self.solid,
+            cut: self.cut,
+            glass: self.glass,
+        }
+    }
+}
+
+/// What a kept bind group was made with: `RayTracer::bind_gen` and the textures it names.
+type RtBindKey = (u64, Vec<wgpu::TextureView>);
+
+/// A top-level instance as last built: its structure, transform, record base and mask.
+type TlasItem = (wgpu::Blas, [f32; 12], u32, u8);
+
 struct BlasEntry {
     blas: wgpu::Blas,
     sizes: Vec<wgpu::BlasTriangleGeometrySizeDescriptor>,
@@ -100,12 +146,23 @@ pub(super) struct Targets {
 }
 
 pub(super) struct RayTracer {
-    blas: HashMap<BlasKey, BlasEntry>,
+    blas: hashbrown::HashMap<BlasKey, BlasEntry>,
     /// Meshes whose vertices changed (skinned people): their structures are built again.
     dirty: std::cell::RefCell<std::collections::HashSet<MeshId>>,
     tlas: wgpu::Tlas,
     tlas_cap: u32,
     tlas_used: usize,
+    /// The instances the top level was last built with (`tlas_built`): a frame with the same
+    /// ones, and no structure built again, keeps it as it is.
+    tlas_last: Vec<TlasItem>,
+    tlas_built: bool,
+    /// What the records buffer holds.
+    records_sent: Vec<Record>,
+    /// Bumped whenever a buffer or the top level the bind groups name is made anew; the
+    /// lighting's and the reflections' bind groups are kept while it and their textures stay.
+    bind_gen: u64,
+    trace_groups: Option<(RtBindKey, [wgpu::BindGroup; 2])>,
+    refl_groups: Option<(RtBindKey, [wgpu::BindGroup; 2])>,
     records: Vec<Record>,
     records_buf: wgpu::Buffer,
     tex_avg: wgpu::Buffer,
@@ -322,11 +379,17 @@ impl RayTracer {
         });
         let tlas_cap = 8192;
         RayTracer {
-            blas: HashMap::new(),
+            blas: hashbrown::HashMap::new(),
             dirty: Default::default(),
             tlas: Self::make_tlas(device, tlas_cap),
             tlas_cap,
             tlas_used: 0,
+            tlas_last: Vec::new(),
+            tlas_built: false,
+            records_sent: Vec::new(),
+            bind_gen: 0,
+            trace_groups: None,
+            refl_groups: None,
             records: Vec::new(),
             records_buf: Self::make_records(device, 1 << 16),
             tex_avg: Self::make_avg(device, 4096, avg_stride),
@@ -458,8 +521,17 @@ impl Renderer {
         }
         rt.to_build.clear();
         rt.records.clear();
-        let mut chosen: Vec<(BlasKey, [f32; 12], u32, u8)> = Vec::new();
-        for inst in &scene.instances {
+        let mut chosen: Vec<TlasItem> = Vec::new();
+        // The blocks of instances wholly out of reach, passed by as the culling does (a
+        // block's sphere holds each of its instances' spheres; a metre to spare for the
+        // rounding): the whole map's instances were measured one by one every frame.
+        let far: Vec<bool> = Self::cull_blocks(scene)
+            .map(|b| b.iter().map(|&(c, r)| (c - cam).length() - r > RT_RANGE + 1.0).collect())
+            .unwrap_or_default();
+        for (k, inst) in scene.instances.iter().enumerate() {
+            if far.get(k / CULL_BLOCK).copied().unwrap_or(false) {
+                continue;
+            }
             // (a decal - a surface object lying on the road - is no geometry for the rays,
             // but what such an object raises and casts a shadow from is: the Spandau depot's
             // halls, one object with its yard, lost their shadow close up in Enhanced+, #1783)
@@ -512,9 +584,9 @@ impl Renderer {
                 if bits == 0 || mask == 0 {
                     continue;
                 }
-                let key = BlasKey {
-                    vb: m.vertex_buf.clone(),
-                    ib: m.index_buf.clone(),
+                let key = BlasKeyRef {
+                    vb: &m.vertex_buf,
+                    ib: &m.index_buf,
                     gen: m.gen,
                     first_vertex: m.base_vertex.max(0) as u32,
                     first_index: m.first_index,
@@ -550,7 +622,7 @@ impl Renderer {
                             &wgpu::CreateBlasDescriptor { label: None, flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE, update_mode: wgpu::AccelerationStructureUpdateMode::Build },
                             wgpu::BlasGeometrySizeDescriptors::Triangles { descriptors: sizes.clone() },
                         );
-                        rt.blas.entry(key.clone()).or_insert(BlasEntry { blas, sizes, spans, mesh: inst.mesh, built: false, used: frame })
+                        rt.blas.entry(key.to_key()).or_insert(BlasEntry { blas, sizes, spans, mesh: inst.mesh, built: false, used: frame })
                     }
                 };
                 entry.used = frame;
@@ -559,7 +631,7 @@ impl Renderer {
                         continue;
                     }
                     entry.built = true;
-                    rt.to_build.push(key.clone());
+                    rt.to_build.push(key.to_key());
                 }
                 // the geometries' records, in the structure's order
                 let base = rt.records.len() as u32;
@@ -588,7 +660,7 @@ impl Renderer {
                     }
                     rt.records.push(Record { tex, trans, flags, pad: 0, color: mat.color });
                 }
-                chosen.push((key, rows, base, mask));
+                chosen.push((entry.blas.clone(), rows, base, mask));
             }
         }
         // the top level: grown when the instances outnumber it
@@ -596,30 +668,48 @@ impl Renderer {
             rt.tlas_cap = (chosen.len() as u32).next_power_of_two();
             rt.tlas = RayTracer::make_tlas(&self.device, rt.tlas_cap);
             rt.tlas_used = 0;
+            rt.tlas_built = false;
+            rt.bind_gen += 1;
         }
-        for (i, (key, rows, base, mask)) in chosen.iter().enumerate() {
-            let blas = &rt.blas[key].blas;
-            rt.tlas[i] = Some(wgpu::TlasInstance::new(blas, *rows, *base, *mask));
+        // (the same instances where they were, and no structure built again: the top level
+        // is kept - a bus standing at a stop with the traffic parked round it)
+        let same = |a: &TlasItem, b: &TlasItem| a.0 == b.0 && a.1.map(f32::to_bits) == b.1.map(f32::to_bits) && a.2 == b.2 && a.3 == b.3;
+        let unchanged = rt.tlas_built
+            && rt.to_build.is_empty()
+            && chosen.len() == rt.tlas_last.len()
+            && chosen.iter().zip(&rt.tlas_last).all(|(a, b)| same(a, b));
+        if !unchanged {
+            for (i, (blas, rows, base, mask)) in chosen.iter().enumerate() {
+                rt.tlas[i] = Some(wgpu::TlasInstance::new(blas, *rows, *base, *mask));
+            }
+            for i in chosen.len()..rt.tlas_used {
+                rt.tlas[i] = None;
+            }
+            rt.tlas_used = chosen.len();
+            rt.tlas_built = false;
         }
-        for i in chosen.len()..rt.tlas_used {
-            rt.tlas[i] = None;
-        }
-        rt.tlas_used = chosen.len();
         rt.instances = chosen.len();
-        // the records, in a buffer grown as needed
+        rt.tlas_last = chosen;
+        // the records, in a buffer grown as needed; only from the first that changed to the last
         let bytes: &[u8] = bytemuck::cast_slice(&rt.records);
         if bytes.len() as u64 > rt.records_buf.size() {
             rt.records_buf = RayTracer::make_records(&self.device, (rt.records.len() as u64).next_power_of_two());
+            rt.records_sent.clear();
+            rt.bind_gen += 1;
         }
-        if !bytes.is_empty() {
-            self.queue.write_buffer(&rt.records_buf, 0, bytes);
+        let differs = |k: &usize| rt.records_sent.get(*k).is_none_or(|r| bytemuck::bytes_of(r) != bytemuck::bytes_of(&rt.records[*k]));
+        if let Some(first) = (0..rt.records.len()).find(differs) {
+            let last = (first..rt.records.len()).rev().find(differs).unwrap_or(first);
+            let unit = std::mem::size_of::<Record>();
+            self.queue.write_buffer(&rt.records_buf, (first * unit) as u64, &bytes[first * unit..(last + 1) * unit]);
         }
+        rt.records_sent.clone_from(&rt.records);
         // structures nobody used for a while are let go
         if frame % 240 == 0 {
             rt.blas.retain(|_, e| frame - e.used < 1200);
         }
         if omsi_cfg::flags::OMSI_DEBUG_RT.is_set() && frame % 30 == 1 {
-            log::info!("ray tracing: {} instances, {} geometries, {} structures ({} built this frame)", chosen.len(), rt.records.len(), rt.blas.len(), rt.to_build.len());
+            log::info!("ray tracing: {} instances, {} geometries, {} structures ({} built this frame)", rt.instances, rt.records.len(), rt.blas.len(), rt.to_build.len());
         }
         // --- the parameters
         let sun = lighting.sun_dir.normalize_or_zero();
@@ -673,6 +763,7 @@ impl Renderer {
             let bigger = RayTracer::make_avg(&self.device, (scene.textures.len() as u64).next_power_of_two(), rt.avg_stride);
             encoder.copy_buffer_to_buffer(&rt.tex_avg, 0, &bigger, 0, rt.tex_avg.size());
             rt.tex_avg = bigger;
+            rt.bind_gen += 1;
         }
         let mut wanted: Vec<usize> = Vec::new();
         for r in &rt.records {
@@ -729,7 +820,7 @@ impl Renderer {
         let Some(rt) = self.rt.as_mut() else { return };
         let Some(depth) = self.ao.as_ref().map(|a| &a.depth_view) else { return };
         let Some(t) = rt.targets.as_ref() else { return };
-        {
+        if !rt.to_build.is_empty() || !rt.tlas_built {
             let entries: Vec<wgpu::BlasBuildEntry> = rt
                 .to_build
                 .iter()
@@ -757,6 +848,7 @@ impl Renderer {
                 })
                 .collect();
             encoder.build_acceleration_structures(entries.iter(), std::iter::once(&rt.tlas));
+            rt.tlas_built = true;
         }
         let group = |inp: &wgpu::TextureView, raw: &wgpu::TextureView, out: &wgpu::TextureView| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -776,10 +868,13 @@ impl Renderer {
             })
         };
         // (each pass's input never is its output)
-        let trace_bg = group(&t.tmp, &t.tmp, &t.raw);
-        let denoise_bg = group(&t.raw, &t.tmp, &t.out);
+        let key: RtBindKey = (rt.bind_gen, vec![depth.clone(), t.tmp.clone(), t.raw.clone(), t.out.clone()]);
+        if rt.trace_groups.as_ref().is_none_or(|g| g.0 != key) {
+            rt.trace_groups = Some((key, [group(&t.tmp, &t.tmp, &t.raw), group(&t.raw, &t.tmp, &t.out)]));
+        }
+        let [trace_bg, denoise_bg] = &rt.trace_groups.as_ref().expect("made above").1;
         let (gx, gy) = (t.size.0.div_ceil(8), t.size.1.div_ceil(8));
-        for (label, pipe, bg) in [("rt trace", &rt.trace, &trace_bg), ("rt denoise", &rt.temporal, &denoise_bg)] {
+        for (label, pipe, bg) in [("rt trace", &rt.trace, trace_bg), ("rt denoise", &rt.temporal, denoise_bg)] {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(label),
                 timestamp_writes: pass_timer(queries, timed, label).map(|t| wgpu::ComputePassTimestampWrites {
@@ -843,8 +938,11 @@ impl Renderer {
             })
         };
         // (no pass's output is among its inputs)
-        let trace_bg = group(raw, &hdr.view, dummy);
-        let composite_bg = group(&rt.spare, dummy, raw);
+        let key: RtBindKey = (rt.bind_gen, vec![ao.depth_view.clone(), gbuf[0].1.clone(), gbuf[1].1.clone(), raw.clone(), hdr.view.clone(), probe.view.clone(), dummy.clone()]);
+        if rt.refl_groups.as_ref().is_none_or(|g| g.0 != key) {
+            rt.refl_groups = Some((key, [group(raw, &hdr.view, dummy), group(&rt.spare, dummy, raw)]));
+        }
+        let [trace_bg, composite_bg] = &rt.refl_groups.as_ref().expect("made above").1;
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt reflections"),
@@ -856,7 +954,7 @@ impl Renderer {
             });
             let (gx, gy) = (half.0.div_ceil(8), half.1.div_ceil(8));
             pass.set_pipeline(&rt.reflect);
-            pass.set_bind_group(0, &trace_bg, &[]);
+            pass.set_bind_group(0, trace_bg, &[]);
             pass.dispatch_workgroups(gx, gy, 1);
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -873,7 +971,7 @@ impl Renderer {
             multiview_mask: None,
         });
         pass.set_pipeline(&rt.composite);
-        pass.set_bind_group(0, &composite_bg, &[]);
+        pass.set_bind_group(0, composite_bg, &[]);
         pass.draw(0..3, 0..1);
     }
 }

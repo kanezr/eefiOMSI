@@ -1246,6 +1246,54 @@ impl App {
     }
 }
 
+/// How far in from the bus's walls (m) the eyes have to be to hear the cab alone: about the
+/// stride from the doorway's step onto the floor.
+const CAB_SOUND_DEPTH: f32 = 0.4;
+
+/// Seconds the sound takes to follow the eyes in or out (a camera eased onto the head can
+/// still jump a little).
+const CAB_SOUND_EASE: f32 = 0.12;
+
+/// How far `eye` is inside the bodies of `v` - the front part's `[boundingbox]` and its
+/// coupled parts' -, 0 at or outside the walls, 1 from `CAB_SOUND_DEPTH` in.
+fn inside_amount(v: &omsi_sim::VehicleInstance, eye: DVec3) -> f32 {
+    let depth = |bb: Option<[f32; 6]>, xf: glam::Mat4| -> f32 {
+        let Some(bb) = bb else { return f32::MIN };
+        let at = xf.inverse().transform_point3(eye.as_vec3());
+        let d = at - glam::Vec3::new(bb[3], bb[4], bb[5]);
+        (bb[0] * 0.5 - d.x.abs()).min(bb[1] * 0.5 - d.y.abs()).min(bb[2] * 0.5 - d.z.abs())
+    };
+    let mut deepest = depth(v.ty.def.bounding_box, v.world_transform());
+    for t in &v.trailers {
+        deepest = deepest.max(depth(t.ty.def.bounding_box, t.world_transform()));
+    }
+    (deepest / CAB_SOUND_DEPTH).clamp(0.0, 1.0)
+}
+
+impl App {
+    /// How far the walker's eyes are inside the player's own bus, for its sound and the
+    /// traffic's (`omsi_audio::soundset::set_cab_amount`): stepping in through a door the
+    /// street fades into the cab by how far in the eyes are, instead of switching at the
+    /// moment the feet are on the floor. 1 on a seat of it; None while nobody walks about
+    /// it (in the driver's seat, in the free camera, in another bus).
+    pub(crate) fn foot_sound_amount(&mut self, dt: f32) -> Option<f32> {
+        let want = match (self.view.as_str(), self.player.as_ref(), self.session.on_foot.as_ref(), self.camera.as_ref()) {
+            ("foot", Some(p), Some(f), Some(cam)) => match (f.seat, f.inside) {
+                (Some((BusId::Player, _)), _) => Some(1.0),
+                (Some(_), _) | (None, Some((BusId::Ai(_), _))) => None,
+                _ => Some(inside_amount(&p.vehicle, cam.position)),
+            },
+            _ => None,
+        };
+        let now = want.map(|w| match self.sound.foot_in {
+            Some(was) => was + (w - was) * (1.0 - (-dt.max(0.0) / CAB_SOUND_EASE).exp()),
+            None => w,
+        });
+        self.sound.foot_in = now;
+        now
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1274,6 +1322,39 @@ mod tests {
             kneel: false,
             crouch: 0.0,
         }
+    }
+
+    /// The bus's sound fades in as the eyes come in through its wall, inside its box (and
+    /// a coupled part's), and not at all from outside.
+    #[test]
+    fn the_cab_is_heard_by_how_far_in_the_eyes_are() {
+        let mut def = omsi_vehicle::Vehicle::default();
+        def.bounding_box = Some([2.5, 12.0, 3.0, 0.0, -0.5, 1.5]);
+        let ty = Arc::new(omsi_sim::VehicleType {
+            def,
+            model: Default::default(),
+            model_dir: Default::default(),
+            program: Arc::new(omsi_script::compile(&Default::default())),
+            meshes: Vec::new(),
+            paint_schemes: Vec::new(),
+            texchanges: Vec::new(),
+            wheel_meshes: Vec::new(),
+            suspension_axles: Vec::new(),
+            missing_packs: Vec::new(),
+            mesh_bounds: Vec::new(),
+            mesh_boxes: Vec::new(),
+        });
+        let mut v = omsi_sim::VehicleInstance::new(ty, omsi_sim::VehicleHost::new(Default::default()));
+        v.position = DVec3::new(1200.0, -300.0, 40.0);
+        v.heading = 30.0;
+        let bb = v.ty.def.bounding_box.expect("a bounding box");
+        let xf = v.world_transform();
+        let at = |x: f32, y: f32| xf.transform_point3(glam::Vec3::new(x, y, bb[5])).as_dvec3();
+        let wall = bb[3] + bb[0] * 0.5;
+        assert_eq!(super::inside_amount(&v, at(wall + 1.0, bb[4])), 0.0, "outside");
+        assert_eq!(super::inside_amount(&v, at(bb[3], bb[4])), 1.0, "the aisle");
+        let half = super::inside_amount(&v, at(wall - super::CAB_SOUND_DEPTH * 0.5, bb[4]));
+        assert!((half - 0.5).abs() < 0.02, "{half}");
     }
 
     /// C kneels: the eyes go down to about a metre over a moment (a picture from below,

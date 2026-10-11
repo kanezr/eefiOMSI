@@ -170,58 +170,62 @@ impl PeopleSim {
         cars: &[(DVec2, DVec2, f64)],
         remove: &mut Vec<usize>,
     ) -> Want {
-        let state = self.people[i].state.clone();
+        // (the state is looked at in place: it was copied, walk and all, for everybody on
+        // foot every frame; the walk is taken out only while it is worked on)
+        let strolling = matches!(self.people[i].state, State::Strolling(_));
+        let standing = matches!(self.people[i].state, State::Standing);
         let pos2 = self.people[i].position.truncate();
         // somebody walking on towards ground that is not loaded goes
         if self.people[i].place == Place::Ground && self.people[i].vel.length_squared() > 1e-4 && !world.has_ground(pos2.x, pos2.y) {
             remove.push(i);
             return Want::stand(None, Activity::Stand);
         }
-        match state {
-            State::Strolling(mut walk) => {
-                let seen = self.seen(self.people[i].position);
-                // (a stroller goes only once well out of everybody's range and out of sight)
-                let far = self.far_from_players(self.people[i].position, STROLL_RADIUS * 2.0);
-                let Some(net) = net else {
-                    remove.push(i);
-                    return Want::stand(None, Activity::Stand);
-                };
-                if far && !seen {
-                    remove.push(i);
-                    return Want::stand(None, Activity::Stand);
-                }
-                let w = self.walk_want(i, &mut walk, net, traffic, cars, dt);
+        if strolling {
+            let seen = self.seen(self.people[i].position);
+            // (a stroller goes only once well out of everybody's range and out of sight)
+            let far = self.far_from_players(self.people[i].position, STROLL_RADIUS * 2.0);
+            let Some(net) = net else {
+                remove.push(i);
+                return Want::stand(None, Activity::Stand);
+            };
+            if far && !seen {
+                remove.push(i);
+                return Want::stand(None, Activity::Stand);
+            }
+            let State::Strolling(w) = &mut self.people[i].state else { unreachable!() };
+            let rest = PedWalk { legs: Vec::new(), leg: w.leg, s: w.s, roam: w.roam, side: w.side, held: w.held };
+            let mut walk = std::mem::replace(w, rest);
+            let w = self.walk_want(i, &mut walk, net, traffic, cars, dt);
+            self.people[i].state = State::Strolling(walk);
+            w
+        } else if standing {
+            // A person may get off before the stop has a pavement lane, or
+            // the lane may arrive later with a streamed tile. Do not leave
+            // them rooted forever: recover onto the closest usable path.
+            // (looked for once a second: nobody waits for it, and somebody with no
+            // lane in reach looked every frame)
+            let look = self.people[i].t_state % 1.0 < dt.max(1e-3);
+            if let Some((net, leg)) = net.filter(|_| look).and_then(|net| {
+                self.ped.as_ref()
+                    .and_then(|ped| ped.nearest(net, self.people[i].position, 16.0))
+                    .filter(|&(lane, at, _)| {
+                        let (target, _) = net.lanes[lane].at(at);
+                        net.lanes[lane].length() > 0.35
+                            && !crosses_street(net, self.people[i].position.truncate(), target.truncate())
+                    })
+                    .map(|(lane, at, _)| (net, Leg { lane, a: at, b: at }))
+            }) {
+                let mut walk = PedWalk::new(vec![leg], true, 0.0);
+                let want = self.walk_want(i, &mut walk, net, traffic, cars, dt);
                 self.people[i].state = State::Strolling(walk);
-                w
+                return want;
             }
-            State::Standing => {
-                // A person may get off before the stop has a pavement lane, or
-                // the lane may arrive later with a streamed tile. Do not leave
-                // them rooted forever: recover onto the closest usable path.
-                // (looked for once a second: nobody waits for it, and somebody with no
-                // lane in reach looked every frame)
-                let look = self.people[i].t_state % 1.0 < dt.max(1e-3);
-                if let Some((net, leg)) = net.filter(|_| look).and_then(|net| {
-                    self.ped.as_ref()
-                        .and_then(|ped| ped.nearest(net, self.people[i].position, 16.0))
-                        .filter(|&(lane, at, _)| {
-                            let (target, _) = net.lanes[lane].at(at);
-                            net.lanes[lane].length() > 0.35
-                                && !crosses_street(net, self.people[i].position.truncate(), target.truncate())
-                        })
-                        .map(|(lane, at, _)| (net, Leg { lane, a: at, b: at }))
-                }) {
-                    let mut walk = PedWalk::new(vec![leg], true, 0.0);
-                    let want = self.walk_want(i, &mut walk, net, traffic, cars, dt);
-                    self.people[i].state = State::Strolling(walk);
-                    return want;
-                }
-                if !self.seen(self.people[i].position) && self.far_from_players(self.people[i].position, STROLL_RADIUS) {
-                    remove.push(i);
-                }
-                Want::stand(None, Activity::Stand)
+            if !self.seen(self.people[i].position) && self.far_from_players(self.people[i].position, STROLL_RADIUS) {
+                remove.push(i);
             }
-            _ => Want::stand(None, Activity::Stand),
+            Want::stand(None, Activity::Stand)
+        } else {
+            Want::stand(None, Activity::Stand)
         }
     }
 

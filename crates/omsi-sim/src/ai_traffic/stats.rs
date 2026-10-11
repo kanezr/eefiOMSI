@@ -60,6 +60,13 @@ pub struct Counts {
     /// Cars creeping at walking pace that stopped short again (an emergency braking below
     /// `BRAKE_FROM`): hesitation at a line.
     pub stop_jerks: u64,
+    /// Emergencies of the collision-prevention channel (`AiState::command`: braking harder
+    /// than the driver's ordinary maximum was needed), steps of a body that would have
+    /// driven into the scenery and were taken back, and stops for the scenery ahead
+    /// (`ai_traffic::scenery`).
+    pub emergency_commands: u64,
+    pub rejected_steps: u64,
+    pub scenery_stops: u64,
     /// Ticks, and the seconds their planning took (who is where, the lights, every car's
     /// plan: `TrafficSim::tick_split` without the bodies and scripts).
     pub ticks: u64,
@@ -92,6 +99,9 @@ impl Counts {
         self.overlaps += o.overlaps;
         self.close_calls += o.close_calls;
         self.stop_jerks += o.stop_jerks;
+        self.emergency_commands += o.emergency_commands;
+        self.rejected_steps += o.rejected_steps;
+        self.scenery_stops += o.scenery_stops;
         self.ticks += o.ticks;
         self.plan_secs += o.plan_secs;
         for (k, v) in &o.heads {
@@ -169,7 +179,7 @@ impl TrafficStats {
         all.add(&self.window);
         let mins = (self.t / 60.0).max(1e-3) as f64;
         format!(
-            "traffic stats over {:.1} min: {:.1} cars ({:.1} given up), mean {:.1} km/h ({:.1} km/h moving), stood >30 s {:.2} >60 s {:.2} >120 s {:.2} (most {}), in waits-for cycles {:.2} (most {}), {:.1} junction entries/min, {:.1} km/min, red runs {}, emergency brakes {}, stop jerks {}, gave up {}, overlaps {}, close calls {}, planning {:.3} ms/tick; long waits headed by {}",
+            "traffic stats over {:.1} min: {:.1} cars ({:.1} given up), mean {:.1} km/h ({:.1} km/h moving), stood >30 s {:.2} >60 s {:.2} >120 s {:.2} (most {}), in waits-for cycles {:.2} (most {}), {:.1} junction entries/min, {:.1} km/min, red runs {}, emergency brakes {}, stop jerks {}, gave up {}, overlaps {}, close calls {}, emergency commands {}, rejected body steps {}, scenery stops {}, planning {:.3} ms/tick; long waits headed by {}",
             self.t / 60.0,
             all.mean_cars(),
             all.mean(all.gone),
@@ -189,6 +199,9 @@ impl TrafficStats {
             all.gave_up,
             all.overlaps,
             all.close_calls,
+            all.emergency_commands,
+            all.rejected_steps,
+            all.scenery_stops,
             all.plan_secs * 1000.0 / all.ticks.max(1) as f64,
             all.head_list(),
         )
@@ -270,6 +283,12 @@ impl TrafficSim {
             }
             let Some(&(lane, odo, acc)) = s.before.get(&c.id) else { continue };
             s.window.metres += (c.state.odometer - odo).max(0.0) as f64;
+            if c.state.emergency_began {
+                s.window.emergency_commands += 1;
+            }
+            if c.guard.rejected {
+                s.window.rejected_steps += 1;
+            }
             // (from walking pace on: a car creeping at its line that stops again shows -8
             // m/s² for a frame, which is a jerk but no near miss; counted apart)
             if c.state.acc < HARD_BRAKE && acc >= HARD_BRAKE {
@@ -291,7 +310,7 @@ impl TrafficSim {
                 if let Some((ci, li)) = entry_light(&self.net, &[(lane, 0.0), (into, 0.0)], 1) {
                     if let Some(ctl) = self.lights.get(ci) {
                         let red = matches!(TrafficLightController::aspect(ctl.state(li)), Aspect::Red | Aspect::RedYellow);
-                        if red && c.amber != Some((ci, li)) {
+                        if red && c.amber != Some((ci, li)) && !self.emergency.crawling(c.id) {
                             s.window.red_runs += 1;
                             if omsi_cfg::flags::OMSI_DEBUG_STUCK.is_set() {
                                 log::info!("stats t={:.1}: car {} into lane {into} on red (light {ci}/{li}) at {:.1} m/s", s.t, c.id, c.state.speed);

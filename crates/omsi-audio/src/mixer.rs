@@ -73,6 +73,11 @@ struct Voice {
     cur_gain: f32,
     /// One-pole low-pass filter state, left/right.
     lp: [f32; 2],
+    /// The low-pass was just switched on: it starts from the sound as it is (from the
+    /// state it was left in a while ago, a voice coming into the cab clicked).
+    lp_fresh: bool,
+    /// The bus radio's effects on a stream (see `radio_fx`); None plays it as it is.
+    fx: Option<Box<crate::radio_fx::RadioFx>>,
     /// The Doppler shift: the distance to the listener when the position last came, when,
     /// and the (smoothed) pitch factor it gives.
     doppler: (f32, Option<std::time::Instant>, f32),
@@ -234,6 +239,9 @@ impl Shared {
                     continue;
                 }
                 let step = buf.rate as f64 / dev_rate;
+                if let Some(fx) = v.fx.as_mut() {
+                    fx.set(fx.params(), rate);
+                }
                 for f in 0..frames {
                     v.cur_gain += (target_gain - v.cur_gain) * 0.005;
                     // silence while the buffer fills (at the start, after a stall)
@@ -241,9 +249,15 @@ impl Shared {
                     let t = v.pos as f32;
                     let (mut l, mut r) = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
                     if v.params.lowpass_hz > 0.0 {
+                        if std::mem::take(&mut v.lp_fresh) {
+                            v.lp = [l, r];
+                        }
                         v.lp[0] += (l - v.lp[0]) * lp_alpha;
                         v.lp[1] += (r - v.lp[1]) * lp_alpha;
                         (l, r) = (v.lp[0], v.lp[1]);
+                    }
+                    if let Some(fx) = v.fx.as_mut() {
+                        (l, r) = fx.process(l, r);
                     }
                     let g = v.cur_gain;
                     out[f * ch] += l * g * left;
@@ -306,6 +320,9 @@ impl Shared {
                     (m, m)
                 };
                 let (l, r) = if v.params.lowpass_hz > 0.0 {
+                    if std::mem::take(&mut v.lp_fresh) {
+                        v.lp = [l, r];
+                    }
                     v.lp[0] += (l - v.lp[0]) * lp_alpha;
                     v.lp[1] += (r - v.lp[1]) * lp_alpha;
                     (v.lp[0], v.lp[1])
@@ -366,6 +383,9 @@ fn apply_params(v: &mut Voice, params: VoiceParams, now: std::time::Instant, lis
         v.doppler = (dist, Some(now), f);
     } else {
         v.doppler = (0.0, None, 1.0);
+    }
+    if params.lowpass_hz > 0.0 && !(v.params.lowpass_hz > 0.0) {
+        v.lp_fresh = true;
     }
     v.params = params;
 }
@@ -746,6 +766,8 @@ impl AudioEngine {
             finished: false,
             cur_gain: 0.0,
             lp: [0.0, 0.0],
+            lp_fresh: false,
+            fx: None,
             doppler: (0.0, None, 1.0),
         });
         id
@@ -764,9 +786,24 @@ impl AudioEngine {
             finished: false,
             cur_gain: 0.0,
             lp: [0.0, 0.0],
+            lp_fresh: false,
+            fx: None,
             doppler: (0.0, None, 1.0),
         });
         id
+    }
+
+    /// The bus radio's effects on stream voice `id` (see `radio_fx`): made, retuned, or
+    /// done away with when all of them are 0.
+    pub fn set_radio_fx(&self, id: VoiceId, params: crate::radio_fx::RadioFxParams) {
+        let rate = self.shared.sample_rate.load(Ordering::Relaxed);
+        if let Some(v) = self.shared.voices.lock().iter_mut().find(|v| v.id == id) {
+            match (v.fx.as_mut(), params.is_off()) {
+                (_, true) => v.fx = None,
+                (Some(fx), false) => fx.set(params, rate),
+                (None, false) => v.fx = crate::radio_fx::RadioFx::new(params, rate).map(Box::new),
+            }
+        }
     }
 
     /// New parameters for a voice: queued for the mixer's next block (a few milliseconds),
@@ -848,6 +885,8 @@ mod tests {
             finished: false,
             cur_gain: gain,
             lp: [0.0; 2],
+            lp_fresh: false,
+            fx: None,
             doppler: (0.0, None, 1.0),
         }
     }
@@ -935,6 +974,66 @@ mod tests {
         fn new_for_test_device_less() -> AudioEngine {
             AudioEngine::silent()
         }
+    }
+
+    /// A stream with its effects all at 0 plays exactly as one never given any; with the
+    /// speaker on it does not.
+    #[test]
+    fn a_stream_with_no_effects_is_bit_identical() {
+        let render = |fx: Option<crate::radio_fx::RadioFxParams>| {
+            let e = AudioEngine::capture(48_000);
+            let buf = Arc::new(crate::stream::StreamBuf::default());
+            buf.push(48_000, (0..48_000 * 3).map(|i| {
+                let t = i as f32 / 48_000.0;
+                [(t * 440.0 * std::f32::consts::TAU).sin() * 0.5, (t * 660.0 * std::f32::consts::TAU).sin() * 0.4]
+            }));
+            let id = e.play_stream(buf, VoiceParams { gain: 0.8, ..Default::default() });
+            if let Some(p) = fx {
+                e.set_radio_fx(id, p);
+            }
+            e.render_capture(48_000 * 2)
+        };
+        let plain = render(None);
+        assert!(plain.iter().any(|x| x.abs() > 0.1));
+        let off = render(Some(Default::default()));
+        assert!(plain.iter().zip(&off).all(|(a, b)| a.to_bits() == b.to_bits()));
+        let speaker = render(Some(crate::radio_fx::RadioFxParams { speaker: 1.0, ..Default::default() }));
+        assert!(plain.iter().zip(&speaker).any(|(a, b)| (a - b).abs() > 0.01));
+    }
+
+    /// The one-pole low-pass of a voice heard through the bodywork: a 5 kHz tone through
+    /// 500 Hz comes out some 20 dB down, a 100 Hz one hardly touched.
+    #[test]
+    fn the_voice_low_pass_follows_its_corner() {
+        let level = |hz: f32| {
+            let n = 48_000usize;
+            let samples: Vec<i16> = (0..n).map(|i| ((i as f32 / 48_000.0 * hz * std::f32::consts::TAU).sin() * 16_000.0) as i16).collect();
+            let clip = Arc::new(Clip { sample_rate: 48_000, channels: 1, samples });
+            let s = shared();
+            let mut v = voice(clip, 1.0);
+            v.params.lowpass_hz = 500.0;
+            v.params.looping = false;
+            s.voices.lock().push(v);
+            let mut out = vec![0.0f32; n];
+            s.render(&mut out);
+            let tail = &out[n / 2..];
+            (tail.iter().map(|x| x * x).sum::<f32>() / tail.len() as f32).sqrt() / (16_000.0 / 32_768.0 / 2f32.sqrt())
+        };
+        let high = 20.0 * level(5_000.0).log10();
+        assert!((high + 20.0).abs() < 1.5, "{high} dB");
+        assert!(level(100.0) > 0.97);
+    }
+
+    #[test]
+    fn a_low_pass_switched_on_starts_from_the_sound() {
+        let mut v = voice(Arc::new(Clip { sample_rate: 48_000, channels: 1, samples: vec![0; 4] }), 1.0);
+        v.lp = [0.7, -0.7];
+        apply_params(&mut v, VoiceParams { lowpass_hz: 800.0, ..Default::default() }, std::time::Instant::now(), Vec3::ZERO);
+        assert!(v.lp_fresh);
+        apply_params(&mut v, VoiceParams { lowpass_hz: 0.0, ..Default::default() }, std::time::Instant::now(), Vec3::ZERO);
+        let mut w = voice(Arc::new(Clip { sample_rate: 48_000, channels: 1, samples: vec![0; 4] }), 1.0);
+        apply_params(&mut w, VoiceParams { lowpass_hz: 0.0, ..Default::default() }, std::time::Instant::now(), Vec3::ZERO);
+        assert!(!w.lp_fresh);
     }
 
     #[test]

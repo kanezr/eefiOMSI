@@ -69,7 +69,34 @@ pub struct Hof {
     pub info_busstops: Vec<Vec<String>>,
 }
 
+/// The name of the destination `Hof::with_free_text` adds (its `[addterminus]` identifier).
+pub const FREE_TEXT: &str = "(free text)";
+
 impl Hof {
+    /// This depot file with one destination more, or the one it had of the kind changed:
+    /// `lines` typed by the driver as the displays' text (the destination form's two free
+    /// lines). Its strings are those a destination of the file has, as many: the first holds
+    /// the first line, the second the second, every other the first again (a side or rear
+    /// sign of one line shows the destination's main line); a display that reads its text
+    /// through the scripts' `GetTerminusString` shows them. Both empty: a destination with
+    /// nothing to show, the display cleared. Its code is the file's highest and one, so no
+    /// destination of the file is taken for it. Returns the file and its index.
+    pub fn with_free_text(&self, lines: [&str; 2]) -> (Hof, usize) {
+        let mut hof = self.clone();
+        let n = self.string_count_terminus.max(self.termini.iter().map(|t| t.strings.len()).max().unwrap_or(0)).max(2);
+        let (a, b) = (lines[0].trim(), lines[1].trim());
+        let strings = (0..n).map(|k| if k == 1 { b } else { a }.to_string()).collect();
+        let index = hof.termini.iter().position(|t| t.texture_id == FREE_TEXT).unwrap_or(hof.termini.len());
+        let code = self.termini.iter().filter(|t| t.texture_id != FREE_TEXT).map(|t| t.code).max().unwrap_or(0) + 1;
+        let t = Terminus { code, texture_id: FREE_TEXT.to_string(), terminus_stop: None, all_exit: true, strings };
+        if index == hof.termini.len() {
+            hof.termini.push(t);
+        } else {
+            hof.termini[index] = t;
+        }
+        (hof, index)
+    }
+
     pub fn load(path: &Path) -> Result<Hof, omsi_cfg::CfgError> {
         let f = CfgFile::read(path)?;
         Ok(Self::parse(&f))
@@ -364,6 +391,28 @@ pub fn depot_anywhere(name: &str) -> Option<Hof> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn free_text_is_a_destination_of_its_own() {
+        let hof = Hof {
+            string_count_terminus: 3,
+            termini: vec![
+                Terminus { code: 12, texture_id: "Rathaus".into(), strings: vec!["Rathaus".into(), "Spandau".into(), "Rathaus".into()], ..Default::default() },
+                Terminus { code: 40, texture_id: "Hbf".into(), strings: vec!["Hbf".into()], ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let (one, i) = hof.with_free_text(["Sonderfahrt", " Betriebshof "]);
+        assert_eq!(i, 2);
+        assert_eq!(one.termini[2].strings, ["Sonderfahrt", "Betriebshof", "Sonderfahrt"]);
+        assert_eq!(one.termini[2].code, 41);
+        assert_eq!(one.termini[2].menu_name(), FREE_TEXT);
+        // typed again: the same destination changed, not another one added
+        let (two, j) = one.with_free_text(["", ""]);
+        assert_eq!((j, two.termini.len(), two.termini[2].code), (2, 3, 41));
+        assert!(two.termini[2].strings.iter().all(|s| s.is_empty()));
+        assert_eq!(two.termini[..2], hof.termini[..]);
+    }
+
     #[test]
     fn a_depot_file_carries_a_line_by_its_trip_codes_or_names() {
         let trip = |code: &str, name: &str| InfoTrip { code: code.into(), name: name.into(), ..Default::default() };

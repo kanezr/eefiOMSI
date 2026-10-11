@@ -9,12 +9,18 @@
 
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 struct Slot {
     device: wgpu::Device,
     cache: wgpu::PipelineCache,
     path: PathBuf,
+    /// When the cache was last written (or opened): see `get`.
+    written: Instant,
 }
+
+/// How often the cache is written while pipelines are being made (see `get`).
+const CHECKPOINT: Duration = Duration::from_secs(2);
 
 /// The cache of the device last opened (one game renderer at a time; a device opened again after
 /// a fallback, or a second renderer, replaces it - the other one's pipelines are made without).
@@ -65,20 +71,32 @@ pub(crate) fn open(device: &wgpu::Device, info: &wgpu::AdapterInfo) {
         })
     };
     log::info!("pipeline cache: {} ({})", path.display(), match &data { Some(d) => format!("{} KB from the last run", d.len() / 1024), None => "new".into() });
-    *slot = Some(Slot { device: device.clone(), cache, path });
+    *slot = Some(Slot { device: device.clone(), cache, path, written: Instant::now() });
 }
 
-/// The cache to build `device`'s pipelines with, if it has one.
+/// The cache to build `device`'s pipelines with, if it has one. While they are being made it
+/// is also written to its file every couple of seconds: a phone's first start compiles for
+/// half a minute and more, and when Android ended the app meanwhile (a start that seemed to
+/// hang, #1708) nothing of it was kept - the cache was written only once every pipeline was
+/// there, and each start began from nothing again.
 pub(crate) fn get(device: &wgpu::Device) -> Option<wgpu::PipelineCache> {
-    let slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
-    slot.as_ref().filter(|s| &s.device == device).map(|s| s.cache.clone())
+    let mut slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
+    let s = slot.as_mut().filter(|s| &s.device == device)?;
+    let cache = s.cache.clone();
+    if s.written.elapsed() >= CHECKPOINT {
+        s.written = Instant::now();
+        drop(slot);
+        save();
+    }
+    Some(cache)
 }
 
 /// Write the cache to its file (after the pipelines were made, and at the end of the game, for
 /// the ones made later: puddles, Enhanced+). Nothing happens without a cache.
 pub fn save() {
-    let slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(s) = slot.as_ref() else { return };
+    let mut slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(s) = slot.as_mut() else { return };
+    s.written = Instant::now();
     let Some(data) = s.cache.get_data() else { return };
     if data.is_empty() || std::fs::metadata(&s.path).is_ok_and(|m| m.len() == data.len() as u64) {
         return;

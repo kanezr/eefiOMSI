@@ -3,7 +3,45 @@
 
 use super::*;
 
+/// Why a car was taken off the road. Whatever the cause, it gives back what it held (its
+/// berths, its place in their queues) once, as it goes (`TrafficSim::take_off`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    /// Out of range: it drives on as a dormant car (`DormantCar`).
+    Dormant,
+    /// The ground under it was unloaded.
+    Unloaded,
+    /// Its way or its trip is over (the end of the network, parked, given up).
+    Finished,
+    /// The player took it over (its tour, the vehicle), or the timetable took it back.
+    TakenOver,
+    /// Its route no longer exists on the network.
+    InvalidRoute,
+}
+
+impl Removal {
+    pub const COUNT: usize = 5;
+}
+
 impl TrafficSim {
+    /// Take car `i` off the road (`cause`): it leaves the list (the last car takes its
+    /// place) and gives up its berths and its place in their queues.
+    pub fn take_off(&mut self, i: usize, cause: Removal) -> AiCar {
+        let c = self.cars.swap_remove(i);
+        self.berths.release_car(c.id);
+        self.removals[cause as usize] += 1;
+        if self.debug_population {
+            log::info!("population t={:.1}: car {} taken off ({cause:?})", self.time, c.id);
+        }
+        c
+    }
+
+    /// Take the car of id `id` off the road (`cause`), if it is on it.
+    pub fn take_off_id(&mut self, id: u64, cause: Removal) -> Option<AiCar> {
+        let i = self.cars.iter().position(|c| c.id == id)?;
+        Some(self.take_off(i, cause))
+    }
+
     /// The lanes the other way along one-way paths `lanes` (see `Schedule`'s route
     /// building: OMSI's timetable buses drive a path against its direction where the trip's
     /// station links or track say so). Only timetable routes use them: they carry no traffic
@@ -99,6 +137,9 @@ impl TrafficSim {
         car.state.plan_next(net);
         car.gone = false;
         let stops = stops.into_iter().map(super::bus_service::Stop::from_tuple).collect();
+        let id = car.id;
+        self.berths.release_car(id);
+        let car = &mut self.cars[ci];
         match car.bus.as_mut() {
             Some(b) => b.restart(stops, layover),
             None => {
@@ -124,6 +165,9 @@ impl TrafficSim {
             b.restart(Vec::new(), false);
         }
         car.gone = true;
+        let id = car.id;
+        self.berths.release_car(id);
+        let car = &mut self.cars[ci];
         car.vehicle.host.schedule_active = 0.0;
         car.vehicle.host.tt_line.clear();
         car.vehicle.host.tt_stops.clear();
