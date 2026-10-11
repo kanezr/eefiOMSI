@@ -4,10 +4,6 @@ Every push to `main` is released as `MAJOR.MINOR.COMMIT` (see
 [docs/VERSIONING.md](docs/VERSIONING.md)); the downloads are on the
 [Releases](https://github.com/openOMSI-Project/openOMSI/releases) page.
 
-## 0.2.30-eefi - 2026-10-11
-### Fixes
-- **Vulkan fullscreen bug** has been fixed on older gpus.
-
 ## 0.2.30 - 2026-10-11
 
 ### Changes
