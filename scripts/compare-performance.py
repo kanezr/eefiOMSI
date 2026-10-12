@@ -21,6 +21,7 @@ from typing import Any
 
 LATENCY_METRICS = ("p50_ms", "p95_ms", "p99_ms", "worst_frame_ms")
 FPS_METRIC = "average_fps"
+EVENNESS_METRICS = ("jitter_ms", "stdev_ms", "frames_over_2x_median", "slowest_second_fps", "fastest_second_fps")
 
 
 def number(value: Any, name: str) -> float:
@@ -111,7 +112,15 @@ def compare(base: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
         if b_run.get(key) != c_run.get(key):
             mismatches.append(f"run.{key}: {b_run.get(key)!r} -> {c_run.get(key)!r}")
 
-    return {"metrics": metrics, "stages": stages, "mismatches": mismatches}
+    # how even the frames were (summaries written before it was measured have none)
+    evenness = {}
+    for key in EVENNESS_METRICS:
+        b = (bs.get("evenness") or {}).get(key)
+        c = (cs.get("evenness") or {}).get(key)
+        if isinstance(b, (int, float)) and isinstance(c, (int, float)):
+            evenness[key] = {"base": float(b), "candidate": float(c), "change_percent": percent_change(float(b), float(c))}
+
+    return {"metrics": metrics, "evenness": evenness, "stages": stages, "mismatches": mismatches}
 
 
 def print_report(result: dict[str, Any], max_stages: int) -> None:
@@ -131,6 +140,8 @@ def print_report(result: dict[str, Any], max_stages: int) -> None:
             f"| {labels[metric]} | {row['base']:.3f} | {row['candidate']:.3f} | "
             f"{fmt_change(row['change_percent'])} |"
         )
+    for key, row in result.get("evenness", {}).items():
+        print(f"| {key} | {row['base']:.3f} | {row['candidate']:.3f} | {fmt_change(row['change_percent'])} |")
     stages = result["stages"][: max(0, max_stages)]
     if stages:
         print()

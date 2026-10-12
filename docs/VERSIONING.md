@@ -55,6 +55,29 @@ A pull request's builds are test builds for anyone who wants to try the change:
 
 The version badge at the top of the README always shows the newest release.
 
+### A broken release
+
+The start guard (`crates/omsi-guard`, see docs/ARCHITECTURE.md) heals a release that crashes
+or hangs at the start on every player's computer by itself: a newer release is installed at
+once, or the version before is put back. For a release that starts but is broken otherwise
+(saves, physics, a crash a minute in), list it in [`release/health.json`](../release/health.json)
+on `main`:
+
+```json
+{ "bad": ["0.2.31"], "message": "0.2.31 loses the timetable after a stop" }
+```
+
+Every start of a listed version notes it; the next start installs a newer release when there
+is one, else goes back to the version before (when its files are still kept, i.e. the listed
+version has not been running long), and tells the player why with the message. Then push the
+fixed release as usual. The list is read from GitHub with a short wait at each start; offline,
+nothing happens. Take a version off the list once nobody runs it any more.
+
+Before any update replaces a program, the new one must pass `openomsi --self-test` (it starts,
+says its version and ends): a release that cannot even be loaded on a computer is refused there
+and never offered again.
+
+
 ## The website
 
 [`.github/workflows/pages.yml`](../.github/workflows/pages.yml) publishes `site/` together with

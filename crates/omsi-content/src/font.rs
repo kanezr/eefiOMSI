@@ -214,46 +214,24 @@ impl FontAtlas {
         // matrix hands over "   NORDSPITZE   @   BAUERNHOF    @NORDSP.BAUERNH. " for a
         // 512x128 texture whose meshes map the lines separately. Drawn as one line and
         // squeezed to fit, that came out as a row of unreadable dots.
+        // The lines are a font height apart and centred as a block, empty ones (a leading or
+        // trailing '@') counted, and a block taller than the texture is cut at both edges
+        // (Omsi.exe 0x5fc1bc: top = (height - lines x font height) / 2, rounded towards
+        // zero). Squeezed together and laid from the top instead, the New Lion's City's
+        // settings list, which begins with an '@', stood a line too low (#1387).
         if text.contains('@') {
-            let glyph_h = self.font.height.max(1) as u32;
+            let glyph_h = self.font.height.max(1);
             let mut out = vec![0u8; (w * h * 4) as usize];
             let lines: Vec<&str> = text.split('@').collect();
-            let natural_extent = glyph_h.saturating_mul(lines.len() as u32);
-            let pitch = if natural_extent > h {
-                let visible = self.visible_glyph_height().max(1);
-                (h / lines.len() as u32).max(visible)
-            } else { glyph_h };
-            let extent = pitch.saturating_mul(lines.len().saturating_sub(1) as u32) + glyph_h;
-            let top = if extent > h { 0 } else { (h - extent) / 2 };
+            let top = (h as i32 - glyph_h * lines.len() as i32) / 2;
             for (i, line) in lines.iter().enumerate() {
-                let y0 = top + i as u32 * pitch;
-                self.render_unscaled_at(line, w, h, full_color, rgb, align, y0 as i32, &mut out);
+                self.render_unscaled_at(line, w, h, full_color, rgb, align, top + i as i32 * glyph_h, &mut out);
             }
             return out;
         }
         // (a text wider than the texture runs off its edge, as Omsi.exe draws it: the
         // start is not left of the texture and the rest is clipped, 0x5fb79c / 0x5d67bc)
         self.render_unscaled(text, w, h, full_color, rgb, align)
-    }
-
-    fn visible_glyph_height(&self) -> u32 {
-        let mut max_rows = 0u32;
-        for glyph in &self.font.chars {
-            let y0 = glyph.y.max(0) as u32;
-            let y1 = (glyph.y + self.font.height).min(self.height as i32).max(0) as u32;
-            let x0 = glyph.x0.max(0) as u32;
-            let x1 = glyph.x1.min(self.width as i32).max(0) as u32;
-            let mut first = None;
-            let mut last = None;
-            for y in y0..y1 {
-                if (x0..x1).any(|x| self.alpha[((y * self.width + x) * 4) as usize] != 0) {
-                    first.get_or_insert(y);
-                    last = Some(y);
-                }
-            }
-            if let (Some(first), Some(last)) = (first, last) { max_rows = max_rows.max(last - first + 1); }
-        }
-        max_rows
     }
 
     fn render_unscaled(&self, text: &str, w: u32, h: u32, full_color: bool, rgb: [u8; 3], align: TextAlign) -> Vec<u8> {
@@ -374,5 +352,13 @@ mod tests {
         let atlas = FontAtlas::new(font, 6, 6, alpha.clone(), alpha);
         let image = atlas.render("A@A@A", 1, 12, false, [255, 255, 255]);
         assert!(image[(10 * 4) + 3] != 0, "last line must not be pushed below the texture");
+        // as Omsi.exe: the block centred at -3, cut at both edges - the first line's top
+        // rows are gone, the middle one stands at 3
+        let lit = |img: &[u8], y: usize| img[y * 4 + 3] != 0;
+        assert!(lit(&image, 0) && !lit(&image, 2) && lit(&image, 4) && lit(&image, 7));
+        // a leading '@' is an empty first line of the block (#1387): with ten lines of 6 in
+        // 48 the block starts at -6, so the first text line stands at 0, not lower
+        let image = atlas.render("@A@A@A@A@A@A@A@A@", 1, 48, false, [255, 255, 255]);
+        assert!(lit(&image, 1) && !lit(&image, 0));
     }
 }

@@ -184,9 +184,9 @@ fn launcher_preview_initializes_without_enhanced_or_ray_tracing_resources() {
     let instance = wgpu::Instance::new(descriptor);
     let mut renderer = pollster::block_on(Renderer::new_with(&instance, None, Some(wgpu::TextureFormat::Rgba8UnormSrgb), RenderOptions { msaa: 1, preview_only: true, no_enhanced: true, ray_tracing: false, ..Default::default() })).unwrap();
     assert!(renderer.hdr_pass.is_none());
-    assert!(renderer.probe.is_none());
+    assert!(renderer.tone.probe.is_none());
     assert!(renderer.rt.is_none());
-    assert!(renderer.cloud_shape_cpu.is_empty());
+    assert!(renderer.sky.cloud_shape_cpu.is_empty());
     let bindings: Vec<u32> = camera_layout_entries(ArrayPath::Storage, true).into_iter().map(|e| e.binding).collect();
     for binding in ENHANCED_CAMERA_TEXTURES {
         assert!(!bindings.contains(&binding), "preview camera layout must omit enhanced binding {binding}");
@@ -247,8 +247,8 @@ fn vanilla_gl_build_omits_unused_enhanced_resources() {
         },
     );
     assert!(renderer.hdr_pass.is_none());
-    assert!(renderer.probe.is_none());
-    assert!(renderer.cloud_shape_cpu.is_empty());
+    assert!(renderer.tone.probe.is_none());
+    assert!(renderer.sky.cloud_shape_cpu.is_empty());
     let mut scene = renderer.new_scene();
     let camera = Camera {
         position: DVec3::new(0.0, -35.0, 30.0),
@@ -268,7 +268,7 @@ fn vanilla_gl_build_omits_unused_enhanced_resources() {
     assert!(pollster::block_on(scope.pop()).is_none());
     // A desktop's native backend still prepares Enhanced for changing modes in-game.
     assert!(base.hdr_pass.is_some());
-    assert!(base.probe.is_some());
+    assert!(base.tone.probe.is_some());
 }
 
 #[test]
@@ -559,6 +559,7 @@ fn shaders_validate_and_match_the_uniforms() {
     let modules = [
         ("scene", scene_shader_source(false)),
         ("scene opaque", scene_shader_source(false)),
+        ("scene blend depth", scene_shader_source(false)),
         ("scene terrain paint", scene_shader_source(false)),
         ("sky", sky_shader_source()),
         ("corona", corona_shader_source()),
@@ -602,6 +603,9 @@ fn shaders_validate_and_match_the_uniforms() {
         let mut constants = naga::back::PipelineConstants::default();
         if name.starts_with("scene ") {
             constants.insert("ALPHA_TEST".into(), 0.0);
+        }
+        if *name == "scene blend depth" {
+            constants.insert("BLEND_DEPTH".into(), 1.0);
         }
         if *name == "scene terrain paint" {
             constants.insert("TERRAIN_PAINT".into(), 1.0);

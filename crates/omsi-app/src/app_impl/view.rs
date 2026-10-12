@@ -10,11 +10,13 @@ impl App {
     /// the first time).
     pub(crate) fn sync_view_look(&mut self) {
         let key = self.look_key();
+        let left = self.cam.look_view.clone();
         // A change of view is not a turn of the head: the direction of the view entered is
         // where the head already is, so the angle the camera is drawn at starts there as
         // well (a glide belongs between angles of one and the same view).
         if swap_view_look(&mut self.cam.look, &mut self.cam.view_looks, &mut self.cam.look_view, &key) {
             self.cam.look_smooth = self.cam.look;
+            swap_cam_zoom(&mut self.cam.view_zoom, &mut self.cam.cam_zooms, &left, &key, &self.view);
         }
     }
 
@@ -201,6 +203,29 @@ pub(crate) fn cab_look_yaw(yaw: f32) -> f32 {
     (yaw + 180.0).rem_euclid(360.0) - 180.0
 }
 
+/// The zoom of a camera changed to (`left` -> `key`, look keys): the camera left keeps its
+/// own, the one taken gets its own back. It was one zoom for every camera of a view (#2183).
+pub(crate) fn swap_cam_zoom(
+    view_zoom: &mut std::collections::HashMap<String, f32>,
+    cam_zooms: &mut std::collections::HashMap<String, f32>,
+    left: &str,
+    key: &str,
+    view: &str,
+) {
+    if let Some((left_view, _)) = left.split_once('#') {
+        match view_zoom.get(left_view).copied() {
+            Some(z) => cam_zooms.insert(left.to_string(), z),
+            None => cam_zooms.remove(left),
+        };
+    }
+    if key.contains('#') {
+        match cam_zooms.get(key).copied() {
+            Some(z) => view_zoom.insert(view.to_string(), z),
+            None => view_zoom.remove(view),
+        };
+    }
+}
+
 /// Put the direction of the view left away and take up the one of the view entered; `true`
 /// when that was another view (the caller then knows the head did not just move: it is where
 /// the view entered last left it).
@@ -332,5 +357,24 @@ mod look_key_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod zoom_tests {
+    use super::swap_cam_zoom;
+    use std::collections::HashMap;
+
+    /// Each cab camera keeps its zoom: zoomed in the right-hand view, the front view taken
+    /// again comes back unzoomed, and the right-hand one zoomed (#2183).
+    #[test]
+    fn each_cab_camera_keeps_its_zoom() {
+        let (mut zoom, mut kept) = (HashMap::new(), HashMap::new());
+        swap_cam_zoom(&mut zoom, &mut kept, "driver#0", "driver#1", "driver");
+        zoom.insert("driver".to_string(), 0.5);
+        swap_cam_zoom(&mut zoom, &mut kept, "driver#1", "driver#0", "driver");
+        assert_eq!(zoom.get("driver"), None);
+        swap_cam_zoom(&mut zoom, &mut kept, "driver#0", "driver#1", "driver");
+        assert_eq!(zoom.get("driver"), Some(&0.5));
     }
 }

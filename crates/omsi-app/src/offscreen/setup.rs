@@ -97,8 +97,9 @@ impl<'a> Offscreen<'a> {
         let humans_off = new_humans(args, &settings, &world, &renderer, &mut scene, &mut sim_view.people, schedule.as_ref(), player.as_mut(), lan_seed, center);
         let player_ref: Option<Player> = None;
         let envir = omsi_content::Envir::load(&args.root.join("envir.cfg")).ok();
-        let weather = load_weather(args);
-        setup_sky(args, &renderer, &mut scene, envir.as_ref(), Some(&weather));
+        let (weather, model) = crate::weather_setup::load_weather_run(args);
+        let mut sky = crate::weather_setup::SkyState { clouds: None, model };
+        setup_sky(args, &renderer, &mut scene, envir.as_ref(), Some(&weather), &mut sky.clouds);
         if let Some(p) = player.as_mut() {
             apply_weather(&mut p.vehicle, &weather, initial_wetness(&weather));
         }
@@ -294,6 +295,9 @@ impl<'a> Offscreen<'a> {
             spray,
             real_time,
             recorder,
+            profile: Default::default(),
+            drive_extremes: super::NO_EXTREMES,
+            sky,
         })
     }
 }

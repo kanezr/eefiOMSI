@@ -150,28 +150,7 @@ pub(crate) fn own_bindings(root: &Path, modifier: i32) -> std::collections::Hash
         .collect()
 }
 
-pub(crate) fn content_dir() -> Option<PathBuf> {
-    if let Some(d) = omsi_cfg::flags::OMSI_CONTENT.os() {
-        return Some(PathBuf::from(d));
-    }
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?.to_path_buf();
-    // inside an .app bundle the binary sits in Contents/MacOS: use the folder beside the bundle
-    let dir = if dir.ends_with("Contents/MacOS") {
-        dir.parent()?.parent()?.parent()?.to_path_buf()
-    } else {
-        dir
-    };
-    let cand = omsi_cfg::content_folder_of(&dir);
-    if !omsi_cfg::is_programs_folder(&cand) && (cand.exists() || std::fs::create_dir_all(&cand).is_ok()) && omsi_cfg::is_writable(&cand) {
-        Some(cand)
-    } else {
-        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-        let fallback = PathBuf::from(home).join(".openomsi").join("content");
-        let _ = omsi_cfg::ensure_content_layout(&fallback);
-        Some(fallback)
-    }
-}
+pub(crate) use omsi_cfg::content_dir;
 
 /// Where a save goes when the content folder takes none (`~/.openomsi/content`): a game
 /// unpacked into Program Files, or a folder Windows' controlled folder access guards, said
@@ -294,14 +273,16 @@ fn angle_available() -> bool {
     })
 }
 
-/// The graphics interfaces in the order they are tried: Metal on a Mac; on Windows Vulkan
-/// first (best for AMD), then DirectX 12, then OpenGL for a card
+/// The graphics interfaces in the order they are tried: Metal on a Mac, an iPhone and an
+/// iPad; on Windows DirectX
+/// 12 first (the Windows drivers' best-kept path: on Vulkan they reset the device -
+/// "the graphics device was lost" - far more often), then Vulkan, then OpenGL for a card
 /// without either (a GeForce GT 530), then OpenGL ES on ANGLE over DirectX 11 when its DLLs
 /// are there; elsewhere Vulkan, then OpenGL. Settings → Graphics API (`graphics_api`) or
 /// OMSI_BACKEND=vulkan|dx12|gl|angle puts one first: a driver whose Vulkan misbehaves is
 /// got round.
 pub(crate) fn backend_order() -> Vec<GraphicsApi> {
-    if cfg!(target_os = "macos") {
+    if cfg!(any(target_os = "macos", target_os = "ios")) {
         return vec![GraphicsApi::Native(wgpu::Backends::METAL)];
     }
     let settings = crate::settings::Settings::load();
@@ -311,7 +292,7 @@ pub(crate) fn backend_order() -> Vec<GraphicsApi> {
         omsi_cfg::flags::OMSI_BACKEND.var().map(str::to_string).unwrap_or(settings.graphics_api)
     };
     let native = if cfg!(windows) {
-        vec![wgpu::Backends::VULKAN, wgpu::Backends::DX12, wgpu::Backends::GL]
+        vec![wgpu::Backends::DX12, wgpu::Backends::VULKAN, wgpu::Backends::GL]
     } else {
         vec![wgpu::Backends::VULKAN, wgpu::Backends::GL]
     };
@@ -622,12 +603,9 @@ pub(crate) fn fatal_message(text: &str) {
     }
 }
 
-/// The commit this binary was built from (see `build.rs`), so a log or a screenshot says
-/// which version is running.
-pub const BUILD: &str = env!("OMSI_BUILD");
-
-/// The release version, `MAJOR.MINOR.COMMIT` (see `build.rs` and docs/VERSIONING.md).
-pub const VERSION: &str = env!("OPENOMSI_VERSION");
+/// The commit this binary was built from, so a log or a screenshot says which version is
+/// running, and the release version (both stamped by omsi-platform's `build.rs`).
+pub use omsi_platform::{BUILD, VERSION};
 
 /// A window of `w` x `h` points made to fit the screen it opens on, and placed in its
 /// middle: 1600 x 900 points at 125 % are 2000 x 1125 pixels, wider than a 1920 screen, and
@@ -687,24 +665,21 @@ pub(crate) fn window_icon() -> Option<winit::window::Icon> {
     winit::window::Icon::from_rgba(img.into_raw(), w, h).ok()
 }
 
-/// Enhanced graphics wanted (from the settings, `--enhanced`, or OMSI_ENHANCED=1).
-pub(crate) static ENHANCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Enhanced+ (ray tracing) asked for by `--enhanced-plus` or OMSI_ENHANCED_PLUS=1 whatever
-/// the settings say (see `Settings::render_options`).
+/// the settings say (see `Settings::render_options`). These settings statics are set again
+/// by every session start (`make_app`) and read deep in loading and sound code that has no
+/// App to ask.
 pub(crate) static ENHANCED_PLUS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// Vanilla graphics: the picture as OMSI 2 draws it (no Vanilla+ extras, see
-/// `omsi_render::Lighting::classic`).
-pub(crate) static CLASSIC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Volume of the AI vehicles and of the scenery's own sounds (OMSI's `sound_ai` and
 /// `sound_scenery`), as the bits of an f32.
 pub(crate) static SOUND_AI: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
-pub(crate) static SOUND_SCENERY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
+// (the scenery's volume, the graphics' kind and the mirrors' size: the scene's, see `scene::host`)
+pub(crate) use crate::scene::host::{sound_gain, CLASSIC, ENHANCED, MIRROR_SIZE, SOUND_SCENERY};
 
-/// Edge of a mirror's picture (the `mirror_size` setting, OMSI's reflTexSize).
-pub(crate) static MIRROR_SIZE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(256);
-
-pub(crate) fn sound_gain(which: &std::sync::atomic::AtomicU32) -> f32 {
-    f32::from_bits(which.load(std::sync::atomic::Ordering::Relaxed))
+/// The game's settings a world reads as it opens (see `scene::host::OpenSettings`), from the
+/// settings file at that moment.
+pub(crate) fn install_scene_settings() {
+    crate::scene::host::install_open_settings(|| crate::scene::host::OpenSettings { max_parked: crate::settings::Settings::load().ai_max_parked as i64 });
 }
 
 /// The `clouds` setting: clouds in the sky (off: a clear sky whatever the weather says).

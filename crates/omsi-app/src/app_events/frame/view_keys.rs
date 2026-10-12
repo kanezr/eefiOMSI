@@ -224,6 +224,11 @@ impl App {
             self.camera.as_mut(),
             self.view == "free" || (self.player.is_none() && self.session.on_foot.is_none()),
         ) {
+            // the free camera keeps the horizon level: taken over from the driver's view
+            // of a bus leaning on a slope, it went on with the bus's roll (#2220)
+            if self.photo.is_none() {
+                cam.roll = 0.0;
+            }
             let mut v = Vec3::ZERO;
             let f = cam.forward();
             let r = cam.right();

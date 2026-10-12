@@ -92,6 +92,13 @@ pub fn candidates() -> Vec<PathBuf> {
             bases.push(s);
         }
     }
+    // an iPhone or an iPad: the app's own Documents (the content folder, which the Files app
+    // shows as "openOMSI"), where a copy of the game is put by the Files app or the Finder
+    if cfg!(target_os = "ios") {
+        if let Some(c) = crate::flags::OMSI_CONTENT.live_os() {
+            bases.push(PathBuf::from(c));
+        }
+    }
     if let Ok(exe) = std::env::current_exe() {
         bases.extend(exe.ancestors().skip(1).take(8).map(|p| p.to_path_buf()));
     }

@@ -92,7 +92,25 @@ pub fn set_backend(factory: BackendFactory) -> bool {
 fn make_renderer(width: u32, height: u32, html: &str, api: PageApi) -> Box<dyn HtmlRenderer> {
     match BACKEND.get() {
         Some(f) => f(width, height, html, api),
-        None => Box::new(crate::htmlengine::EngineRenderer::with_api(width, height, html, api)),
+        None => {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| log::warn!("htmltexture: no page backend registered, the pages stay empty"));
+            Box::new(NoPage)
+        }
+    }
+}
+
+/// The page of a game that registered no backend ([`set_backend`]: the game registers
+/// omsi-htmlengine's at start): it draws nothing and does nothing.
+struct NoPage;
+
+impl HtmlRenderer for NoPage {
+    fn set_vars(&mut self, _num: &[(String, f32)], _strs: &[(String, String)]) {}
+    fn poll_frame(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+    fn take_events(&mut self) -> Vec<(String, f32)> {
+        Vec::new()
     }
 }
 
@@ -608,5 +626,20 @@ mod page_vars_tests {
         assert_eq!(got[1].1, s(&[("t", "y")]));
         assert!(got[2].0.len() == 1 && got[2].0[0].1.is_nan() && got[2].1.is_empty());
         assert_eq!(got[3], (num(&[("a", 0.0), ("c", 3.0)]), s(&[("s", "z")])));
+    }
+}
+
+#[cfg(test)]
+mod css_url_tests {
+    use super::rebase_css_urls;
+
+    #[test]
+    fn style_sheet_urls_are_made_relative_to_the_page() {
+        let css = "a{background:url(../img/x.png)} b{background:url('y.png')} c{background:url(data:x)} d{background:url(/abs.png)}";
+        assert_eq!(
+            rebase_css_urls(css, "css/"),
+            "a{background:url(css/../img/x.png)} b{background:url('css/y.png')} c{background:url(data:x)} d{background:url(/abs.png)}"
+        );
+        assert_eq!(rebase_css_urls(css, ""), css);
     }
 }

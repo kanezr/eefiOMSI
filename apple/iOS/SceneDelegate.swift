@@ -1,0 +1,55 @@
+import AVFoundation
+import SwiftUI
+import UIKit
+
+/// The app's scene (UIKit's scene life cycle, which the systems after iOS 26 require): its
+/// window shows the launcher. The game's window is put on the same scene, in front, while a
+/// drive lasts (GameHost.swift); with "Cross-Platform Launcher" the launcher drawn by the game
+/// is that window from the start, and this one stays empty behind it.
+@objc(SceneDelegate)
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        guard let scene = scene as? UIWindowScene else { return }
+        GameHost.shared.scene = scene
+        // the game's sound plays beside other apps' music, and keeps to the silent switch
+        try? AVAudioSession.sharedInstance().setCategory(.ambient, mode: .default)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        let store = GameHost.shared.store
+        Theme.registerFonts()
+        // (the system's bars in Inter as well)
+        let item = UITabBarItem.appearance()
+        item.setTitleTextAttributes([.font: Theme.uiFont(10, .medium)], for: .normal)
+        UINavigationBar.appearance().titleTextAttributes = [.font: Theme.uiFont(17, .semibold)]
+        UIBarButtonItem.appearance().setTitleTextAttributes([.font: Theme.uiFont(17)], for: .normal)
+        let window = UIWindow(windowScene: scene)
+        let root = UIHostingController(rootView: LauncherRoot().environment(store).preferredColorScheme(.dark))
+        root.view.backgroundColor = UIColor(Theme.bg)
+        window.rootViewController = root
+        window.backgroundColor = UIColor(Theme.bg)
+        window.makeKeyAndVisible()
+        self.window = window
+        GameHost.shared.launcherWindow = window
+        let crossPlatform = GameHost.shared.crossPlatformSetting()
+        if !crossPlatform {
+            store.open()
+        }
+        // (`OMSI_APPLE_ORIENT=landscape|portrait`: the screen turned so, for looking at either
+        // layout on a Simulator without a person to turn it)
+        if let o = ProcessInfo.processInfo.environment["OMSI_APPLE_ORIENT"] {
+            let mask: UIInterfaceOrientationMask = o == "portrait" ? .portrait : .landscapeRight
+            DispatchQueue.main.async {
+                scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { e in
+                    NSLog("openOMSI: OMSI_APPLE_ORIENT: \(e)")
+                }
+            }
+        }
+        // (the game may put its windows on the scene from now on)
+        openomsi_ios_scene_ready()
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        GameHost.shared.store.tick()
+    }
+}

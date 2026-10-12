@@ -1,0 +1,38 @@
+[package]
+name = "omsi-scene"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "openOMSI's scene: the map and its vehicles turned into the renderer's meshes, materials, lights and textures, and the world they were built from"
+
+[dependencies]
+omsi-audio = { path = "../omsi-audio" }
+omsi-cfg = { path = "../omsi-cfg" }
+omsi-content = { path = "../omsi-content" }
+omsi-geometry = { path = "../omsi-geometry" }
+omsi-htmlengine = { path = "../omsi-htmlengine" }
+omsi-map = { path = "../omsi-map" }
+omsi-model = { path = "../omsi-model" }
+omsi-o3d = { path = "../omsi-o3d" }
+omsi-render = { path = "../omsi-render" }
+omsi-scenery = { path = "../omsi-scenery" }
+omsi-script = { path = "../omsi-script" }
+omsi-sim = { path = "../omsi-sim" }
+omsi-soundscape = { path = "../omsi-soundscape" }
+omsi-texture = { path = "../omsi-texture" }
+omsi-ui = { path = "../omsi-ui" }
+omsi-vehicle = { path = "../omsi-vehicle" }
+omsi-weather = { path = "../omsi-weather" }
+omsi-world = { path = "../omsi-world" }
+anyhow.workspace = true
+glam.workspace = true
+hashbrown.workspace = true
+image.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+rayon.workspace = true
+wgpu.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true
+zip.workspace = true

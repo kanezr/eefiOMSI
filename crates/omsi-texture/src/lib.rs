@@ -849,3 +849,6 @@ mod tests {
         assert_eq!((h.width, h.height), (3, 1));
     }
 }
+
+#[cfg(test)]
+mod transparency_tests;

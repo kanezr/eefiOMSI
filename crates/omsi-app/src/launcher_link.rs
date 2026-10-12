@@ -1,5 +1,7 @@
-//! Another launcher program (`OMSI_LAUNCHER=<program>`): the game's own window is the
-//! launcher now (`launcher`), this only starts a different one when asked to.
+//! Another launcher program: the desktop launcher (`launcher/`, a Tauri window over
+//! omsi-launcher-core) when it is beside the game, or any program `OMSI_LAUNCHER` names. The
+//! game's own window (`launcher`) is the launcher where neither is there, with `--launcher`,
+//! and with `OMSI_CLASSIC_LAUNCHER`.
 
 use super::*;
 
@@ -23,6 +25,56 @@ pub(crate) fn find_launcher() -> Option<PathBuf> {
         }
     }
     cands.into_iter().find(|p| p.is_file())
+}
+
+/// The desktop launcher: beside this program (in the same bundle on macOS), or the
+/// launcher's own build folder in the source tree (a development build).
+pub(crate) fn find_app_launcher() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let name = if cfg!(windows) { "openomsi-launcher-app.exe" } else { "openomsi-launcher-app" };
+    let mut cands = vec![dir.join(name)];
+    for a in exe.ancestors().skip(1).take(4) {
+        for profile in ["release", "debug"] {
+            cands.push(a.join("launcher/src-tauri/target").join(profile).join(name));
+        }
+    }
+    cands.into_iter().find(|p| p.is_file())
+}
+
+/// A plain start: the desktop launcher when it is there (`Ok(true)` once it runs). It opens
+/// the game's own launcher by itself where its window cannot start (no webview).
+pub(crate) fn open_app_launcher() -> Result<bool> {
+    if omsi_cfg::flags::OMSI_CLASSIC_LAUNCHER.is_set() || cfg!(any(target_os = "android", target_os = "ios")) {
+        return Ok(false);
+    }
+    let Some(bin) = find_app_launcher() else {
+        return Ok(false);
+    };
+    log::info!("starting the desktop launcher {}", bin.display());
+    let exe = std::env::current_exe().unwrap_or_default();
+    match std::process::Command::new(&bin).env("OPENOMSI_BIN", &exe).spawn() {
+        Ok(mut child) => {
+            // (a program that cannot even load - Linux without WebKitGTK's library - ends at
+            // once with an error, before it could open the game's own launcher itself)
+            let t0 = std::time::Instant::now();
+            while t0.elapsed() < std::time::Duration::from_secs(2) {
+                match child.try_wait() {
+                    Ok(Some(status)) if !status.success() => {
+                        log::warn!("the desktop launcher {} ended at once ({status}): the game's own opens", bin.display());
+                        return Ok(false);
+                    }
+                    Ok(Some(_)) | Err(_) => break,
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                }
+            }
+            Ok(true)
+        }
+        Err(e) => {
+            log::warn!("the desktop launcher {} did not start ({e}): the game's own opens", bin.display());
+            Ok(false)
+        }
+    }
 }
 
 /// Start the launcher and return once it is running. `Ok(false)` when there is none.

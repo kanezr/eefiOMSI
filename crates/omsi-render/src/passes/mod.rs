@@ -18,6 +18,7 @@ mod submit;
 
 pub(crate) use batch::DrawPlan;
 pub(crate) use headlamp_shadow::{headlamp_shadow, lamp_shadow_code, own_headlamp, VehicleBox};
+pub(crate) use shadow::LampTiles;
 pub(crate) use shadow_plan::ShadowPlan;
 
 /// The frame's switches from the environment: read once at the start of every frame
@@ -35,6 +36,7 @@ pub(crate) struct FrameEnv {
     pub no_ao: bool,
     pub shadow_near_every_frame: bool,
     pub shadow_far_every_frame: bool,
+    pub lamp_shadows_every_frame: bool,
     pub debug_shadow_far: bool,
     pub debug_view_lamps: bool,
     pub debug_sky: bool,
@@ -73,6 +75,7 @@ impl FrameEnv {
             no_ao: omsi_cfg::flags::OMSI_NO_AO.is_set(),
             shadow_near_every_frame: omsi_cfg::flags::OMSI_SHADOW_NEAR_EVERY_FRAME.is_set(),
             shadow_far_every_frame: omsi_cfg::flags::OMSI_SHADOW_FAR_EVERY_FRAME.is_set(),
+            lamp_shadows_every_frame: omsi_cfg::flags::OMSI_LAMP_SHADOWS_EVERY_FRAME.is_set(),
             debug_shadow_far: omsi_cfg::flags::OMSI_DEBUG_SHADOW_FAR.is_set(),
             debug_view_lamps: omsi_cfg::flags::OMSI_DEBUG_VIEW_LAMPS.is_set(),
             debug_sky: omsi_cfg::flags::OMSI_DEBUG_SKY.is_set(),

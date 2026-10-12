@@ -20,6 +20,10 @@ if errorlevel 1 goto :failed
 if not exist "dist\windows" mkdir "dist\windows"
 copy /y "target\%TARGET%\release\openomsi.exe" "dist\windows\openomsi.exe" >nul || goto :failed
 copy /y "target\%TARGET%\release\openomsi-launcher.exe" "dist\windows\openomsi-launcher.exe" >nul || goto :failed
+rem the desktop launcher (launcher\, Tauri on WebView2): a plain start of openomsi.exe opens it
+cargo build --locked --release --target %TARGET% --manifest-path launcher\src-tauri\Cargo.toml
+if errorlevel 1 goto :failed
+copy /y "launcher\src-tauri\target\%TARGET%\release\openomsi-launcher-app.exe" "dist\windows\openomsi-launcher-app.exe" >nul || goto :failed
 rem (the release package also carries Google's ANGLE - libEGL.dll, libGLESv2.dll and
 rem LICENSE-ANGLE.txt from openOMSI-org/angle-openomsi, see .github/workflows/release.yml -
 rem for the "ANGLE (DirectX 11)" graphics API; startup::backend_order skips it without them)

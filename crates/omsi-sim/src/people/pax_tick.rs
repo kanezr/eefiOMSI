@@ -38,12 +38,33 @@ impl PeopleSim {
             ai_req.insert(bn.id, (vec![false; bn.cabin.entries.len()], vec![false; bn.cabin.exits.len()]));
         }
         self.pax_req = ai_req;
+        // (`remove` as a mask, brought up to date with what was added to it before each
+        // look: a search of the list per person was quadratic)
+        let mut gone = std::mem::take(&mut self.scratch.gone);
+        gone.clear();
+        gone.resize(self.people.len(), false);
+        // (everybody by where they stand, for the looks round each passenger)
+        self.scratch.file_blockers(&self.people);
+        let mut marked = 0;
         for i in 0..self.people.len() {
-            if self.pax(i).is_none() || remove.contains(&i) {
+            for &r in &remove[marked..] {
+                if let Some(g) = gone.get_mut(r) {
+                    *g = true;
+                }
+            }
+            marked = remove.len();
+            if self.pax(i).is_none() || gone[i] {
                 continue;
             }
+            let was = self.people[i].position;
             self.pax_tick(i, dt, world, buses, bus_ix, at_stops, player_bus, taken_ticket, remove);
+            if let Some(p) = self.people.get(i) {
+                let now = p.position;
+                self.scratch.refile_blocker(i, was, now);
+            }
         }
+        self.scratch.drop_blockers();
+        self.scratch.gone = gone;
         // (where every passenger stands: in a bus's frame, or the world's - and the people
         // walking the pavement, among them a rider who has just stepped off, still on the
         // step until they are clear of the door. Not those who stand where they got off
@@ -437,8 +458,24 @@ impl PeopleSim {
         let _ = dt;
     }
 
-    /// sub_626860: whether somebody within 0.6 m stands in the way.
+    /// sub_626860: whether somebody within 0.6 m stands in the way. In the passengers'
+    /// frame only the people filed near the passenger are looked at (`Scratch::
+    /// file_blockers`); the answer is the same as of a look at everybody, which the debug
+    /// builds check.
     pub fn pax_blockers(&self, i: usize, buses: &[BusNow], bus_ix: &HashMap<BusId, usize>) -> (u8, bool, bool) {
+        let me = self.pax(i).unwrap();
+        let Some((my_pos, _)) = self.pax_world(me, buses, bus_ix) else { return (0, true, true) };
+        let mut near = Vec::new();
+        if !self.scratch.blockers_near(my_pos, self.people.len(), &mut near) {
+            return self.pax_blockers_among(i, buses, bus_ix, 0..self.people.len());
+        }
+        let found = self.pax_blockers_among(i, buses, bus_ix, near.iter().map(|&j| j as usize));
+        debug_assert_eq!(found, self.pax_blockers_among(i, buses, bus_ix, 0..self.people.len()), "pax_blockers: the grid missed somebody");
+        found
+    }
+
+    /// `pax_blockers` over the people `among` (somebody listed twice counts once).
+    fn pax_blockers_among(&self, i: usize, buses: &[BusNow], bus_ix: &HashMap<BusId, usize>, among: impl Iterator<Item = usize>) -> (u8, bool, bool) {
         let me = self.pax(i).unwrap();
         let Some((my_pos, my_head)) = self.pax_world(me, buses, bus_ix) else { return (0, true, true) };
         let fs = {
@@ -446,7 +483,8 @@ impl PeopleSim {
             DVec2::new(h.sin(), h.cos())
         };
         let (mut block, mut free_r, mut free_l) = (0u8, true, true);
-        for (j, o) in self.people.iter().enumerate() {
+        for j in among {
+            let o = &self.people[j];
             if j == i || o.puppet.is_some() {
                 continue;
             }

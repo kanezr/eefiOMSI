@@ -9,6 +9,7 @@ description = "Reader for OMSI's line-oriented [keyword] configuration format an
 encoding_rs.workspace = true
 thiserror.workspace = true
 log.workspace = true
+rayon.workspace = true
 flate2.workspace = true
 ring.workspace = true
 unicode-normalization = "0.1"

@@ -256,7 +256,7 @@ fn check_roads(world: &World, traffic: Option<&traffic::Traffic>) {
             log::info!("road check: {naked} of {checked} points along the driving lanes have no road surface under them ({:.1}%)", naked as f32 / checked.max(1) as f32 * 100.0);
             // OMSI_CHECK_SPLINES: chained splines whose ends do not meet in height
             if omsi_cfg::flags::OMSI_CHECK_SPLINES.is_set() {
-                spline_check();
+                spline_check(world);
             }
             log::info!(
                 "  {} stretches longer than 15 m (a hole rather than a raster edge)",
@@ -435,8 +435,8 @@ fn wheel_faces(world: &World, t: &traffic::Traffic) {
 }
 
 /// Chained splines whose ends do not meet in height (see `check_roads`).
-fn spline_check() {
-    let ends = crate::scene::SPLINE_ENDS.lock();
+fn spline_check(world: &World) {
+    let ends = world.spline_ends.lock();
     let mut bad: Vec<(f64, String)> = Vec::new();
     for (id, (a, b, prev, next, file)) in ends.iter() {
         for (me, other) in [(*b, *next), (*a, *prev)] {

@@ -22,8 +22,8 @@ impl Renderer {
         // adaptation to it is the light model's already: lifted by the meter on top, a
         // lamp-lit street came out most of a stop brighter than any eye sees it)
         let mut m = meter_tuning();
-        let after_sunset = self.sky_state.as_ref().map_or(0.0, |st| ((0.052 - st.input.sun_dir.normalize_or_zero().z) / 0.157).clamp(0.0, 1.0));
-        m[3] *= 1.0 - atmosphere::smoothstep(3.0, 7.0, self.exposure.unwrap_or(0.0) / std::f32::consts::LN_2);
+        let after_sunset = self.sky.sky_state.as_ref().map_or(0.0, |st| ((0.052 - st.input.sun_dir.normalize_or_zero().z) / 0.157).clamp(0.0, 1.0));
+        m[3] *= 1.0 - atmosphere::smoothstep(3.0, 7.0, self.tone.exposure.unwrap_or(0.0) / std::f32::consts::LN_2);
         let pu = PostUniform {
             // the metering may take a little off a bright picture and add a little to a
             // dark one: a night stays a night, snow stays white
@@ -46,22 +46,22 @@ impl Renderer {
             // than white spreads, a white wall does not - so the dots are multiplied up
             // there instead of being drawn burning: their halo shows, they don't bleach.
             // `Led glow`, 0 = not at all.)
-            c: [m[0], m[5], self.exposure.map(f32::exp).unwrap_or(1.0), lighting.led_glow * 10.0],
+            c: [m[0], m[5], self.tone.exposure.map(f32::exp).unwrap_or(1.0), lighting.led_glow * 10.0],
             // Enhanced+: its grade, the vignette and the sharpening; both: the tone
             // curve's contrast (post.wgsl `natural_tone`)
             d: {
-                let contrast = tone_contrast(self.exposure.unwrap_or(0.0));
+                let contrast = tone_contrast(self.tone.exposure.unwrap_or(0.0));
                 if rt_frame && !f.env.no_rt_grade { [1.0, 0.08, 0.0, contrast] } else { [0.0, 0.0, 0.0, contrast] }
             },
         };
         self.queue
-            .write_buffer(&self.post_buf, 0, bytemuck::bytes_of(&pu));
+            .write_buffer(&self.tone.post_buf, 0, bytemuck::bytes_of(&pu));
         // (a mirror's small picture goes without FXAA)
         let fxaa = with_overlays
             && self.options.fxaa
             && self.options.msaa <= 1
             && !f.env.no_fxaa;
-        if let Some(h) = self.hdr_targets.get(&(width, height)) {
+        if let Some(h) = self.targets.hdr_targets.get(&(width, height)) {
             let puddles = h.puddles.as_ref().filter(|_| puddles_on);
             let levels = h.down.len();
             for i in 0..levels {
@@ -70,9 +70,9 @@ impl Renderer {
                     &h.down[i],
                     None,
                     if i == 0 {
-                        &self.post.down_first
+                        &self.tone.post.down_first
                     } else {
-                        &self.post.down
+                        &self.tone.post.down
                     },
                     if i == 0 { puddles.map(|p| &p.down_bg).unwrap_or(&h.down_bg[i]) } else { &h.down_bg[i] },
                 );
@@ -83,26 +83,26 @@ impl Renderer {
             if lead_view {
                 post_pass(
                     encoder,
-                    &self.meter_view,
+                    &self.tone.meter_view,
                     None,
-                    &self.post.meter,
+                    &self.tone.post.meter,
                     &h.meter_bg,
                 );
-                let front = self.adapt_front;
+                let front = self.tone.adapt_front;
                 post_pass(
                     encoder,
-                    &self.adapt_views[1 - front],
+                    &self.tone.adapt_views[1 - front],
                     None,
-                    &self.post.adapt,
-                    &self.adapt_bg[front],
+                    &self.tone.post.adapt,
+                    &self.tone.adapt_bg[front],
                 );
-                self.adapt_front = 1 - front;
+                self.tone.adapt_front = 1 - front;
             }
             // (a device lost since this frame began took the meter's buffer as well)
             let lost = self.device_lost().is_some();
-            if let Some(log) = self.exposure_log.as_mut().filter(|_| with_overlays && !lost) {
-                let pre = self.exposure.unwrap_or(0.0) / std::f32::consts::LN_2;
-                log.sample(encoder, &self.adapt_views[self.adapt_front], pre, m);
+            if let Some(log) = self.tone.exposure_log.as_mut().filter(|_| with_overlays && !lost) {
+                let pre = self.tone.exposure.unwrap_or(0.0) / std::f32::consts::LN_2;
+                log.sample(encoder, &self.tone.adapt_views[self.tone.adapt_front], pre, m);
             }
             // (timed on its last pass: the glow chain with the metering, see GpuTimers)
             for i in (0..levels).rev() {
@@ -111,10 +111,10 @@ impl Renderer {
                 } else {
                     None
                 };
-                post_pass(encoder, &h.up[i], timer, &self.post.up, &h.up_bg[i]);
+                post_pass(encoder, &h.up[i], timer, &self.tone.post.up, &h.up_bg[i]);
             }
             let final_view = if fxaa { &h.ldr } else { scene_view };
-            let tonemap_bg = &puddles.map(|p| &p.tonemap_bg).unwrap_or(&h.tonemap_bg)[self.adapt_front];
+            let tonemap_bg = &puddles.map(|p| &p.tonemap_bg).unwrap_or(&h.tonemap_bg)[self.tone.adapt_front];
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("tone map"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -132,9 +132,9 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(if fxaa {
-                &self.post.tonemap_encoded
+                &self.tone.post.tonemap_encoded
             } else {
-                &self.post.tonemap
+                &self.tone.post.tonemap
             });
             pass.set_bind_group(0, tonemap_bg, &[]);
             pass.draw(0..3, 0..1);
@@ -156,7 +156,7 @@ impl Renderer {
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
-                pass.set_pipeline(&self.post.fxaa);
+                pass.set_pipeline(&self.tone.post.fxaa);
                 pass.set_bind_group(0, &h.fxaa_bg, &[]);
                 pass.draw(0..3, 0..1);
             }
@@ -180,7 +180,7 @@ impl Renderer {
         if let Some((_, bg)) = &f.scene_target {
             let sharpen = (1.0 - width as f32 / full_w as f32) * 2.0;
             self.queue.write_buffer(
-                &self.upscale_buf,
+                &self.scale.upscale_buf,
                 0,
                 bytemuck::cast_slice(&[width as f32, height as f32, sharpen.clamp(0.0, 0.8), if f.vanilla_fxaa { 1.0 } else { 0.0 }]),
             );
@@ -200,7 +200,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.upscale_pipeline);
+            pass.set_pipeline(&self.scale.upscale_pipeline);
             pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
             if !overlays.is_empty() {

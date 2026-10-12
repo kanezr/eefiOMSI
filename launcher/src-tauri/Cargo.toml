@@ -1,0 +1,53 @@
+[package]
+name = "openomsi-launcher-app"
+version = "0.2.33"
+edition = "2021"
+license = "MIT"
+description = "openOMSI's desktop launcher: a Tauri 2 window over omsi-launcher-core"
+publish = false
+
+# (a workspace of its own: the game's workspace leaves this folder out, see its `exclude`,
+# and a webview's dependencies stay out of the game's build)
+[workspace]
+
+[[bin]]
+name = "openomsi-launcher-app"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+omsi-launcher-core = { path = "../../crates/omsi-launcher-core" }
+omsi-launcher-api = { path = "../../crates/omsi-launcher-api" }
+omsi-cfg = { path = "../../crates/omsi-cfg" }
+omsi-platform = { path = "../../crates/omsi-platform" }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 4
+strip = "debuginfo"
+
+[profile.dev]
+# (the content lists read thousands of files: unoptimised they take seconds; no debug info
+# keeps the build folder small)
+opt-level = 1
+debug = false
+
+# Tauri from the organisation's fork (openOMSI-org/tauri-openomsi, branch openomsi/v2 =
+# tauri-v2.12.3 plus fixes): an application webview instead of a browser tab (`app_mode`), the
+# window shown with its first page instead of white (`show_when_loaded`), WebKitGTK's blank
+# window on NVIDIA. Every crate of the fork that Cargo.lock lists is patched.
+[patch.crates-io]
+tauri = { git = "https://github.com/openOMSI-org/tauri-openomsi", rev = "880c1b18348a" }
+tauri-build = { git = "https://github.com/openOMSI-org/tauri-openomsi", rev = "880c1b18348a" }
+tauri-codegen = { git = "https://github.com/openOMSI-org/tauri-openomsi", rev = "880c1b18348a" }
+tauri-macros = { git = "https://github.com/openOMSI-org/tauri-openomsi", rev = "880c1b18348a" }
+tauri-runtime = { git = "https://github.com/openOMSI-org/tauri-openomsi", rev = "880c1b18348a" }
+tauri-runtime-wry = { git = "https://github.com/openOMSI-org/tauri-openomsi", rev = "880c1b18348a" }
+tauri-utils = { git = "https://github.com/openOMSI-org/tauri-openomsi", rev = "880c1b18348a" }

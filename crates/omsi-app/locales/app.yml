@@ -4008,6 +4008,24 @@ _version: 2
   pt-pt: "conforto"
   de: "Komfort"
   nl: "comfort"
+  ru: "комфорт"
+  uk: "комфорт"
+  be: "камфорт"
+  kk: "жайлылық"
+  pl: "komfort"
+  cs: "pohodlí"
+  hu: "kényelem"
+  es: "comodidad"
+  it: "comfort"
+  tr: "konfor"
+  ja: "快適性"
+  ko: "쾌적성"
+  th: "ความสะดวกสบาย"
+  vi: "Độ thoải mái"
+  id: "Kenyamanan"
+  ms: "Keselesaan"
+  tl: "Ginhawa"
+  hi: "आराम"
 "ticket selling":
   ca: "venda de bitllets"
   ru: "продажа билетов"
@@ -4035,6 +4053,314 @@ _version: 2
   id: "Penjualan tiket"
   ms: "Jualan tiket"
   tl: "Pagbebenta ng tiket"
+
+"driving":
+  de: "Fahrweise"
+  fr: "conduite"
+  ru: "вождение"
+  uk: "водіння"
+  be: "вадзіння"
+  kk: "жүргізу"
+  pl: "jazda"
+  cs: "jízda"
+  hu: "vezetés"
+  es: "conducción"
+  pt: "direção"
+  pt-pt: "condução"
+  it: "guida"
+  nl: "rijgedrag"
+  tr: "sürüş"
+  ja: "運転"
+  zh-tw: "駕駛"
+  ko: "운전"
+  th: "การขับขี่"
+  vi: "Lái xe"
+  id: "Mengemudi"
+  ms: "Pemanduan"
+  tl: "Pagmamaneho"
+  zh: "驾驶"
+  hi: "ड्राइविंग"
+  ca: "conducció"
+
+"distance":
+  de: "Strecke"
+  fr: "distance"
+  ru: "расстояние"
+  uk: "відстань"
+  be: "адлегласць"
+  kk: "қашықтық"
+  pl: "dystans"
+  cs: "vzdálenost"
+  hu: "távolság"
+  es: "distancia"
+  pt: "distância"
+  pt-pt: "distância"
+  it: "distanza"
+  nl: "afstand"
+  tr: "mesafe"
+  ja: "距離"
+  zh-tw: "距離"
+  ko: "거리"
+  th: "ระยะทาง"
+  vi: "Quãng đường"
+  id: "Jarak"
+  ms: "Jarak"
+  tl: "Distansya"
+  zh: "距离"
+  hi: "दूरी"
+  ca: "distància"
+
+"time driven":
+  de: "Fahrzeit"
+  fr: "temps de conduite"
+  ru: "время в пути"
+  uk: "час у дорозі"
+  be: "час у дарозе"
+  kk: "жолдағы уақыт"
+  pl: "czas jazdy"
+  cs: "doba jízdy"
+  hu: "menetidő"
+  es: "tiempo de conducción"
+  pt: "tempo de direção"
+  pt-pt: "tempo de condução"
+  it: "tempo di guida"
+  nl: "rijtijd"
+  tr: "sürüş süresi"
+  ja: "運転時間"
+  zh-tw: "駕駛時間"
+  ko: "운전 시간"
+  th: "เวลาขับรถ"
+  vi: "Thời gian lái"
+  id: "Waktu mengemudi"
+  ms: "Masa memandu"
+  tl: "Oras ng pagmamaneho"
+  zh: "驾驶时间"
+  hi: "ड्राइविंग समय"
+  ca: "temps de conducció"
+
+"Bus stop":
+  de: "Haltestelle"
+  fr: "Arrêt"
+  ru: "Остановка"
+  uk: "Зупинка"
+  be: "Прыпынак"
+  kk: "Аялдама"
+  pl: "Przystanek"
+  cs: "Zastávka"
+  hu: "Megálló"
+  es: "Parada"
+  pt: "Parada"
+  pt-pt: "Paragem"
+  it: "Fermata"
+  nl: "Halte"
+  tr: "Durak"
+  ja: "停留所"
+  zh-tw: "車站"
+  ko: "정류장"
+  th: "ป้ายรถเมล์"
+  vi: "Điểm dừng"
+  id: "Halte"
+  ms: "Hentian"
+  tl: "Hintuan"
+  zh: "站点"
+  hi: "स्टॉप"
+  ca: "Parada"
+
+"Trip {}  |  {} to {}  |  {}":
+  de: "Fahrt {}  |  {} nach {}  |  {}"
+  fr: "Trajet {}  |  {} vers {}  |  {}"
+  ru: "Рейс {}  |  {} → {}  |  {}"
+  uk: "Рейс {}  |  {} → {}  |  {}"
+  be: "Рэйс {}  |  {} → {}  |  {}"
+  kk: "Рейс {}  |  {} → {}  |  {}"
+  pl: "Kurs {}  |  {} → {}  |  {}"
+  cs: "Spoj {}  |  {} → {}  |  {}"
+  hu: "Menet {}  |  {} → {}  |  {}"
+  es: "Viaje {}  |  {} a {}  |  {}"
+  pt: "Viagem {}  |  {} para {}  |  {}"
+  pt-pt: "Viagem {}  |  {} para {}  |  {}"
+  it: "Corsa {}  |  {} per {}  |  {}"
+  nl: "Rit {}  |  {} naar {}  |  {}"
+  tr: "Sefer {}  |  {} → {}  |  {}"
+  ja: "第{}便  |  {} → {}  |  {}"
+  zh-tw: "第 {} 班次  |  {} → {}  |  {}"
+  ko: "{}번째 운행  |  {} → {}  |  {}"
+  th: "เที่ยวที่ {}  |  {} → {}  |  {}"
+  vi: "Chuyến {}  |  {} → {}  |  {}"
+  id: "Perjalanan {}  |  {} → {}  |  {}"
+  ms: "Perjalanan {}  |  {} → {}  |  {}"
+  tl: "Biyahe {}  |  {} → {}  |  {}"
+  zh: "第 {} 班次  |  {} → {}  |  {}"
+  hi: "ट्रिप {}  |  {} → {}  |  {}"
+  ca: "Trajecte {}  |  {} a {}  |  {}"
+
+"Line {}, tour {}":
+  de: "Linie {}, Umlauf {}"
+  fr: "Ligne {}, service {}"
+  ru: "Линия {}, выход {}"
+  uk: "Лінія {}, оборот {}"
+  be: "Лінія {}, абарот {}"
+  kk: "Желі {}, рейстер тізбегі {}"
+  pl: "Linia {}, brygada {}"
+  cs: "Linka {}, turnus {}"
+  hu: "Járat {}, forda {}"
+  es: "Línea {}, recorrido {}"
+  pt: "Linha {}, escala {}"
+  pt-pt: "Linha {}, escala {}"
+  it: "Linea {}, turno {}"
+  nl: "Lijn {}, omloop {}"
+  tr: "Hat {}, sefer turu {}"
+  ja: "系統 {}、行路 {}"
+  zh-tw: "路線 {}，更次 {}"
+  ko: "노선 {}, 운행 순번 {}"
+  th: "สายรถ {}, รอบเดินรถ {}"
+  vi: "Tuyến {}, lượt chạy {}"
+  id: "Jalur {}, rotasi {}"
+  ms: "Laluan {}, pusingan {}"
+  tl: "Linya {}, turno {}"
+  zh: "线路 {}，行程 {}"
+  hi: "लाइन {}, टूर {}"
+  ca: "Línia {}, torn {}"
+
+"passengers":
+  de: "Fahrgäste"
+  fr: "passagers"
+  ru: "пассажиры"
+  uk: "пасажири"
+  be: "пасажыры"
+  kk: "жолаушылар"
+  pl: "pasażerowie"
+  cs: "cestující"
+  hu: "utasok"
+  es: "pasajeros"
+  pt: "passageiros"
+  pt-pt: "passageiros"
+  it: "passeggeri"
+  nl: "passagiers"
+  tr: "yolcular"
+  ja: "乗客"
+  zh-tw: "乘客"
+  ko: "승객"
+  th: "ผู้โดยสาร"
+  vi: "Hành khách"
+  id: "Penumpang"
+  ms: "Penumpang"
+  tl: "Mga pasahero"
+  zh: "乘客"
+  hi: "यात्री"
+  ca: "passatgers"
+
+"Your passengers enjoyed the ride":
+  de: "Deine Fahrgäste haben die Fahrt genossen"
+  fr: "Vos passagers ont apprécié le trajet"
+  ru: "Пассажирам понравилась поездка"
+  uk: "Пасажирам сподобалася поїздка"
+  be: "Пасажырам спадабалася паездка"
+  kk: "Жолаушыларыңызға сапар ұнады"
+  pl: "Twoim pasażerom podobała się jazda"
+  cs: "Vaši cestující si jízdu užili"
+  hu: "Az utasaid élvezték az utat"
+  es: "Tus pasajeros disfrutaron del viaje"
+  pt: "Seus passageiros aproveitaram a viagem"
+  pt-pt: "Os seus passageiros gostaram da viagem"
+  it: "I tuoi passeggeri hanno apprezzato il viaggio"
+  nl: "Je passagiers hebben genoten van de rit"
+  tr: "Yolcularınız yolculuğun keyfini çıkardı"
+  ja: "乗客は乗車を楽しみました"
+  zh-tw: "乘客很享受這趟車程"
+  ko: "승객들이 즐겁게 탑승했습니다"
+  th: "ผู้โดยสารของคุณเพลิดเพลินกับการเดินทาง"
+  vi: "Hành khách đã tận hưởng chuyến đi"
+  id: "Penumpang Anda menikmati perjalanan"
+  ms: "Penumpang anda menikmati perjalanan"
+  tl: "Nasiyahan ang mga pasahero mo sa biyahe"
+  zh: "乘客很享受这趟车程"
+  hi: "आपके यात्रियों ने सफ़र का आनंद लिया"
+  ca: "Els teus passatgers han gaudit del trajecte"
+
+"Your passengers were satisfied":
+  de: "Deine Fahrgäste waren zufrieden"
+  fr: "Vos passagers étaient satisfaits"
+  ru: "Пассажиры остались довольны"
+  uk: "Пасажири залишилися задоволені"
+  be: "Пасажыры засталіся задаволеныя"
+  kk: "Жолаушыларыңыз риза болды"
+  pl: "Twoi pasażerowie byli zadowoleni"
+  cs: "Vaši cestující byli spokojení"
+  hu: "Az utasaid elégedettek voltak"
+  es: "Tus pasajeros quedaron satisfechos"
+  pt: "Seus passageiros ficaram satisfeitos"
+  pt-pt: "Os seus passageiros ficaram satisfeitos"
+  it: "I tuoi passeggeri erano soddisfatti"
+  nl: "Je passagiers waren tevreden"
+  tr: "Yolcularınız memnun kaldı"
+  ja: "乗客は満足しました"
+  zh-tw: "乘客感到滿意"
+  ko: "승객들이 만족했습니다"
+  th: "ผู้โดยสารของคุณพึงพอใจ"
+  vi: "Hành khách đã hài lòng"
+  id: "Penumpang Anda puas"
+  ms: "Penumpang anda berpuas hati"
+  tl: "Kontento ang mga pasahero mo"
+  zh: "乘客感到满意"
+  hi: "आपके यात्री संतुष्ट थे"
+  ca: "Els teus passatgers han quedat satisfets"
+
+"Your passengers were not very happy":
+  de: "Deine Fahrgäste waren nicht ganz zufrieden"
+  fr: "Vos passagers n'étaient pas très contents"
+  ru: "Пассажиры остались не очень довольны"
+  uk: "Пасажири залишилися не дуже задоволені"
+  be: "Пасажыры засталіся не вельмі задаволеныя"
+  kk: "Жолаушыларыңыз онша риза болмады"
+  pl: "Twoi pasażerowie nie byli zbyt zadowoleni"
+  cs: "Vaši cestující nebyli moc spokojení"
+  hu: "Az utasaid nem voltak túl elégedettek"
+  es: "Tus pasajeros no quedaron muy contentos"
+  pt: "Seus passageiros não ficaram muito contentes"
+  pt-pt: "Os seus passageiros não ficaram muito contentes"
+  it: "I tuoi passeggeri non erano molto contenti"
+  nl: "Je passagiers waren niet erg tevreden"
+  tr: "Yolcularınız pek memnun kalmadı"
+  ja: "乗客はあまり満足しませんでした"
+  zh-tw: "乘客不太滿意"
+  ko: "승객들이 그다지 만족하지 않았습니다"
+  th: "ผู้โดยสารของคุณไม่ค่อยพอใจ"
+  vi: "Hành khách không hài lòng lắm"
+  id: "Penumpang Anda kurang puas"
+  ms: "Penumpang anda kurang berpuas hati"
+  tl: "Hindi gaanong kontento ang mga pasahero mo"
+  zh: "乘客不太满意"
+  hi: "आपके यात्री बहुत खुश नहीं थे"
+  ca: "Els teus passatgers no han quedat gaire contents"
+
+"Your passengers were unhappy":
+  de: "Deine Fahrgäste waren unzufrieden"
+  fr: "Vos passagers étaient mécontents"
+  ru: "Пассажиры остались недовольны"
+  uk: "Пасажири залишилися незадоволені"
+  be: "Пасажыры засталіся незадаволеныя"
+  kk: "Жолаушыларыңыз наразы болды"
+  pl: "Twoi pasażerowie byli niezadowoleni"
+  cs: "Vaši cestující byli nespokojení"
+  hu: "Az utasaid elégedetlenek voltak"
+  es: "Tus pasajeros quedaron descontentos"
+  pt: "Seus passageiros ficaram insatisfeitos"
+  pt-pt: "Os seus passageiros ficaram descontentes"
+  it: "I tuoi passeggeri erano scontenti"
+  nl: "Je passagiers waren ontevreden"
+  tr: "Yolcularınız hiç memnun kalmadı"
+  ja: "乗客は不満でした"
+  zh-tw: "乘客感到不滿"
+  ko: "승객들이 불만족했습니다"
+  th: "ผู้โดยสารของคุณไม่พอใจ"
+  vi: "Hành khách không hài lòng"
+  id: "Penumpang Anda tidak puas"
+  ms: "Penumpang anda tidak berpuas hati"
+  tl: "Hindi kontento ang mga pasahero mo"
+  zh: "乘客感到不满"
+  hi: "आपके यात्री असंतुष्ट थे"
+  ca: "Els teus passatgers han quedat descontents"
 "runs":
   fr: "services"
   ca: "serveis"
@@ -4044,6 +4370,7 @@ _version: 2
   pt-pt: "viagens"
   de: "Fahrten"
   nl: "ritten"
+  ru: "поездок"
 "Recent runs":
   ca: "Serveis recents"
   ru: "Последние поездки"
@@ -10257,9 +10584,9 @@ _version: 2
   tl: "Oras +1 oras"
 "Clock -1 hour":
   ca: "Rellotge -1 hora"
-  ru: "Часы −1 час"
-  de: "Uhr −1 Stunde"
-  fr: "Horloge −1 heure"
+  ru: "Часы -1 час"
+  de: "Uhr -1 Stunde"
+  fr: "Horloge -1 heure"
   uk: "Годинник -1 год"
   be: "Гадзіннік -1 гадз"
   kk: "Сағат -1 сағат"
@@ -12814,9 +13141,9 @@ _version: 2
   zh-tw: "時間 +10 分鐘"
 "Clock -10 minutes":
   ca: "Rellotge -10 minuts"
-  ru: "Часы −10 минут"
-  de: "Uhr −10 Minuten"
-  fr: "Horloge −10 minutes"
+  ru: "Часы -10 минут"
+  de: "Uhr -10 Minuten"
+  fr: "Horloge -10 minutes"
   uk: "Годинник -10 хвилин"
   be: "Гадзіннік -10 хвілін"
   kk: "Сағат -10 минут"
@@ -12938,6 +13265,12 @@ _version: 2
   zh: "关闭"
   hi: "बंद करें"
   zh-tw: "關閉"
+  ko: "닫기"
+  th: "ปิด"
+  vi: "Đóng"
+  id: "Tutup"
+  ms: "Tutup"
+  tl: "Isara"
 "Collisions with objects":
   ca: "Col|lisions amb objectes"
   ru: "Столкновения с объектами"
@@ -19387,6 +19720,12 @@ _version: 2
   zh: "准点"
   hi: "समय पर"
   zh-tw: "準點"
+  ko: "정시"
+  th: "ตรงเวลา"
+  vi: "Đúng giờ"
+  id: "Tepat waktu"
+  ms: "Tepat masa"
+  tl: "Nasa oras"
 "openOMSI":
   ca: "openOMSI"
   ru: "openOMSI"
@@ -20185,27 +20524,27 @@ _version: 2
   zh: "weather next"
   hi: "अगला मौसम"
   zh-tw: "下一個天氣"
-"−1 min":
-  ca: "−1 min"
-  ru: "−1 min"
-  de: "−1 min"
-  fr: "−1 min"
-  uk: "−1 хв"
-  be: "−1 хв"
-  kk: "−1 мин"
-  pl: "−1 min"
-  cs: "−1 min"
-  hu: "−1 perc"
-  es: "−1 min"
-  pt: "−1 min"
-  pt-pt: "−1 min"
-  it: "−1 min"
-  nl: "−1 min"
-  tr: "−1 dk"
-  ja: "−1分"
-  zh: "−1 分钟"
-  hi: "−1 मिनट"
-  zh-tw: "−1 分鐘"
+"-1 min":
+  ca: "-1 min"
+  ru: "-1 min"
+  de: "-1 min"
+  fr: "-1 min"
+  uk: "-1 хв"
+  be: "-1 хв"
+  kk: "-1 мин"
+  pl: "-1 min"
+  cs: "-1 min"
+  hu: "-1 perc"
+  es: "-1 min"
+  pt: "-1 min"
+  pt-pt: "-1 min"
+  it: "-1 min"
+  nl: "-1 min"
+  tr: "-1 dk"
+  ja: "-1分"
+  zh: "-1 分钟"
+  hi: "-1 मिनट"
+  zh-tw: "-1 分鐘"
 "★ NEW | ":
   ca: "★ NOU | "
   ru: "★ НОВОЕ | "
@@ -22569,6 +22908,8 @@ _version: 2
   fr: "Continuer"
   zh-tw: "繼續"
   nl: "Doorgaan"
+  de: "Fortsetzen"
+  ru: "Продолжить"
 
 "Join and drive":
   ca: "Uneix-t'hi i condueix"
@@ -22579,6 +22920,24 @@ _version: 2
   fr: "Rejoindre et conduire"
   zh-tw: "加入並駕駛"
   nl: "Deelnemen en rijden"
+  de: "Beitreten und fahren"
+  ru: "Присоединиться и ехать"
+  uk: "Приєднатися і їхати"
+  be: "Далучыцца і ехаць"
+  kk: "Қосылып жүру"
+  cs: "Připojit se a jet"
+  hu: "Csatlakozás és vezetés"
+  es: "Unirse y conducir"
+  it: "Unisciti e guida"
+  tr: "Katıl ve sür"
+  ja: "参加して運転"
+  ko: "참가 후 운전"
+  th: "เข้าร่วมและขับรถ"
+  vi: "Tham gia và lái xe"
+  id: "Gabung dan mengemudi"
+  ms: "Sertai dan pandu"
+  tl: "Sumali at magmaneho"
+  hi: "जुड़ें और चलाएँ"
 
 "The game is running":
   ca: "El joc està en marxa"
@@ -22779,6 +23138,8 @@ _version: 2
   fr: "Quitter"
   zh-tw: "離開"
   nl: "Verlaten"
+  de: "Verlassen"
+  ru: "Покинуть"
 
 "A friend's code or a server address":
   ca: "El codi d'un amic o l'adreça d'un servidor"
@@ -24282,6 +24643,8 @@ _version: 2
   fr: "Saison"
   zh-tw: "季節"
   nl: "Seizoen"
+  de: "Jahreszeit"
+  ru: "Сезон"
 
 "Choose a line and a tour to see the roadbook and the IBIS codes.":
   ca: "Tria una línia i un torn per veure el full de ruta i els codis de l'IBIS."
@@ -25093,6 +25456,8 @@ _version: 2
   ca: "Pintura"
   fr: "Livrée"
   zh-tw: "塗裝"
+  de: "Lackierung"
+  ru: "Окраска"
 
   pt: "Pintura"
   pt-pt: "Pintura"
@@ -25299,6 +25664,7 @@ _version: 2
   zh: "左下"
   de: "Unten links"
   nl: "Linksonder"
+  ru: "Слева снизу"
 "Bottom right":
   ca: "Inferior dreta"
   zh-tw: "右下角"
@@ -25308,6 +25674,7 @@ _version: 2
   zh: "右下"
   de: "Unten rechts"
   nl: "Rechtsonder"
+  ru: "Справа снизу"
 "Cabin and outside, one key":
   ca: "Cabina i exterior, una sola tecla"
   fr: "Cabine et extérieur, une seule touche"
@@ -25984,6 +26351,8 @@ _version: 2
   pt-pt: "Superior esquerdo"
   zh: "左上"
   nl: "Linksboven"
+  de: "Oben links"
+  ru: "Слева сверху"
 "Top right":
   ca: "Superior dreta"
   zh-tw: "右上"
@@ -25992,6 +26361,8 @@ _version: 2
   pt-pt: "Superior direito"
   zh: "右上"
   nl: "Rechtsboven"
+  de: "Oben rechts"
+  ru: "Справа сверху"
 "Triple screen":
   ca: "Triple pantalla"
   fr: "Triple écran"
@@ -26070,6 +26441,8 @@ _version: 2
   ca: "Funció de cada eix i botó d'un volant, pedals o joystick: gamectrler.cfg d'OMSI 2, desat a la carpeta de contingut."
   fr: "Ce que fait chaque axe et bouton d'un volant, d'un pédalier ou d'un joystick - le gamectrler.cfg d'OMSI 2, gardé dans le dossier de contenu."
   zh-tw: "方向盤、踏板或操縱桿的每個軸與按鍵功能；OMSI 2 的 gamectrler.cfg 儲存在內容資料夾中。"
+  de: "Was jede Achse und Taste von Lenkrad, Pedalen oder Joystick tut - die gamectrler.cfg von OMSI 2, im Inhaltsordner abgelegt."
+  ru: "Что делает каждая ось и кнопка руля, педалей или джойстика: gamectrler.cfg из OMSI 2, хранится в папке контента."
 
   pt: "O que cada eixo e botão de um volante, pedais ou joystick faz - o gamectrler.cfg do OMSI 2, mantido na pasta de conteúdo."
   pt-pt: "O que cada eixo e botão de um volante, pedais ou joystick faz - o gamectrler.cfg do OMSI 2, mantido na pasta de conteúdo."
@@ -26169,6 +26542,8 @@ _version: 2
   ca: "Tria un mapa"
   fr: "Choisissez une carte"
   zh-tw: "選擇地圖"
+  de: "Karte wählen"
+  ru: "Выбор карты"
 
   pt: "Escolha um mapa"
   pt-pt: "Escolha um mapa"
@@ -26436,6 +26811,8 @@ _version: 2
   ca: "Hora i temps"
   fr: "Heure et météo"
   zh-tw: "時間與天氣"
+  de: "Zeit und Wetter"
+  ru: "Время и погода"
 
   pt: "Hora e clima"
   pt-pt: "Hora e meteorologia"
@@ -26510,6 +26887,8 @@ _version: 2
   fr: "Météo naturelle"
   zh-tw: "自然天氣"
   nl: "Natuurlijk weer"
+  de: "Natürliches Wetter"
+  ru: "Естественная погода"
 
 "Develops by itself through the day and the season":
   ca: "Evoluciona per si sol segons el moment del dia i l'estació"
@@ -26520,6 +26899,8 @@ _version: 2
   fr: "Évolue d'elle-même au fil de la journée et de la saison"
   zh-tw: "隨一天與季節自行演變"
   nl: "Verandert vanzelf gedurende de dag en het seizoen"
+  de: "Entwickelt sich von selbst über Tag und Jahreszeit"
+  ru: "Меняется сама в течение дня и сезона"
 
 "H-pattern shifter: return to neutral when the gear is released":
   ca: "Canvi en H: torna a punt mort en deixar anar la marxa"
@@ -26740,6 +27121,8 @@ _version: 2
   pt: "Pacote de diagnóstico"
   pt-pt: "Pacote de diagnóstico"
   nl: "Ondersteuningspakket"
+  de: "Support-Paket"
+  ru: "Пакет для поддержки"
 "A ZIP for a bug report: the program and system versions, the graphics card, its driver and the graphics settings, the controllers, and the map and bus of the last game. No folders, names, chat, LAN codes or addresses; of the logs only which events happened. It is saved on this computer and its folder opened, so you can look inside before you attach it to an issue.":
   pt: "Um ZIP para um relato de erro: as versões do programa e do sistema, a placa de vídeo, seu driver e as configurações gráficas, os controles, e o mapa e o ônibus do último jogo. Nenhuma pasta, nome, chat, código de LAN ou endereço; dos logs, apenas quais eventos aconteceram. Ele é salvo neste computador e a pasta é aberta, para que você confira o conteúdo antes de anexá-lo a um relato."
   pt-pt: "Um ZIP para um relatório de erro: as versões do programa e do sistema, a placa gráfica, o respetivo controlador e as definições gráficas, os comandos, e o mapa e o autocarro do último jogo. Nenhuma pasta, nome, chat, código de LAN ou endereço; dos registos, apenas que eventos ocorreram. É guardado neste computador e a pasta é aberta, para que possa ver o conteúdo antes de o anexar a um relatório."
@@ -27378,18 +27761,28 @@ _version: 2
 
 "Personnel file of {name} deleted.":
   fr: "Dossier de {name} supprimé."
+  de: "Personalakte von {name} gelöscht."
+  ru: "Личное дело {name} удалено."
 
 "Driver {name} created.":
   fr: "Conducteur {name} créé."
+  de: "Fahrer {name} angelegt."
+  ru: "Водитель {name} создан."
 
 "Loaded \"{name}\".":
   fr: "« {name} » chargé."
+  de: "„{name}“ geladen."
+  ru: "Загружен «{name}»."
 
 "Deleted \"{name}\".":
   fr: "« {name} » supprimé."
+  de: "„{name}“ gelöscht."
+  ru: "«{name}» удалён."
 
 "Saved \"{name}\".":
   fr: "« {name} » enregistré."
+  de: "„{name}“ gespeichert."
+  ru: "«{name}» сохранён."
 
 "Automatic ({} here)":
   fr: "Automatique ({} ici)"
@@ -27405,6 +27798,8 @@ _version: 2
 
 "Anything put into {} is installed by itself once it has finished copying.":
   fr: "Tout ce qui est mis dans {} s'installe tout seul une fois la copie terminée."
+  de: "Alles, was in {} gelegt wird, installiert sich von selbst, sobald es fertig kopiert ist."
+  ru: "Всё, что положено в {}, устанавливается само после завершения копирования."
 
 "Line {line} | tour {t}":
   fr: "Ligne {line} | service {t}"
@@ -31751,3 +32146,1040 @@ _version: 2
   zh: "驾驶视角旁的面板:眼睛位置、方向、视野和每面后视镜,为此车辆保存。"
   hi: "चालक दृश्य के बगल में एक पैनल: आँख, दिशा, दृष्टि क्षेत्र और हर दर्पण, इस वाहन के लिए सहेजा जाता है।"
   ca: "Un panell al costat de la vista del conductor: els ulls, la direcció, el camp de visió i cada retrovisor, desats per a aquest vehicle."
+
+"Join {name}":
+  de: "{name} beitreten"
+  fr: "Rejoindre {name}"
+  ru: "Присоединиться к {name}"
+  uk: "Приєднатися до {name}"
+  be: "Далучыцца да {name}"
+  kk: "Қосылу: {name}"
+  pl: "Dołącz do {name}"
+  cs: "Připojit se: {name}"
+  hu: "Csatlakozás: {name}"
+  es: "Unirse a {name}"
+  pt: "Entrar em {name}"
+  pt-pt: "Entrar em {name}"
+  it: "Unisciti a {name}"
+  nl: "Deelnemen aan {name}"
+  tr: "Katıl: {name}"
+  ja: "{name}に参加"
+  zh-tw: "加入 {name}"
+  ko: "{name}에 참가"
+  th: "เข้าร่วม {name}"
+  vi: "Tham gia {name}"
+  id: "Gabung ke {name}"
+  ms: "Sertai {name}"
+  tl: "Sumali sa {name}"
+  zh: "加入 {name}"
+  hi: "{name} से जुड़ें"
+  ca: "Uneix-te a {name}"
+
+"Running games":
+  de: "Laufende Spiele"
+  ru: "Запущенные игры"
+
+"Launcher":
+  de: "Launcher"
+  ru: "Лаунчер"
+
+"Level {n}":
+  de: "Stufe {n}"
+  ru: "Уровень {n}"
+
+"Choose a driver":
+  de: "Fahrer wählen"
+  ru: "Выберите водителя"
+
+"{n} buses":
+  de: "{n} Busse"
+  ru: "Автобусов: {n}"
+
+"Take this bus":
+  de: "Diesen Bus nehmen"
+  ru: "Взять этот автобус"
+
+"Search buses":
+  de: "Busse suchen"
+  ru: "Поиск автобусов"
+
+"All makers":
+  de: "Alle Hersteller"
+  ru: "Все производители"
+
+"Starred":
+  de: "Markiert"
+  ru: "Избранные"
+
+"{n} paints":
+  de: "{n} Lackierungen"
+  ru: "Окрасок: {n}"
+
+"Parts missing":
+  de: "Teile fehlen"
+  ru: "Не хватает частей"
+
+"Star":
+  de: "Markieren"
+  ru: "В избранное"
+
+"Mod":
+  de: "Mod"
+  ru: "Мод"
+
+"Parts of this bus come from packs that are not installed: {packs}":
+  de: "Teile dieses Busses stammen aus nicht installierten Paketen: {packs}"
+  ru: "Часть деталей этого автобуса берётся из неустановленных пакетов: {packs}"
+
+"Choose a bus on the left":
+  de: "Wähle links einen Bus"
+  ru: "Выберите автобус слева"
+
+"Preparing the preview…":
+  de: "Vorschau wird vorbereitet…"
+  ru: "Готовим превью…"
+
+"No preview of this bus":
+  de: "Keine Vorschau für diesen Bus"
+  ru: "Для этого автобуса нет превью"
+
+"Drag to turn, scroll to zoom":
+  de: "Ziehen zum Drehen, Mausrad zum Zoomen"
+  ru: "Тяните, чтобы повернуть; колесо: масштаб"
+
+"Reading the keys…":
+  de: "Tasten werden gelesen…"
+  ru: "Читаем клавиши…"
+
+"Reset to defaults":
+  de: "Auf Standard zurücksetzen"
+  ru: "Сбросить по умолчанию"
+
+"Every key goes back to OMSI 2's own keyboard.cfg. Keys you added for a bus's own triggers are removed.":
+  de: "Alle Tasten kehren zur keyboard.cfg von OMSI 2 zurück. Für Bus-eigene Trigger hinzugefügte Tasten werden entfernt."
+  ru: "Все клавиши вернутся к keyboard.cfg из OMSI 2. Клавиши, добавленные для триггеров автобусов, будут удалены."
+
+"Add binding":
+  de: "Belegung hinzufügen"
+  ru: "Добавить привязку"
+
+"Add \"{name}\" and give it a key":
+  de: "„{name}“ hinzufügen und eine Taste geben"
+  ru: "Добавить «{name}» и назначить клавишу"
+
+"Action":
+  de: "Aktion"
+  ru: "Действие"
+
+"Key":
+  de: "Taste"
+  ru: "Клавиша"
+
+"Another entry of this list has the same key.":
+  de: "Ein anderer Eintrag dieser Liste hat dieselbe Taste."
+  ru: "В этом списке есть другая запись с той же клавишей."
+
+"Same key":
+  de: "Gleiche Taste"
+  ru: "Та же клавиша"
+
+"Edit":
+  de: "Ändern"
+  ru: "Изменить"
+
+"Add another key for this action":
+  de: "Weitere Taste für diese Aktion"
+  ru: "Добавить ещё одну клавишу для этого действия"
+
+"Clear the key (the entry stays)":
+  de: "Taste löschen (Eintrag bleibt)"
+  ru: "Очистить клавишу (запись останется)"
+
+"Remove the entry":
+  de: "Eintrag entfernen"
+  ru: "Удалить запись"
+
+"No matching actions.":
+  de: "Keine passenden Aktionen."
+  ru: "Подходящих действий нет."
+
+"{code} has no DirectInput scan code the game understands.":
+  de: "{code} hat keinen DirectInput-Scancode, den das Spiel versteht."
+  ru: "У {code} нет скан-кода DirectInput, понятного игре."
+
+"Use it anyway":
+  de: "Trotzdem verwenden"
+  ru: "Всё равно назначить"
+
+"Now:":
+  de: "Jetzt:"
+  ru: "Сейчас:"
+
+"This key is already used by: {actions}":
+  de: "Diese Taste ist schon belegt: {actions}"
+  ru: "Эта клавиша уже занята: {actions}"
+
+"Both will react to it. Press another key, or use it anyway.":
+  de: "Beide reagieren darauf. Drücke eine andere Taste oder verwende sie trotzdem."
+  ru: "Сработают оба. Нажмите другую клавишу или назначьте всё равно."
+
+"Hold Shift, Ctrl or Alt for a combination. Escape cancels; Backspace or Delete clears the key.":
+  de: "Halte Umschalt, Strg oder Alt für eine Kombination. Esc bricht ab; Rücktaste oder Entf löscht die Taste."
+  ru: "Удерживайте Shift, Ctrl или Alt для сочетания. Escape: отмена; Backspace или Delete очищают клавишу."
+
+"Add a key binding":
+  de: "Tastenbelegung hinzufügen"
+  ru: "Добавить привязку клавиши"
+
+"Search actions...":
+  de: "Aktionen suchen..."
+  ru: "Поиск действий..."
+
+"{n} results":
+  de: "{n} Treffer"
+  ru: "Найдено: {n}"
+
+"The installed buses' own script triggers are not listed here: type the trigger's name in the list's filter to add it.":
+  de: "Die eigenen Skript-Trigger der Busse stehen nicht hier: Gib den Namen des Triggers in den Filter der Liste ein, um ihn hinzuzufügen."
+  ru: "Собственные триггеры скриптов автобусов здесь не перечислены: введите имя триггера в фильтр списка, чтобы добавить его."
+
+"No game controller is connected. Connect it and press one of its buttons: it shows up here.":
+  de: "Kein Gamecontroller verbunden. Schließe ihn an und drücke eine seiner Tasten: Er erscheint hier."
+  ru: "Игровой контроллер не подключён. Подключите его и нажмите любую кнопку, и он появится здесь."
+
+"Which axis and button does what (OMSI 2's gamectrler.cfg), the step-by-step set-up, force feedback and switching a device off need the launcher's own access to the devices, which this page does not have yet. The test above shows what the device sends, as the system sees it.":
+  de: "Welche Achse und Taste was tut (gamectrler.cfg von OMSI 2), die Schritt-für-Schritt-Einrichtung, Force Feedback und das Abschalten eines Geräts brauchen den direkten Gerätezugriff des Launchers, den diese Seite noch nicht hat. Der Test oben zeigt, was das Gerät sendet, wie das System es sieht."
+  ru: "Назначение осей и кнопок (gamectrler.cfg из OMSI 2), пошаговая настройка, отдача и отключение устройства требуют прямого доступа лаунчера к устройствам, которого у этой страницы пока нет. Проверка выше показывает, что устройство отправляет системе."
+
+"Axis {n}":
+  de: "Achse {n}"
+  ru: "Ось {n}"
+
+"Button {n}":
+  de: "Taste {n}"
+  ru: "Кнопка {n}"
+
+"The settings could not be saved: {e}":
+  de: "Die Einstellungen konnten nicht gespeichert werden: {e}"
+  ru: "Не удалось сохранить настройки: {e}"
+
+"The game is starting ({n} already running)":
+  de: "Das Spiel startet ({n} laufen schon)"
+  ru: "Игра запускается (уже запущено: {n})"
+
+"The game is starting…":
+  de: "Das Spiel startet…"
+  ru: "Игра запускается…"
+
+"Installing {name}…":
+  de: "{name} wird installiert…"
+  ru: "Устанавливается {name}…"
+
+"Choose where and what you drive, then start.":
+  de: "Wähle, wo und womit du fährst, dann los."
+  ru: "Выберите, где и на чём поедете, и стартуйте."
+
+"Change map":
+  de: "Karte wechseln"
+  ru: "Сменить карту"
+
+"Reading the maps…":
+  de: "Karten werden gelesen…"
+  ru: "Читаем карты…"
+
+"No map is installed.":
+  de: "Keine Karte installiert."
+  ru: "Не установлено ни одной карты."
+
+"{n} entry points":
+  de: "{n} Einstiegspunkte"
+  ru: "Точек входа: {n}"
+
+"Change bus":
+  de: "Bus wechseln"
+  ru: "Сменить автобус"
+
+"Reading the buses… {done} of {total}":
+  de: "Busse werden gelesen… {done} von {total}"
+  ru: "Читаем автобусы… {done} из {total}"
+
+"Reading the buses…":
+  de: "Busse werden gelesen…"
+  ru: "Читаем автобусы…"
+
+"No bus is installed.":
+  de: "Kein Bus installiert."
+  ru: "Не установлено ни одного автобуса."
+
+"Reading the timetable…":
+  de: "Fahrplan wird gelesen…"
+  ru: "Читаем расписание…"
+
+"This map has no lines to drive on this date. Choose a free drive, or another date.":
+  de: "Diese Karte hat an diesem Datum keine Linien. Wähle freies Fahren oder ein anderes Datum."
+  ru: "На этой карте в эту дату нет линий. Выберите свободную езду или другую дату."
+
+"not on this day":
+  de: "nicht an diesem Tag"
+  ru: "не в этот день"
+
+"Show ended tours ({n})":
+  de: "Beendete Umläufe zeigen ({n})"
+  ru: "Показать завершённые выходы ({n})"
+
+"This tour does not run on the chosen date; it runs next on {date}.":
+  de: "Dieser Umlauf fährt am gewählten Datum nicht; das nächste Mal am {date}."
+  ru: "Этот выход не работает в выбранную дату; ближайший: {date}."
+
+"This tour does not run within a year of the chosen date.":
+  de: "Dieser Umlauf fährt innerhalb eines Jahres ab dem Datum nicht."
+  ru: "Этот выход не работает в течение года от выбранной даты."
+
+"Trips of the tour":
+  de: "Fahrten des Umlaufs"
+  ru: "Рейсы выхода"
+
+"Click a trip to start with it":
+  de: "Klicke eine Fahrt an, um mit ihr zu beginnen"
+  ru: "Нажмите на рейс, чтобы начать с него"
+
+"From":
+  de: "Von"
+  ru: "Откуда"
+
+"Arrives":
+  de: "Ankunft"
+  ru: "Прибытие"
+
+"Depot run":
+  de: "Betriebsfahrt"
+  ru: "Служебный рейс"
+
+"Start time":
+  de: "Startzeit"
+  ru: "Время начала"
+
+"On the road":
+  de: "Auf der Straße"
+  ru: "На дороге"
+
+"People wait at the stops and ride along":
+  de: "Fahrgäste warten an den Haltestellen und fahren mit"
+  ru: "Люди ждут на остановках и ездят"
+
+"Other buses of the timetable drive their lines":
+  de: "Andere Busse des Fahrplans fahren ihre Linien"
+  ru: "Другие автобусы расписания ездят по своим линиям"
+
+"Bus ready to go":
+  de: "Bus abfahrbereit"
+  ru: "Автобус готов к выезду"
+
+"Engine running, doors and lights set":
+  de: "Motor läuft, Türen und Licht eingestellt"
+  ru: "Двигатель заведён, двери и свет настроены"
+
+"Start on foot":
+  de: "Zu Fuß beginnen"
+  ru: "Начать пешком"
+
+"Walk to the bus, or place one later from the menu":
+  de: "Geh zum Bus oder setze später einen aus dem Menü"
+  ru: "Дойдите до автобуса или поставьте его позже из меню"
+
+"First trip":
+  de: "Erste Fahrt"
+  ru: "Первый рейс"
+
+"Joining {server}":
+  de: "Beitritt zu {server}"
+  ru: "Подключение к {server}"
+
+"Starting…":
+  de: "Startet…"
+  ru: "Запуск…"
+
+"Start driving":
+  de: "Losfahren"
+  ru: "Поехать"
+
+"{n} game(s) running":
+  de: "Laufende Spiele: {n}"
+  ru: "Запущено игр: {n}"
+
+"Show":
+  de: "Zeigen"
+  ru: "Показать"
+
+"Hide the command line":
+  de: "Befehlszeile ausblenden"
+  ru: "Скрыть командную строку"
+
+"Show the command line":
+  de: "Befehlszeile zeigen"
+  ru: "Показать командную строку"
+
+"Follows the computer's clock (Settings)":
+  de: "Folgt der Uhr des Computers (Einstellungen)"
+  ru: "Идёт по часам компьютера (Настройки)"
+
+"Today (Settings)":
+  de: "Heute (Einstellungen)"
+  ru: "Сегодня (Настройки)"
+
+"Any number of games can run at once; each writes its own log.":
+  de: "Beliebig viele Spiele können gleichzeitig laufen; jedes schreibt sein eigenes Protokoll."
+  ru: "Можно запускать сколько угодно игр сразу; каждая пишет свой журнал."
+
+"No game is running":
+  de: "Kein Spiel läuft"
+  ru: "Ни одна игра не запущена"
+
+"Start one on the Drive page.":
+  de: "Starte eines auf der Seite „Fahren“."
+  ru: "Запустите её на странице «Поездка»."
+
+"Stop this game?":
+  de: "Dieses Spiel beenden?"
+  ru: "Остановить эту игру?"
+
+"The game ends as if Escape and Quit were chosen; an unsaved session is lost.":
+  de: "Das Spiel endet wie mit Esc und Beenden; eine ungespeicherte Sitzung geht verloren."
+  ru: "Игра закроется так, будто выбраны Escape и «Выход»; несохранённая сессия пропадёт."
+
+"The game was stopped.":
+  de: "Das Spiel wurde beendet."
+  ru: "Игра остановлена."
+
+"started {when}":
+  de: "gestartet {when}"
+  ru: "запущена {when}"
+
+"Show the log file":
+  de: "Protokolldatei zeigen"
+  ru: "Показать файл журнала"
+
+"just now":
+  de: "gerade eben"
+  ru: "только что"
+
+"{n} min ago":
+  de: "vor {n} Min."
+  ru: "{n} мин назад"
+
+"{n} h ago":
+  de: "vor {n} Std."
+  ru: "{n} ч назад"
+
+"Search maps":
+  de: "Karten suchen"
+  ru: "Поиск карт"
+
+"{n} maps":
+  de: "{n} Karten"
+  ru: "Карт: {n}"
+
+"No map found":
+  de: "Keine Karte gefunden"
+  ru: "Карты не найдены"
+
+"No bus found":
+  de: "Kein Bus gefunden"
+  ru: "Автобусы не найдены"
+
+"No starred bus":
+  de: "Kein markierter Bus"
+  ru: "Нет избранных автобусов"
+
+"Star a bus to find it here.":
+  de: "Markiere einen Bus, um ihn hier zu finden."
+  ru: "Отметьте автобус звёздочкой, чтобы найти его здесь."
+
+"Archive":
+  de: "Archiv"
+  ru: "Архив"
+
+"Other":
+  de: "Sonstiges"
+  ru: "Другое"
+
+"Delete this mod?":
+  de: "Diesen Mod löschen?"
+  ru: "Удалить этот мод?"
+
+"{name} and its files are deleted from the content folder. Switch it off instead to keep it.":
+  de: "{name} und seine Dateien werden aus dem Inhaltsordner gelöscht. Schalte ihn stattdessen aus, um ihn zu behalten."
+  ru: "{name} и его файлы будут удалены из папки контента. Чтобы сохранить мод, просто отключите его."
+
+"{name} deleted":
+  de: "{name} gelöscht"
+  ru: "{name} удалён"
+
+"{name} switched on":
+  de: "{name} eingeschaltet"
+  ru: "{name} включён"
+
+"{name} switched off":
+  de: "{name} ausgeschaltet"
+  ru: "{name} отключён"
+
+"Installed mods":
+  de: "Installierte Mods"
+  ru: "Установленные моды"
+
+"Search mods...":
+  de: "Mods suchen..."
+  ru: "Поиск модов..."
+
+"Reading the content folder...":
+  de: "Inhaltsordner wird gelesen..."
+  ru: "Читаем папку контента..."
+
+"No mods yet. Choose a folder or an archive on the right, or drop one onto the window.":
+  de: "Noch keine Mods. Wähle rechts einen Ordner oder ein Archiv oder zieh eines ins Fenster."
+  ru: "Модов пока нет. Выберите папку или архив справа или перетащите их в окно."
+
+"No mod matches.":
+  de: "Kein Mod passt."
+  ru: "Ни один мод не подходит."
+
+"Delete this mod (asks first; switch it off instead to keep it)":
+  de: "Diesen Mod löschen (fragt vorher; zum Behalten ausschalten)"
+  ru: "Удалить мод (с подтверждением; чтобы сохранить, отключите)"
+
+"Packs installed before the bus they belong to: they go in once it is there.":
+  de: "Pakete, die vor ihrem Bus installiert wurden: Sie kommen hinein, sobald er da ist."
+  ru: "Пакеты, установленные раньше своего автобуса: они встанут, как только он появится."
+
+"Archives":
+  de: "Archive"
+  ru: "Архивы"
+
+"Read in place by the game, without unpacking.":
+  de: "Vom Spiel direkt gelesen, ohne Entpacken."
+  ru: "Игра читает их на месте, без распаковки."
+
+"Drop a folder or an archive here":
+  de: "Ordner oder Archiv hierher ziehen"
+  ru: "Перетащите сюда папку или архив"
+
+"Free space: {n}":
+  de: "Freier Platz: {n}"
+  ru: "Свободно: {n}"
+
+"this folder":
+  de: "diesen Ordner"
+  ru: "эту папку"
+
+"In it now: {}":
+  de: "Jetzt darin: {}"
+  ru: "Сейчас там: {}"
+
+"{n} of {max} players":
+  de: "{n} von {max} Spielern"
+  ru: "Игроков: {n} из {max}"
+
+"Joined {} - choose your bus and duty, then Start the duty":
+  de: "{} beigetreten - wähle Bus und Dienst, dann starte den Dienst"
+  ru: "Подключено к {}: выберите автобус и смену, затем начните смену"
+
+"Password":
+  de: "Passwort"
+  ru: "Пароль"
+
+"Can't reach the server: {err}":
+  de: "Server nicht erreichbar: {err}"
+  ru: "Сервер недоступен: {err}"
+
+"Delete this driver?":
+  de: "Diesen Fahrer löschen?"
+  ru: "Удалить этого водителя?"
+
+"The personnel file of {name} is deleted with all its figures.":
+  de: "Die Personalakte von {name} wird mit allen Zahlen gelöscht."
+  ru: "Личное дело {name} будет удалено со всей статистикой."
+
+"Male":
+  de: "Männlich"
+  ru: "Мужчина"
+
+"Female":
+  de: "Weiblich"
+  ru: "Женщина"
+
+"No driver yet":
+  de: "Noch kein Fahrer"
+  ru: "Водителя пока нет"
+
+"(no personnel file yet)":
+  de: "(noch keine Personalakte)"
+  ru: "(личного дела пока нет)"
+
+"{xp} XP, {left} to level {next}":
+  de: "{xp} XP, noch {left} bis Stufe {next}"
+  ru: "{xp} XP, до уровня {next} осталось {left}"
+
+"When":
+  de: "Wann"
+  ru: "Когда"
+
+"Distance":
+  de: "Strecke"
+  ru: "Расстояние"
+
+"Stops":
+  de: "Haltestellen"
+  ru: "Остановки"
+
+"Tickets":
+  de: "Fahrkarten"
+  ru: "Билеты"
+
+"Crashes":
+  de: "Unfälle"
+  ru: "Аварии"
+
+"takings":
+  de: "Einnahmen"
+  ru: "выручка"
+
+"crashes":
+  de: "Unfälle"
+  ru: "аварии"
+
+"Softer":
+  de: "Weicher"
+  ru: "Мягче"
+
+"Stronger":
+  de: "Stärker"
+  ru: "Сильнее"
+
+"Night brightness":
+  de: "Nachthelligkeit"
+  ru: "Яркость ночью"
+
+"Rain quality":
+  de: "Regenqualität"
+  ru: "Качество дождя"
+
+"Mirror panels every frame":
+  de: "Spiegelpanels in jedem Bild"
+  ru: "Панели зеркал каждый кадр"
+
+"Touch controls":
+  de: "Touch-Steuerung"
+  ru: "Сенсорное управление"
+
+"Door buttons":
+  de: "Türtasten"
+  ru: "Кнопки дверей"
+
+"Standard (physical doors)":
+  de: "Standard (physische Türen)"
+  ru: "Стандартные (физические двери)"
+
+"Direct OMSI triggers":
+  de: "Direkte OMSI-Trigger"
+  ru: "Прямые триггеры OMSI"
+
+"Hold the cursor while the mouse steers (off: the crosshair stays free, the window's edges are the lock)":
+  de: "Cursor beim Lenken mit der Maus festhalten (aus: das Fadenkreuz bleibt frei, die Fensterränder sind der Anschlag)"
+  ru: "Удерживать курсор при рулении мышью (выкл.: перекрестие свободно, края окна служат упором)"
+
+"Stick steering speed":
+  de: "Lenkgeschwindigkeit des Sticks"
+  ru: "Скорость руления стиком"
+
+"Stick dead zone":
+  de: "Totzone des Sticks"
+  ru: "Мёртвая зона стика"
+
+"Gamepad type":
+  de: "Gamepad-Typ"
+  ru: "Тип геймпада"
+
+"Default gamepad buttons (indicators, doors, views, gears, menu, pause)":
+  de: "Standard-Gamepadtasten (Blinker, Türen, Ansichten, Gänge, Menü, Pause)"
+  ru: "Стандартные кнопки геймпада (поворотники, двери, виды, передачи, меню, пауза)"
+
+"Rotation":
+  de: "Drehung"
+  ru: "Вращение"
+
+"Position":
+  de: "Position"
+  ru: "Положение"
+
+"Ambience (places, weather, nature, town)":
+  de: "Umgebung (Orte, Wetter, Natur, Stadt)"
+  ru: "Окружение (места, погода, природа, город)"
+
+"The stations cannot be edited here yet.":
+  de: "Die Sender können hier noch nicht bearbeitet werden."
+  ru: "Станции здесь пока нельзя редактировать."
+
+"Support":
+  de: "Support"
+  ru: "Поддержка"
+
+"Writing the support package…":
+  de: "Support-Paket wird geschrieben…"
+  ru: "Собираем пакет для поддержки…"
+
+"Support package saved: {path}":
+  de: "Support-Paket gespeichert: {path}"
+  ru: "Пакет для поддержки сохранён: {path}"
+
+"\"{name}\" is gone.":
+  de: "„{name}“ ist weg."
+  ru: "«{name}» больше нет."
+
+"Launcher theme":
+  de: "Launcher-Design"
+  ru: "Тема лаунчера"
+
+"Dark":
+  de: "Dunkel"
+  ru: "Тёмная"
+
+"System":
+  de: "Wie das System"
+  ru: "Как в системе"
+
+"Automatic ({size} here)":
+  de: "Automatisch (hier {size})"
+  ru: "Автоматически (здесь {size})"
+
+"This is openOMSI {version}":
+  de: "Dies ist openOMSI {version}"
+  ru: "Это openOMSI {version}"
+
+"OMSI 2 was found.":
+  de: "OMSI 2 wurde gefunden."
+  ru: "OMSI 2 найдена."
+
+"This is not a complete OMSI 2 installation.":
+  de: "Das ist keine vollständige OMSI-2-Installation."
+  ru: "Это не полная установка OMSI 2."
+
+"openOMSI plays the content of an OMSI 2 installation: the original game must be installed (Steam or another copy).":
+  de: "openOMSI spielt die Inhalte einer OMSI-2-Installation: Das Originalspiel muss installiert sein (Steam oder eine andere Kopie)."
+  ru: "openOMSI использует контент установленной OMSI 2: оригинальная игра должна быть установлена (Steam или другая копия)."
+
+"OMSI 2 was not found. Choose its folder below.":
+  de: "OMSI 2 wurde nicht gefunden. Wähle unten ihren Ordner."
+  ru: "OMSI 2 не найдена. Укажите её папку ниже."
+
+"The folder with Omsi.exe, maps and Vehicles. Left empty, the usual places are searched (Steam libraries, Wine bottles).":
+  de: "Der Ordner mit Omsi.exe, maps und Vehicles. Leer gelassen, werden die üblichen Orte durchsucht (Steam-Bibliotheken, Wine-Flaschen)."
+  ru: "Папка с Omsi.exe, maps и Vehicles. Если оставить пустым, поиск идёт в обычных местах (библиотеки Steam, бутылки Wine)."
+
+"Browse…":
+  de: "Durchsuchen…"
+  ru: "Обзор…"
+
+"Game program":
+  de: "Spielprogramm"
+  ru: "Программа игры"
+
+"The openomsi program the duties start. Left empty, the one beside the launcher.":
+  de: "Das openomsi-Programm, das die Dienste startet. Leer gelassen, das neben dem Launcher."
+  ru: "Программа openomsi, которую запускают смены. Если пусто, то та, что рядом с лаунчером."
+
+"Choose the game program":
+  de: "Spielprogramm wählen"
+  ru: "Выберите программу игры"
+
+"Where things are":
+  de: "Wo alles liegt"
+  ru: "Где что лежит"
+
+"Content folder (mods)":
+  de: "Inhaltsordner (Mods)"
+  ru: "Папка контента (моды)"
+
+"Settings and logs":
+  de: "Einstellungen und Protokolle"
+  ru: "Настройки и журналы"
+
+"Open the content folder":
+  de: "Inhaltsordner öffnen"
+  ru: "Открыть папку контента"
+
+"Open the settings folder":
+  de: "Einstellungsordner öffnen"
+  ru: "Открыть папку настроек"
+
+"The game's own launcher":
+  de: "Der eigene Launcher des Spiels"
+  ru: "Встроенный лаунчер игры"
+
+"The launcher drawn by the game itself, as before: for a computer where this window has trouble.":
+  de: "Der vom Spiel selbst gezeichnete Launcher wie bisher: für einen Computer, auf dem dieses Fenster Probleme hat."
+  ru: "Лаунчер, который рисует сама игра, как раньше: для компьютера, где с этим окном проблемы."
+
+"Open it":
+  de: "Öffnen"
+  ru: "Открыть"
+
+"OMSI 2's lessons: driving the bus, the stops, the ticket printer and the timetable.":
+  de: "Die Lektionen von OMSI 2: Busfahren, Haltestellen, Fahrscheindrucker und Fahrplan."
+  ru: "Уроки OMSI 2: вождение автобуса, остановки, билетный принтер и расписание."
+
+"Reading the tutorials…":
+  de: "Tutorials werden gelesen…"
+  ru: "Читаем обучение…"
+
+"No tutorial found":
+  de: "Kein Tutorial gefunden"
+  ru: "Обучение не найдено"
+
+"The tutorials come with OMSI 2 (its Tutorials folder).":
+  de: "Die Tutorials gehören zu OMSI 2 (sein Ordner Tutorials)."
+  ru: "Обучение идёт вместе с OMSI 2 (её папка Tutorials)."
+
+"Start the tutorial":
+  de: "Tutorial starten"
+  ru: "Начать обучение"
+
+"Reading the map…":
+  de: "Karte wird gelesen…"
+  ru: "Читаем карту…"
+
+"{roads} roads | {stops} stops | {entries} entry points":
+  de: "{roads} Straßen | {stops} Haltestellen | {entries} Einstiegspunkte"
+  ru: "Дорог: {roads} | остановок: {stops} | точек входа: {entries}"
+
+"Copy the whole OMSI 2 folder (with Omsi.exe, maps and Vehicles) from a computer into openOMSI/OMSI 2 in the phone's internal storage; it is found there by itself.":
+  de: "Kopiere den ganzen OMSI-2-Ordner (mit Omsi.exe, maps und Vehicles) vom Computer nach openOMSI/OMSI 2 im internen Speicher des Telefons; dort wird er von selbst gefunden."
+  ru: "Скопируйте всю папку OMSI 2 (с Omsi.exe, maps и Vehicles) с компьютера в openOMSI/OMSI 2 во внутренней памяти телефона: там она найдётся сама."
+
+"Time and date":
+  de: "Zeit und Datum"
+  ru: "Время и дата"
+
+"{n} tours":
+  de: "{n} Umläufe"
+  ru: "Выходов: {n}"
+
+"trips":
+  de: "Fahrten"
+  ru: "рейсов"
+
+"Driving hints":
+  de: "Fahrhinweise"
+  ru: "Подсказки при вождении"
+  uk: "Підказки під час руху"
+  fr: "Conseils de conduite"
+  es: "Consejos de conducción"
+  pl: "Wskazówki podczas jazdy"
+  nl: "Rijtips"
+  pt: "Dicas de condução"
+  pt-pt: "Dicas de condução"
+
+"Why the vehicle does not move, the change due, what a service did: as short notifications":
+  de: "Warum das Fahrzeug nicht fährt, das fällige Wechselgeld, was ein Dienst getan hat: als kurze Benachrichtigungen"
+  ru: "Почему машина не едет, какую сдачу дать, что сделала служба: короткими уведомлениями"
+  uk: "Чому машина не їде, яку решту дати, що зробила служба: короткими сповіщеннями"
+  fr: "Pourquoi le véhicule n'avance pas, la monnaie à rendre, ce qu'un service a fait : en brèves notifications"
+  es: "Por qué el vehículo no se mueve, el cambio que hay que dar, lo que hizo un servicio: como avisos breves"
+  pl: "Dlaczego pojazd nie rusza, reszta do wydania, co zrobiła usługa: jako krótkie powiadomienia"
+  nl: "Waarom het voertuig niet rijdt, het wisselgeld, wat een dienst deed: als korte meldingen"
+
+"Tips":
+  de: "Tipps"
+  ru: "Советы"
+  uk: "Поради"
+  fr: "Astuces"
+  es: "Consejos"
+  pl: "Wskazówki"
+  nl: "Tips"
+
+"Shift+U puts the bus into service: the electrics, the engine and the lights in one go":
+  de: "Umschalt+U macht den Bus betriebsbereit: Elektrik, Motor und Licht in einem Zug"
+  ru: "Shift+U готовит автобус к работе: электрика, двигатель и свет разом"
+  uk: "Shift+U готує автобус до роботи: електрика, двигун і світло разом"
+
+"F1 is the driver's seat, F2 the passengers' view, F3 outside the bus and F4 the free camera":
+  de: "F1 ist der Fahrerplatz, F2 die Sicht der Fahrgäste, F3 außen am Bus und F4 die freie Kamera"
+  ru: "F1: место водителя, F2: вид пассажира, F3: снаружи автобуса, F4: свободная камера"
+  uk: "F1: місце водія, F2: вигляд пасажира, F3: ззовні автобуса, F4: вільна камера"
+
+"Esc opens the menu: the options, the line and tour, saving and the photo mode":
+  de: "Esc öffnet das Menü: Optionen, Linie und Umlauf, Speichern und Fotomodus"
+  ru: "Esc открывает меню: настройки, линия и рейс, сохранение и фоторежим"
+  uk: "Esc відкриває меню: налаштування, лінія й рейс, збереження та фоторежим"
+
+"Shift+N switches the navigator between the map, the map with the next stops, and off":
+  de: "Umschalt+N schaltet das Navi zwischen Karte, Karte mit den nächsten Haltestellen und aus"
+  ru: "Shift+N переключает навигатор: карта, карта со следующими остановками, выключен"
+  uk: "Shift+N перемикає навігатор: мапа, мапа з наступними зупинками, вимкнено"
+
+"Insert shows the timetable of your trip":
+  de: "Einfg zeigt den Fahrplan deiner Fahrt"
+  ru: "Insert показывает расписание вашего рейса"
+  uk: "Insert показує розклад вашого рейсу"
+
+"Shift+M opens the city map":
+  de: "Umschalt+M öffnet den Stadtplan"
+  ru: "Shift+M открывает карту города"
+  uk: "Shift+M відкриває мапу міста"
+
+"P pauses the game; Alt+S saves the situation":
+  de: "P hält das Spiel an; Alt+S speichert die Situation"
+  ru: "P ставит игру на паузу; Alt+S сохраняет ситуацию"
+  uk: "P ставить гру на паузу; Alt+S зберігає ситуацію"
+
+"Shift+Y shows the information bar: the time, the speed, the temperatures and the next stop":
+  de: "Umschalt+Y zeigt die Infoleiste: Uhrzeit, Tempo, Temperaturen und die nächste Haltestelle"
+  ru: "Shift+Y показывает информационную строку: время, скорость, температуру и следующую остановку"
+  uk: "Shift+Y показує інформаційний рядок: час, швидкість, температуру й наступну зупинку"
+
+"Next stop":
+  de: "Nächste Haltestelle"
+  ru: "Следующая остановка"
+  uk: "Наступна зупинка"
+  fr: "Prochain arrêt"
+  es: "Próxima parada"
+  pl: "Następny przystanek"
+  nl: "Volgende halte"
+
+"Best Weather":
+  ru: "Лучшая погода"
+  uk: "Найкраща погода"
+  pl: "Najlepsza pogoda"
+  cs: "Nejlepší počasí"
+  es: "Mejor tiempo"
+  it: "Tempo migliore"
+  nl: "Beste weer"
+  pt: "Melhor tempo"
+  tr: "En iyi hava"
+
+"Ground Fog":
+  ru: "Приземный туман"
+  uk: "Приземний туман"
+  pl: "Mgła przyziemna"
+  cs: "Přízemní mlha"
+  es: "Niebla baja"
+  it: "Nebbia a banchi"
+  nl: "Grondmist"
+  pt: "Nevoeiro rasteiro"
+  tr: "Yer sisi"
+
+"Twilight Fog":
+  ru: "Сумеречный туман"
+  uk: "Сутінковий туман"
+  pl: "Mgła o zmierzchu"
+  cs: "Mlha za soumraku"
+  es: "Niebla crepuscular"
+  it: "Nebbia al crepuscolo"
+  nl: "Schemermist"
+  pt: "Neblina do crepúsculo"
+  tr: "Alacakaranlık sisi"
+
+"Iciness":
+  ru: "Ледяной холод"
+  uk: "Крижаний холод"
+  pl: "Lodowaty mróz"
+  cs: "Mrazivá zima"
+  es: "Frío glacial"
+  it: "Gelo"
+  nl: "IJzige kou"
+  pt: "Frio glacial"
+  tr: "Dondurucu soğuk"
+
+"Rainy":
+  ru: "Дождливо"
+  uk: "Дощова погода"
+  pl: "Deszczowo"
+  cs: "Deštivo"
+  es: "Lluvioso"
+  it: "Piovoso"
+  nl: "Regenachtig"
+  pt: "Chuvoso"
+  tr: "Yağmurlu"
+
+"Summerlike":
+  ru: "По-летнему"
+  uk: "По-літньому"
+  pl: "Letnio"
+  cs: "Letní"
+  es: "Veraniego"
+  it: "Estivo"
+  nl: "Zomers"
+  pt: "Veranil"
+  tr: "Yaz gibi"
+
+"Heavy Snowfall":
+  ru: "Сильный снегопад"
+  uk: "Сильний снігопад"
+  pl: "Intensywne opady śniegu"
+  cs: "Silné sněžení"
+  es: "Fuerte nevada"
+  it: "Forte nevicata"
+  nl: "Zware sneeuwval"
+  pt: "Nevasca forte"
+  tr: "Yoğun kar yağışı"
+
+"Storm":
+  ru: "Шторм"
+  uk: "Шторм"
+  pl: "Burza"
+  cs: "Bouře"
+  es: "Tormenta"
+  it: "Tempesta"
+  nl: "Storm"
+  pt: "Tempestade"
+  tr: "Fırtına"
+
+"Freezing Wetness":
+  ru: "Гололедица"
+  uk: "Ожеледиця"
+  pl: "Gołoledź"
+  cs: "Náledí"
+  es: "Hielo en la calzada"
+  it: "Gelicidio"
+  nl: "IJzel"
+  pt: "Gelo na estrada"
+  tr: "Buzlanma"
+
+"W A S D: move, Space: up, Ctrl: down, Shift: faster, drag or arrows: look":
+  de: "W A S D: bewegen, Leertaste: hoch, Strg: runter, Umschalt: schneller, Ziehen oder Pfeile: umsehen"
+  ru: "W A S D: движение, Пробел: вверх, Ctrl: вниз, Shift: быстрее, мышь или стрелки: обзор"
+  uk: "W A S D: рух, Пробіл: вгору, Ctrl: вниз, Shift: швидше, миша або стрілки: огляд"
+
+"Move the clock.":
+  de: "Die Uhr verstellen."
+  ru: "Перевести часы."
+  uk: "Перевести годинник."
+
+"The new launcher needs Microsoft WebView2":
+  de: "Der neue Launcher braucht Microsoft WebView2"
+  ru: "Новому лаунчеру нужен Microsoft WebView2"
+  uk: "Новому лаунчеру потрібен Microsoft WebView2"
+
+"The new launcher draws its window with Microsoft WebView2, which this Windows does not have. Install it now (a small installer from Microsoft, about a minute), or go on with this launcher.":
+  de: "Der neue Launcher zeichnet sein Fenster mit Microsoft WebView2, das diesem Windows fehlt. Jetzt installieren (ein kleines Installationsprogramm von Microsoft, etwa eine Minute) oder mit diesem Launcher weitermachen."
+  ru: "Новый лаунчер рисует окно с помощью Microsoft WebView2, а в этой Windows его нет. Установите его сейчас (небольшой установщик Microsoft, около минуты) или продолжайте в этом лаунчере."
+  uk: "Новий лаунчер малює вікно за допомогою Microsoft WebView2, а в цій Windows його немає. Встановіть його зараз (невеликий інсталятор Microsoft, близько хвилини) або продовжуйте в цьому лаунчері."
+
+"Microsoft's installer is running: follow its window. The new launcher opens when it has finished.":
+  de: "Das Installationsprogramm von Microsoft läuft: folgen Sie seinem Fenster. Der neue Launcher öffnet sich danach."
+  ru: "Идёт установка от Microsoft: следуйте её окну. Когда она закончится, откроется новый лаунчер."
+  uk: "Триває встановлення від Microsoft: дотримуйтеся його вікна. Коли воно завершиться, відкриється новий лаунчер."
+
+"WebView2 could not be installed. Try again, or install it from Microsoft's website.":
+  de: "WebView2 konnte nicht installiert werden. Erneut versuchen oder von der Website von Microsoft installieren."
+  ru: "Не удалось установить WebView2. Попробуйте ещё раз или установите его с сайта Microsoft."
+  uk: "Не вдалося встановити WebView2. Спробуйте ще раз або встановіть його з сайту Microsoft."
+
+"Install WebView2":
+  de: "WebView2 installieren"
+  ru: "Установить WebView2"
+  uk: "Встановити WebView2"
+
+"Installing...":
+  de: "Wird installiert..."
+  ru: "Установка..."
+  uk: "Встановлення..."

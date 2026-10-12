@@ -11,6 +11,9 @@
 # later and stands there). The run ends after <seconds> (110 by default; the warm-up of
 # the summary is the first 15 s of play). Writes <out prefix>.log and <out prefix>.json.
 #
+# BENCH_STILL=1: the bus is never driven off (no input at all): the camera stands still the
+# whole run, so whatever makes the frame uneven is the game's own periodic work, not the drive.
+#
 # Every run has a fresh, empty $HOME (default settings) and OMSI_SEED fixed, and no frame
 # rate limit. Compare runs of one machine only, and several of each: the frame times move
 # with whatever else the machine does; the stages' CPU times much less.
@@ -31,9 +34,11 @@ trap 'rm -rf "$home"' EXIT
 mkdir -p "$home/.openomsi"
 # (the swaying trees move with the wall clock)
 printf 'windy_trees=0\n' >"$home/.openomsi/settings.cfg"
+drive="t=44 key .; t=45 keydown W"
+[ "${BENCH_STILL:-0}" = 1 ] && drive="t=99999 key ."
 env HOME="$home" OMSI_SEED=1 OMSI_HIDDEN_WINDOW=1 OMSI_NO_UPDATE=1 OMSI_MAX_FPS=1000 \
   OMSI_PROFILE=1 OMSI_PROFILE_JSON="$out.json" \
-  OMSI_INPUT="t=44 key .; t=45 keydown W" \
+  OMSI_INPUT="$drive" \
   "$bin" --root "$root" --no-menu --map maps/Berlin-Spandau/global.cfg \
   --bus Vehicles/MAN_NL_NG/MAN_EN92_main.bus --autostart --view driver \
   --traffic 30 --passengers --schedule --time 08:00 --size 1280x720 \

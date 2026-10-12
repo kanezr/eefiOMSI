@@ -6,22 +6,8 @@ use super::*;
 pub(crate) use crate::app_impl::{cab_look_yaw, chase_orbit_step, ease_look, gate_gear_var, look_key_is, look_key_of, on_server, reset_blend, swap_view_look};
 
 
-/// Global actions a controller button should send to the game instead of to the bus script.
-pub(crate) fn is_game_action(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
-    name.starts_with("view_")
-        || matches!(
-            name.as_str(),
-            "sim_pause"
-                | "open_menu"
-                | "screenshot"
-                | "photo_mode"
-                | "quicksave"
-                | "toggel_mouse_ctrl"
-                | "toggel_ctrler"
-                | "voice_radio"
-        )
-}
+// (the game's own action names live with the controllers: `omsi-input`)
+pub(crate) use omsi_input::actions::is_game_action;
 
 /// How far (m) a click reaches a scenery object with a `[mouseevent]`.
 pub(crate) const SCENERY_OBJECT_REACH: f32 = 50.0;
@@ -760,7 +746,7 @@ impl App {
     /// right-button drag does, the free and outside cameras too), `set name=value` (a script
     /// variable), `trigger name`, `log name` (with what the HUD says about the cursor),
     /// `dumptex <folder>` (the display pictures), `shot <file>` (the window's picture as a
-    /// PNG) and `type <text>` (into the LAN chat line that `key V` opened; `key Enter`
+    /// PNG), `notify <id> <seconds> <kind> <text>` (a notification card) and `type <text>` (into the LAN chat line that `key V` opened; `key Enter`
     /// sends it).
     pub(crate) fn run_input_script(&mut self, event_loop: &ActiveEventLoop) {
         if self.perf.input_script.is_empty() {
@@ -965,6 +951,10 @@ impl App {
                     }
                 }
                 // `log pose`: where the bus and the camera are, and whether the bus has ground
+                "log" if arg == "clock" => {
+                    let t = self.clock.time;
+                    log::info!("input script: clock {:02}:{:02}:{:02} (day {}, sync {})", (t / 3600.0) as u32, (t / 60.0) as u32 % 60, t as u32 % 60, self.clock.day_of_year, self.real_time_locked());
+                }
                 "log" if arg == "pose" => {
                     let bus = self.player.as_ref().map(|p| {
                         (
@@ -1051,6 +1041,12 @@ impl App {
                 // `shot <file>`: the window's own view into a PNG, drawn from the scene the
                 // window is showing (the only way to see what the window path renders)
                 "shot" => self.perf.shot = Some((PathBuf::from(arg), true)),
+                // `notify <id> <seconds> <kind> <text>`: a notification, as the server's
+                // `notify` sends one (to look at the cards)
+                "notify" => match cmd.split_once(' ').and_then(|(_, rest)| crate::ui::Notice::parse(rest)) {
+                    Some((_, n)) => crate::ui::push_notice(&mut self.menus.notices, n),
+                    None => log::warn!("input script: notify <id> <seconds> <info|warn|alert|action|success> <text>"),
+                },
                 // `dumptex <folder>`: the player's display pictures as the window has them
                 "dumptex" => {
                     if let Some(p) = self.player.as_ref() {

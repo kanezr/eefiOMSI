@@ -37,15 +37,17 @@ impl PeopleSim {
         center: DVec3,
     ) {
         self.center = center;
+        // (the stops set up already are passed over before anything is asked of the ground
+        // or copied: once the map round the player is up, every call came here for none)
         let list: Vec<(i64, DVec3, f64, String)> = world
             .bus_stops()
             .iter()
-            .filter(|s| (s.1 - center).length() < STOP_RANGE + 100.0)
+            .filter(|s| !self.stops.contains_key(&s.0) && (s.1 - center).length() < STOP_RANGE + 100.0)
             .map(|s| (s.0, s.1, s.2, s.3.clone()))
             .collect();
         for (id, pos, rot, name) in list {
             // only once the ground under the stop is there
-            if world.walk_height(pos.x, pos.y).is_none() || self.stops.contains_key(&id) {
+            if self.stops.contains_key(&id) || world.walk_height(pos.x, pos.y).is_none() {
                 continue;
             }
             let st = self.build_pax_stop(world, net, id, pos, rot, &name);
@@ -169,6 +171,20 @@ impl PeopleSim {
                 remote.iter().any(|b| b.id == BusId::Ai(*bus) && (b.pos - s.pos).length() < 60.0)
             });
         }
+        // who belongs to each stop, counted once for all of them (a person counted per stop
+        // and frame was stops x people every frame). Exact through the loop: a stop's own
+        // spawns and departures change its count only, and it is read before them.
+        let mut counts: HashMap<i64, usize> = HashMap::with_capacity(ids.len());
+        for p in &self.people {
+            if let State::Pax(x) = &p.state {
+                if let Some(s) = x.stop {
+                    *counts.entry(s).or_default() += 1;
+                }
+            }
+        }
+        for h in &self.handed {
+            *counts.entry(h.0).or_default() += 1;
+        }
         for id in ids {
             let near = {
                 let s = &self.stops[&id];
@@ -210,7 +226,8 @@ impl PeopleSim {
                 };
                 s.factor = (r * 2.0 - 1.0) * k + 1.0;
             }
-            let count = self.people.iter().filter(|p| matches!(&p.state, State::Pax(x) if x.stop == Some(id))).count() + self.handed.iter().filter(|h| h.0 == id).count();
+            let count = counts.get(&id).copied().unwrap_or(0);
+            debug_assert_eq!(count, self.people.iter().filter(|p| matches!(&p.state, State::Pax(x) if x.stop == Some(id))).count() + self.handed.iter().filter(|h| h.0 == id).count());
             let want = {
                 let s = &self.stops[&id];
                 let mean = (s.enter_max + s.enter_min) / 2.0;

@@ -1,5 +1,6 @@
-//! One step of the offscreen run (1/30 s): the server's work, the traffic, the player's bus,
-//! the people, the LAN, the spray and the snapshots due.
+//! The stages of the offscreen run's step (1/30 s; their order is `stages::OFFSCREEN_STEP`):
+//! the server's work, the traffic, the player's bus, the people, the LAN, the spray and the
+//! snapshots due.
 
 use super::*;
 use crate::view_sync::{self, ViewSync};
@@ -7,27 +8,20 @@ use crate::view_sync::{self, ViewSync};
 impl Offscreen<'_> {
     /// One step, the `i`-th (false: a server was told to stop).
     pub(super) fn step(&mut self, i: usize) -> Result<bool> {
-        let t_s = i as f32 * self.dt;
-        if self.server && !self.server_step(i) {
-            return Ok(false);
-        }
-        self.clock_step(t_s);
-        self.traffic_step(i, t_s)?;
-        self.player_step(i);
+        let mut step = stages::Step { run: self, i };
+        Ok(crate::frame_stages::run(&mut step, stages::OFFSCREEN_STEP)? == crate::frame_stages::Flow::Go)
+    }
+
+    /// The ground under the vehicles (`OMSI_GROUND_GAP`).
+    pub(super) fn ground_gap_step(&mut self, t_s: f32) {
         if let Some(g) = self.ground_gap.as_mut() {
             g.frame(&self.world, t_s, self.player.as_ref().map(|p| &p.vehicle), self.traffic.as_ref());
         }
-        self.humans_step(i);
-        self.lan_step();
-        self.surroundings_step();
-        self.snapshot_step(t_s)?;
-        self.record_step(i, t_s)?;
-        Ok(true)
     }
 
     /// The clock of this moment (`t_s` into the run; a dedicated server's own), and what the
     /// bus's scripts are told of it, as the window's `frame_weather` has them.
-    fn clock_step(&mut self, t_s: f32) {
+    pub(super) fn clock_step(&mut self, t_s: f32) {
         let mut clock = start_clock(self.args);
         if self.server {
             clock.advance((self.srv_clock + self.srv_admin.shift) as f32);
@@ -43,7 +37,7 @@ impl Offscreen<'_> {
 
     /// A dedicated server's clock, its METAR weather, its administration and its status
     /// (false: it was told to stop).
-    fn server_step(&mut self, i: usize) -> bool {
+    pub(super) fn server_step(&mut self, i: usize) -> bool {
         let (args, dt) = (self.args, self.dt);
         let Self {
             ref mut srv_clock,
@@ -196,7 +190,7 @@ impl Offscreen<'_> {
     }
 
     /// The AI traffic's step (and with it the timetable's departures).
-    fn traffic_step(&mut self, i: usize, t_s: f32) -> Result<()> {
+    pub(super) fn traffic_step(&mut self, i: usize, t_s: f32) -> Result<()> {
         let (args, out, w, h, dt, center) = (self.args, self.out, self.w, self.h, self.dt, self.center);
         let Self {
             ref mut traffic,
@@ -213,6 +207,7 @@ impl Offscreen<'_> {
             ref run_clock,
             ref envir,
             ref weather,
+            ref sky,
             ..
         } = *self;
         if let Some(t) = traffic.as_mut() {
@@ -252,6 +247,7 @@ impl Offscreen<'_> {
                         cloud_drift_at(weather, run_clock.time),
                         0.0,
                         settings.shadows,
+                        sky,
                     );
                     let pixels =
                         renderer.render_to_image(scene, w, h, &view_cam, &lighting)?;
@@ -294,10 +290,17 @@ impl Offscreen<'_> {
         Ok(())
     }
 
-    /// The player's bus: its start-up, its duty, the personnel file, and the `--drive` test.
-    fn player_step(&mut self, i: usize) {
-        let (args, dt, drive_frames) = (self.args, self.dt, self.drive_frames);
-        let t_s = i as f32 * dt;
+    /// The player's bus starting up.
+    pub(super) fn startup_step(&mut self) {
+        let dt = self.dt;
+        if let Some(player) = self.player.as_mut() {
+            player.tick_startup(dt);
+        }
+    }
+
+    /// The player's duty and the personnel file.
+    pub(super) fn duty_step(&mut self) {
+        let (args, dt) = (self.args, self.dt);
         let Self {
             ref mut player,
             ref mut duty,
@@ -309,7 +312,6 @@ impl Offscreen<'_> {
             ..
         } = *self;
         let Some(player) = player.as_mut() else { return };
-        player.tick_startup(dt);
         if let Some(d) = duty.as_mut() {
             // (no plugins in an offscreen run: what they would be told goes to the log)
             let mut events = Vec::new();
@@ -337,8 +339,12 @@ impl Offscreen<'_> {
         for j in career.take_jolts() {
             log::info!("plugin event: jolt {j:?}");
         }
-        if i < drive_frames {
-            self.drive_step(i, t_s);
+    }
+
+    /// The `--drive` test's step while it runs.
+    pub(super) fn drive_stage(&mut self, i: usize) {
+        if self.player.is_some() && i < self.drive_frames {
+            self.drive_step(i, i as f32 * self.dt);
         }
     }
 
@@ -611,7 +617,7 @@ impl Offscreen<'_> {
         {
             let v = &player.vehicle;
             let g = world.ground_height(v.position.x, v.position.y).map(|g| v.position.z - g).unwrap_or(0.0);
-            let mut e = DRIVE_EXTREMES.lock();
+            let e = &mut self.drive_extremes;
             if v.pitch.abs() > e.0.abs() {
                 e.0 = v.pitch;
                 e.4 = (v.position, t_s);
@@ -653,7 +659,7 @@ impl Offscreen<'_> {
     }
 
     /// The people: their step, and what it means for the buses and the personnel file.
-    fn humans_step(&mut self, i: usize) {
+    pub(super) fn humans_step(&mut self, i: usize) {
         let (args, w, h, dt, view_aspect) = (self.args, self.w, self.h, self.dt, self.view_aspect);
         let Self {
             ref mut humans_off,
@@ -738,7 +744,7 @@ impl Offscreen<'_> {
     }
 
     /// The LAN session's step (with the clock a host tells the others).
-    fn lan_step(&mut self) {
+    pub(super) fn lan_step(&mut self) {
         let (args, dt) = (self.args, self.dt);
         let Self {
             ref mut lan_off,
@@ -811,7 +817,7 @@ impl Offscreen<'_> {
 
     /// The cabin air, the tyres' spray and the roads' wetness, frame by frame as the window's
     /// `frame_lights` and `frame_lighting` have them.
-    fn surroundings_step(&mut self) {
+    pub(super) fn surroundings_step(&mut self) {
         let (args, dt) = (self.args, self.dt);
         let Self {
             ref mut spray,
@@ -846,7 +852,7 @@ impl Offscreen<'_> {
     }
 
     /// A snapshot due at `t_s` (`--snapshots`).
-    fn snapshot_step(&mut self, t_s: f32) -> Result<()> {
+    pub(super) fn snapshot_step(&mut self, t_s: f32) -> Result<()> {
         let (args, out, w, h, dt) = (self.args, self.out, self.w, self.h, self.dt);
         // mid-run snapshots (relative to the first overtake with --follow auto)
         let traffic = self.traffic.as_ref();

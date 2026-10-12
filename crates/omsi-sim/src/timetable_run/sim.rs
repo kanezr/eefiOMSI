@@ -11,6 +11,7 @@ mod dispatch;
 mod load;
 mod place;
 mod route;
+mod take_on;
 mod tours;
 
 use super::*;
@@ -215,6 +216,11 @@ pub struct ScheduleSim {
     /// hashing each tour to a number put the same fleet number on two buses at once.
     tour_vehicle: HashMap<u64, (usize, usize)>,
     used_numbers: HashSet<(String, String)>,
+    /// Mixed into the draw of a tour's vehicle, so that a tour gets another of its depot's
+    /// buses from session to session, as in OMSI (the session's seed; a LAN game's shared
+    /// one, `set_lan_seed`). Hashing the tour alone sent the same bus out on it every time
+    /// (#2250). 0 (tests, tools): always the same.
+    pub vehicle_seed: u64,
 }
 
 /// A tour's bus waits at the end of a trip for the next one of its tour when that leaves

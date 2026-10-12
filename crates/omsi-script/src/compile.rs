@@ -63,6 +63,8 @@ struct VarUse {
     blocks: usize,
     stores: Vec<u64>,
     loads: Vec<u64>,
+    /// `(L.S.x)` reads, one bit per [`SysVar`] (there are fewer than 64).
+    sys_loads: u64,
 }
 
 impl VarUse {
@@ -79,6 +81,7 @@ impl VarUse {
             match op {
                 Op::Store(v) => set(&mut u.stores, *v),
                 Op::Load(v) => set(&mut u.loads, *v),
+                Op::LoadSys(v) => u.sys_loads |= 1 << (*v as u8),
                 _ => {}
             }
         }
@@ -201,7 +204,10 @@ impl Program {
 
     /// Whether any block of the program reads the system variable `sys` (`(L.S.name)`).
     pub fn reads_sys(&self, sys: SysVar) -> bool {
-        self.blocks.iter().any(|b| b.ops.iter().any(|op| matches!(op, Op::LoadSys(v) if *v == sys)))
+        match self.var_use() {
+            Some(u) => u.sys_loads & (1 << (sys as u8)) != 0,
+            None => self.blocks.iter().any(|b| b.ops.iter().any(|op| matches!(op, Op::LoadSys(v) if *v == sys))),
+        }
     }
 
     /// Whether running `block` (with the macros it calls) can write variable `var` with
@@ -1024,6 +1030,19 @@ mod tests {
         let clutch = p.var("Clutch").unwrap();
         p.blocks.push(Block { ops: vec![Op::Push(1.0), Op::Store(clutch)], ..Default::default() });
         assert!(p.stores(clutch));
+    }
+
+    /// `reads_sys` answers from the same bits as the scan, and still sees a block added later.
+    #[test]
+    fn reads_sys_answers_as_the_bytecode_scan() {
+        let mut p = program_of("{frame}\n(L.S.Timegap) (L.S.AutoClutch) + (S.L.a)\n{end}\n");
+        let scan = |p: &Program, sys: SysVar| p.blocks.iter().flat_map(|b| &b.ops).any(|op| matches!(op, Op::LoadSys(v) if *v == sys));
+        for sys in SysVar::ALL {
+            assert_eq!(p.reads_sys(sys), scan(&p, sys), "{sys:?}");
+        }
+        assert!(p.reads_sys(SysVar::AutoClutch) && !p.reads_sys(SysVar::SunAlt));
+        p.blocks.push(Block { ops: vec![Op::LoadSys(SysVar::SunAlt)], ..Default::default() });
+        assert!(p.reads_sys(SysVar::SunAlt));
     }
 }
 

@@ -29,6 +29,14 @@ const CLOUD_SHAPE_PERIOD: f32 = 13000.0;
 const CLOUD_DETAIL_PERIOD: f32 = 420.0;
 const CLOUD_DETAIL_STRENGTH: f32 = 0.3;
 const CLOUD_EDGE_SOFTNESS: f32 = 0.12;
+// The detail volume's mean and the half-width of its middle 80 % (clouds.rs, measured on the
+// generated volume: 0.30, 0.20-0.41), and how far a heap's inside departs from its mean
+// density at those values (see `cloud_sigma`).
+const CLOUD_DETAIL_MEAN: f32 = 0.30;
+const CLOUD_DETAIL_SPREAD: f32 = 0.105;
+const CLOUD_INTERIOR_VARIATION: f32 = 0.5;
+// The droplets' asymmetry: how far forward they scatter (Mie, cumulus droplets, visible light).
+const CLOUD_G: f32 = 0.85;
 // How much cloud stands inside a heap, over the whole of what it has rather than as a step.
 // The rim above saturates a tenth of the way in and then says nothing more, so a heap's
 // middle was as thick as its neighbour's and a deck's whole underside came out one flat
@@ -125,8 +133,8 @@ fn cloud_base_shape(p: vec3<f32>, h: f32, lod: f32) -> vec2<f32> {
     return vec2<f32>(m * (linearstep(0.0, 0.1, h) - linearstep(0.6, 1.0, h)), s.b);
 }
 
-// Extinction (1/m) at p; `detail` false for the light towards the sun far from the point.
-fn cloud_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32, detail: bool) -> f32 {
+// Extinction (1/m) at p.
+fn cloud_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32) -> f32 {
     if (h <= 0.0 || h >= 1.0) {
         return 0.0;
     }
@@ -136,17 +144,23 @@ fn cloud_sigma(p: vec3<f32>, h: f32, coverage: f32, lod: f32, detail: bool) -> f
     if (m + coverage - 1.0 <= 0.0) {
         return 0.0;
     }
-    if (detail) {
-        let drift = camera.clouds.yz * 2500.0 * 1.3;
-        let q = vec3<f32>(p.xy + drift, p.z) / CLOUD_DETAIL_PERIOD;
-        let dl = textureSampleLevel(t_cloud_detail, s_cloud, q, max(lod - 2.0, 0.0)).r;
-        m = m - dl * smoothstep(1.0, 0.5, m) * CLOUD_DETAIL_STRENGTH;
-    }
+    let drift = camera.clouds.yz * 2500.0 * 1.3;
+    let q = vec3<f32>(p.xy + drift, p.z) / CLOUD_DETAIL_PERIOD;
+    let dl = textureSampleLevel(t_cloud_detail, s_cloud, q, max(lod - 2.0, 0.0)).r;
+    let rim = smoothstep(1.0, 0.5, m);
+    m = m - dl * rim * CLOUD_DETAIL_STRENGTH;
+    // Inside, where the billows no longer eat the edge, the droplets are not spread
+    // evenly either: a cumulus's liquid water varies by about half its mean from one
+    // updraught to the next, a hundred metres or so apart. Without it a heap's core was
+    // one even density, and a deck's underside in its own shadow - lit by the sky alone,
+    // through that even depth - came out as one smooth grey smear among sharp sunlit
+    // heaps, as if a blurred layer lay over them.
+    let turb = 1.0 + CLOUD_INTERIOR_VARIATION * clamp((dl - CLOUD_DETAIL_MEAN) / CLOUD_DETAIL_SPREAD, -1.0, 1.0) * (1.0 - rim);
     let margin = m + coverage - 1.0;
     let edge = smoothstep(0.0, CLOUD_EDGE_SOFTNESS, margin);
     let body = clamp(margin / CLOUD_BODY_RANGE, 0.0, 1.0);
     m = edge * mix(1.0, body, CLOUD_BODY_WEIGHT) * cloud_depth(shape.y);
-    m = m * min(h / CLOUD_BOTTOM_SOFTNESS, 1.0);
+    m = m * min(h / CLOUD_BOTTOM_SOFTNESS, 1.0) * turb;
     // How deep the sky's clouds go is the deck's to say, not a lone heap's: a
     // fair-weather cumulus keeps the scale the look was tuned on, and it is a rising
     // cover - a storm's denser droplets - that takes it up to 2.6 times under a shut one.
@@ -187,9 +201,12 @@ fn cloud_layer(d: vec3<f32>, below: vec3<f32>, pix: f32) -> vec4<f32> {
     for (var i = 0; i < steps; i = i + 1) {
         let p = vec3<f32>(cloud_ground(d, t), cloud_height(d, t));
         let h = (p.z - CLOUD_BOTTOM) / (CLOUD_TOP - CLOUD_BOTTOM);
-        let sigma = cloud_sigma(p, h, coverage, lod, true);
+        let sigma = cloud_sigma(p, h, coverage, lod);
         if (sigma > 1e-6) {
-            // the sunlight reaching p through the cloud towards the sun
+            // the sunlight reaching p through the cloud towards the sun (with the billows
+            // and the inside's turbulence at every step: read smooth past the first hundred
+            // metres, the depth over a deck's underside was the same everywhere, and so was
+            // its light)
             var od = 0.0;
             var ls = 40.0;
             var lt = ls * 0.5;
@@ -199,7 +216,7 @@ fn cloud_layer(d: vec3<f32>, below: vec3<f32>, pix: f32) -> vec4<f32> {
                 if (hq >= 1.0) {
                     break;
                 }
-                od = od + cloud_sigma(q, hq, coverage, lod + 1.0, k < 2) * ls;
+                od = od + cloud_sigma(q, hq, coverage, lod + 1.0) * ls;
                 ls = ls * 1.7;
                 lt = lt + ls;
             }
@@ -235,10 +252,21 @@ fn cloud_layer(d: vec3<f32>, below: vec3<f32>, pix: f32) -> vec4<f32> {
             // a few fair-weather clouds keeps the light its base had (the shipped curve,
             // exactly), and only as the cover rises does a base follow its depth down
             // towards the grey of a storm.
+            // How much of the light from above gets down through that depth: not Beer's
+            // exp(-od), which is the unscattered beam only - a cloud's droplets throw the
+            // light almost straight on (g = 0.85), and what a slab lets through by
+            // scattering falls as the two-stream 1 / (1 + 0.75 (1 - g) od). With the
+            // exponential every point under a deck past a few tens of metres of depth read
+            // the same - zero, up to the floor - so the whole underside was one smooth grey
+            // that lay over the sunlit heaps like a blurred second layer; with the diffuse
+            // law a deck stays twice as bright where it is half as deep, and its heaps show.
+            // (the floor is the light that comes in sideways, through the gaps and the thin
+            // parts around: half of what it was, now that the light from above through the
+            // depth - which it used to stand in for - is counted by `through` itself)
             let deep = smoothstep(0.6, 0.85, camera.clouds.x);
-            let shade = mix(0.40, 0.04, deep);
-            let coef = mix(0.055, 0.09, deep);
-            let amb = mix(ground * 0.45 + sky_top * 0.55, sky_top * 1.1, clamp(h * 1.4, 0.0, 1.0)) * (shade + (1.0 - shade) * exp(-od * coef));
+            let shade = mix(0.20, 0.02, deep);
+            let through = 1.0 / (1.0 + 0.75 * (1.0 - CLOUD_G) * od);
+            let amb = mix(ground * 0.45 + sky_top * 0.55, sky_top * 1.1, clamp(h * 1.4, 0.0, 1.0)) * (shade + (1.0 - shade) * through);
             let light = direct * CLOUD_MS_GAIN + amb;
             // Frostbite: the light scattered over the step, dimmed by the cloud before it
             let dt = exp(-sigma * ds);

@@ -1,0 +1,10 @@
+//! The scene's light worked out on the CPU each frame: the point lights and their grid,
+//! the coronas and smoke, and the enhanced sky, fog and exposure model.
+
+mod enhanced;
+mod lights;
+mod sky_sched;
+
+pub(crate) use enhanced::*;
+pub use lights::*;
+pub(crate) use sky_sched::*;

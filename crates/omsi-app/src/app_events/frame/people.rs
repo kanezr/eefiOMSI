@@ -3,18 +3,20 @@
 use super::*;
 
 impl App {
-    /// The LAN session, the player on foot and the other players walking about, and the
-    /// people at the stops and in the buses.
-    pub(super) fn frame_people(&mut self, dt: f32) {
-        let __t = Instant::now();
+    /// The LAN session (a stage of its own: a joining player's bus is loaded here, and that
+    /// frame was counted as the people's).
+    pub(super) fn frame_lan(&mut self, dt: f32) {
         self.tick_lan(dt);
-        // (a stage of its own: a joining player's bus is loaded here, and that frame
-        // was counted as the people's)
-        *self.perf.profile.entry("lan").or_default() += __t.elapsed().as_secs_f64();
-        // the player on foot, and the other players walking about
+    }
+
+    /// The player on foot, and the other players walking about.
+    pub(super) fn frame_on_foot(&mut self, dt: f32) {
         self.tick_on_foot(if self.paused { 0.0 } else { dt });
         self.sync_remote_walkers();
-        let __t = Instant::now();
+    }
+
+    /// The people at the stops and in the buses, and their view sync.
+    pub(super) fn frame_humans(&mut self, dt: f32) {
         let sight = self.camera.as_ref().zip(self.gfx.surface.as_ref())
             .and_then(|(c, s)| self.sight_extent(c, (s.config.width, s.config.height)));
         if let (Some(h), Some(w), Some(r), Some(scene)) = (
@@ -32,8 +34,12 @@ impl App {
             // (the trips due at the stops soon: once a game minute, #1415)
             if let (Some(s), Some(t)) = (self.session.schedule.as_ref(), self.session.traffic.as_ref()) {
                 if (t.day_time - h.due_at).abs() >= 60.0 {
+                    let t0 = std::time::Instant::now();
                     h.due_dests = Some(s.due_destinations(t.day_time));
                     h.due_at = t.day_time;
+                    if omsi_cfg::flags::OMSI_PROFILE.is_set() {
+                        h.stage_stats.add("due destinations", t0.elapsed().as_secs_f64() * 1000.0);
+                    }
                 }
             }
             if h.stop_targets.is_none() {
@@ -52,10 +58,27 @@ impl App {
             });
             // (OMSI's `AIPassFactor`, the passengers setting in per cent)
             steps::humans_by_hour(h, w, self.clock.time, self.settings.pax_density, self.session.duty.as_ref());
+            // The periodic fillings of the map each get a frame of their own: the traffic's
+            // (`traffic_heavy_frame`, set in its stage before this one), the strollers and
+            // stops of the people's step (every second, in `tick_inner`) and this one (every
+            // two seconds). Whichever finds its frame taken waits for the next; together in
+            // one frame they were one long frame every two seconds. Not the first filling:
+            // the timetable buses standing at their stops when the session starts look for
+            // the people there in the frame the traffic was put out, and a frame later they
+            // had passed the stop with nobody on it.
+            let settled = h.started;
+            let traffic_heavy = std::mem::take(&mut self.session.traffic_heavy_frame) && settled;
+            h.defer_populate = traffic_heavy;
+            let step_dt = if self.paused { 0.0 } else { dt };
+            let step_populates = settled && !traffic_heavy && self.session.traffic.is_some() && h.stroll_timer - step_dt <= 0.0;
             self.session.humans_populate_t -= dt;
-            if self.session.humans_populate_t <= 0.0 && !self.paused {
+            if self.session.humans_populate_t <= 0.0 && !self.paused && !traffic_heavy && !step_populates {
                 self.session.humans_populate_t = 2.0;
+                let t0 = std::time::Instant::now();
                 h.populate(&mut self.gfx.sim_view.people, w, r, scene, center);
+                if omsi_cfg::flags::OMSI_PROFILE.is_set() {
+                    h.stage_stats.add("app populate", t0.elapsed().as_secs_f64() * 1000.0);
+                }
             }
             if let (Some(cam), Some(s)) = (self.camera.as_ref(), self.gfx.surface.as_ref()) {
                 h.eye = Some(humans::Eye::of(
@@ -111,7 +134,11 @@ impl App {
             let bus = self.player.as_ref().map(|p| &p.vehicle);
             view_sync::sync(ViewSync::people(h, bus, center), &mut self.gfx.sim_view, w, r, scene);
         }
-        *self.perf.profile.entry("humans").or_default() += __t.elapsed().as_secs_f64();
+    }
+
+    /// After the people: the walker aboard a bus where the bus is this frame, and the fuel
+    /// pump or bus wash running.
+    pub(super) fn frame_after_humans(&mut self, dt: f32) {
         self.foot_after_humans();
         if !self.paused {
             self.tick_service(dt);

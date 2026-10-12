@@ -169,7 +169,8 @@ fn probe(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: hdr_format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        // (copied into: the cube for a new eye is filled beside it, see `SkySched`)
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let cube_view = cube_tex.create_view(&wgpu::TextureViewDescriptor {
@@ -250,17 +251,16 @@ fn probe(
         bind_groups,
         sky_pipeline: probe_pipeline("fs_probe_sky"),
         filter_pipeline: probe_pipeline("fs_probe_filter"),
-        age: u32::MAX,
         scale: 1.0,
         cube_view,
+        cube_tex,
         cube_faces,
         cube_bind_groups,
         cube_pipeline,
         cube_next: 0,
         cube_filled: false,
         cube_round: 0,
-        cube_wait: 0,
         cube_eye: None,
-        cube_recapture: false,
+        sched: SkySched::default(),
     }
 }

@@ -47,6 +47,8 @@ struct Shown {
     centre: glam::Vec3,
     length: f32,
     weather: omsi_content::weather::Weather,
+    /// The sky's cloud type and weather model its look is drawn with.
+    sky: crate::weather_setup::SkyState,
     lighting: Lighting,
 }
 
@@ -234,9 +236,9 @@ impl Showroom {
                     if let Some(s) = self.shown.as_mut() {
                         s.look = w.clone();
                         let args = args_for(&w);
-                        s.weather = load_weather(&args);
-                        setup_sky(&args, renderer, &mut s.scene, omsi_content::Envir::load(&args.root.join("envir.cfg")).ok().as_ref(), Some(&s.weather));
-                        s.lighting = lighting_for(&args, &s.weather);
+                        (s.weather, s.sky.model) = crate::weather_setup::load_weather_run(&args);
+                        setup_sky(&args, renderer, &mut s.scene, omsi_content::Envir::load(&args.root.join("envir.cfg")).ok().as_ref(), Some(&s.weather), &mut s.sky.clouds);
+                        s.lighting = lighting_for(&args, &s.weather, &s.sky);
                     }
                     self.dirty = true;
                 } else {
@@ -340,9 +342,10 @@ impl Showroom {
         let t0 = std::time::Instant::now();
         let mut scene = renderer.new_scene();
         let args = args_for(&r.look);
-        let weather = load_weather(&args);
+        let (weather, model) = crate::weather_setup::load_weather_run(&args);
         let envir = omsi_content::Envir::load(&args.root.join("envir.cfg")).ok();
-        setup_sky(&args, renderer, &mut scene, envir.as_ref(), Some(&weather));
+        let mut sky = crate::weather_setup::SkyState { clouds: None, model };
+        setup_sky(&args, renderer, &mut scene, envir.as_ref(), Some(&weather), &mut sky.clouds);
         add_floor(renderer, &mut scene);
         let world = r.world;
         let mut vehicle = r.vehicle;
@@ -366,10 +369,10 @@ impl Showroom {
             centre.y = bb[4] + bb[1] * 0.5 - total * 0.5;
             length = total;
         }
-        let lighting = lighting_for(&args, &weather);
+        let lighting = lighting_for(&args, &weather, &sky);
         log::info!("showroom: {} ({} meshes, {:.1} m long) placed in {:.2} s", r.look.bus, render.instances.len(), length, t0.elapsed().as_secs_f64());
         let _ = std::fs::remove_file(placing_mark());
-        Shown { look: r.look, scene, world: Some(world), vehicle: Some(vehicle), render: Some(render), trailers, centre, length, weather, lighting }
+        Shown { look: r.look, scene, world: Some(world), vehicle: Some(vehicle), render: Some(render), trailers, centre, length, weather, sky, lighting }
     }
 
     /// The picture of the bus at `w` x `h` pixels, drawn again when something changed.
@@ -412,7 +415,10 @@ impl Showroom {
         // from the focus to the right edge)
         let free = ((1.0 - focus) * 2.0).clamp(0.3, 1.0);
         let fit = (s.length * 0.5 + 1.0) / (half_v * aspect * free * 0.92).max(0.1);
-        let dist = (fit * zoom).max(8.0);
+        // and its height the picture's (a wide, low picture - a card on a page - had a
+        // double-decker cut at the roof and the wheels)
+        let fit_v = (s.centre.z.max(1.0) * 1.3 + 1.0) / half_v.max(0.05);
+        let dist = (fit.max(fit_v) * zoom).max(8.0);
         let (sy, cy) = yaw.to_radians().sin_cos();
         let (sp, cp) = pitch.to_radians().sin_cos();
         let target_pt = DVec3::new(s.centre.x as f64, s.centre.y as f64, (s.centre.z * 0.75) as f64);
@@ -430,6 +436,60 @@ impl Showroom {
         renderer.render(&mut s.scene, target, w, h, &cam, &s.lighting);
     }
 
+    /// The picture's texture as last drawn (the desktop launcher's service reads it back).
+    pub fn picture(&self) -> Option<&wgpu::Texture> {
+        self.target.as_ref().map(|t| &t.0)
+    }
+
+    /// The camera is still easing towards where the mouse turned it (or turning by itself):
+    /// more pictures are coming.
+    pub fn moving(&self) -> bool {
+        self.dirty || (self.yaw_to - self.yaw).abs() > 0.05 || (self.pitch_to - self.pitch).abs() > 0.05 || (self.zoom_to - self.zoom).abs() > 0.001 || (self.auto_turn && self.idle > 4.0)
+    }
+
+    /// The last picture drawn, as RGBA rows (width, height, pixels) - read back from the
+    /// graphics card for a launcher that shows it itself (the Swift one, see `apple_bridge`).
+    #[cfg_attr(not(any(target_os = "macos", target_os = "ios")), allow(dead_code))]
+    pub fn pixels(&self, renderer: &Renderer) -> Option<(u32, u32, Vec<u8>)> {
+        let (tex, _, w, h) = self.target.as_ref()?;
+        let (w, h) = (*w, *h);
+        // (rows of a copy are 256-byte aligned)
+        let row = w * 4;
+        let padded = row.div_ceil(256) * 256;
+        let device = &renderer.device;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor { label: Some("bus preview read-back"), size: (padded * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("bus preview read-back") });
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo { texture: tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyBufferInfo { buffer: &buffer, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: Some(h) } },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        renderer.queue.submit([enc.finish()]);
+        let slice = buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        rx.recv().ok()?.ok()?;
+        let data = slice.get_mapped_range();
+        let bgra = matches!(renderer.format(), wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
+        let mut out = Vec::with_capacity((row * h) as usize);
+        for y in 0..h as usize {
+            let line = &data[y * padded as usize..y * padded as usize + row as usize];
+            if bgra {
+                for p in line.chunks_exact(4) {
+                    out.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
+                }
+            } else {
+                out.extend_from_slice(line);
+            }
+        }
+        drop(data);
+        buffer.unmap();
+        Some((w, h, out))
+    }
+
     /// A bus is there to show.
     pub fn has_picture(&self) -> bool {
         self.shown.as_ref().map(|s| s.vehicle.is_some()).unwrap_or(false) && self.target.is_some()
@@ -440,11 +500,11 @@ impl Showroom {
 /// The light of the look's time and weather, with the sun's shadow under the bus. Always
 /// the plain renderer, whatever the game's graphics setting: a preview is to be quick and
 /// clear, not the game's picture (no enhanced exposure and glow, no weather effects).
-fn lighting_for(args: &Args, weather: &omsi_content::weather::Weather) -> Lighting {
+fn lighting_for(args: &Args, weather: &omsi_content::weather::Weather, sky: &crate::weather_setup::SkyState) -> Lighting {
     let clock = start_clock(args);
     let envir = omsi_content::Envir::load(&args.root.join("envir.cfg")).ok();
     let daylight = omsi_sim::Daylight::compute(&clock, envir.as_ref());
-    let mut l = weather_lighting(&daylight, weather, crate::weather_setup::cloud_drift_at(weather, clock.time), 0.0, true);
+    let mut l = weather_lighting(&daylight, weather, crate::weather_setup::cloud_drift_at(weather, clock.time), 0.0, true, sky);
     l.shadows = daylight.altitude_deg > 2.0;
     l.enhanced = false;
     l.classic = false;

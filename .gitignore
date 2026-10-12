@@ -14,3 +14,8 @@ node_modules/
 /android/debug.keystore
 /android/build
 tools/greenteaspeak-plugin/*.zip
+
+# the desktop launcher: its build output and the schemas Tauri writes
+/launcher/src-tauri/target
+/launcher/src-tauri/gen
+/launcher/mock

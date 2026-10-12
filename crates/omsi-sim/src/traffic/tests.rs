@@ -477,6 +477,28 @@ fn simultaneous_inactive_events_do_not_stall_the_cycle() {
 }
 
 #[test]
+fn jump_to_zero_at_cycle_boundary_does_not_freeze_the_program() {
+    // Grand Paris-Moulon's TCSP17 ends its 84 s cycle with a request-conditioned jump
+    // from 84 to 0, and also jumps from 64 to 0 when no light-4 request is present.
+    // The jump at 64 lands on the cycle-boundary jump. That second jump makes no progress
+    // and must only be processed once, so the bus light can reach its next green.
+    let mut lights = vec![Vec::new(); 7];
+    lights[2] = vec![(0, 29.0), (6, 12.0), (9, 2.0), (0, 25.0), (6, 12.0), (9, 2.0), (0, 1.0)];
+    let mut c = TrafficLightController::from_program(
+        lights.into_iter().map(|p| (p, None)).collect(),
+        Some(84.0),
+        &[],
+        &[[4.0, 64.0, 1.0, 0.0], [4.0, 84.0, 1.0, 0.0]],
+    );
+    c.time = 63.9;
+    c.advance(0.2);
+    assert!((c.time - 0.1).abs() < 1e-5, "controller clock froze at {}", c.time);
+
+    c.advance(29.0);
+    assert_eq!(c.state(2), 6, "the bus light reaches its next green");
+}
+
+#[test]
 fn simultaneous_inactive_events_do_not_hide_a_later_active_jump() {
     let mut c = TrafficLightController::from_program(
         vec![(vec![(0, 4.0), (6, 16.0)], None); 3],

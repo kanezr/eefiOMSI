@@ -6,7 +6,7 @@ use super::*;
 impl App {
     /// Show one of the menu's lists in the chooser (see `game_lists`).
     pub(crate) fn open_list(&mut self, kind: crate::game_lists::ListKind) {
-        crate::game_lists::forget_page_titles();
+        crate::game_lists::forget_page_titles(self);
         // (a search belongs to its list; `chooser_pick` has taken the kind when it goes on)
         if self.menus.list_kind.as_ref().is_some_and(|k| *k != kind) {
             self.forget_search();
@@ -326,10 +326,10 @@ impl App {
         }
         let Some(action) = self.menus.admin_list.as_ref().and_then(|l| l.get(k)).map(|x| x.1.clone()) else { return };
         let slider = crate::game_lists::is_slider(action.split(' ').next().unwrap_or(""));
-        crate::game_lists::LIST_DIRTY.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.menus.list_dirty = false;
         if let Some(next) = crate::game_lists::run_move(self, &kind, &action, mv) {
             // (a slider dragged sends the same value many times over: the list stays)
-            if slider && !crate::game_lists::LIST_DIRTY.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            if slider && !std::mem::take(&mut self.menus.list_dirty) {
                 return;
             }
             self.open_list(next);

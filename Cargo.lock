@@ -2556,6 +2556,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2697,6 +2706,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "mimalloc"
+version = "0.1.52"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d4139bb28d14ad1facf21d5eb8825051b326e172d216b39f6d31df53cc97862"
+dependencies = [
+ "libmimalloc-sys",
 ]
 
 [[package]]
@@ -3298,7 +3316,6 @@ dependencies = [
  "android_logger",
  "anyhow",
  "arboard",
- "block2 0.6.2",
  "clap",
  "ct2rs",
  "env_logger",
@@ -3309,31 +3326,42 @@ dependencies = [
  "jni 0.21.1",
  "libc",
  "log",
+ "mimalloc",
  "ndk-context",
  "objc2 0.6.4",
- "objc2-core-foundation",
- "objc2-foundation 0.3.2",
- "objc2-game-controller",
- "objc2-io-kit",
  "omsi-audio",
+ "omsi-career",
  "omsi-cfg",
  "omsi-content",
  "omsi-geometry",
+ "omsi-guard",
+ "omsi-htmlengine",
+ "omsi-input",
+ "omsi-lan",
+ "omsi-launcher-api",
  "omsi-launcher-core",
+ "omsi-launcher-ui",
  "omsi-map",
  "omsi-model",
  "omsi-net",
  "omsi-o3d",
+ "omsi-photo",
+ "omsi-platform",
  "omsi-plugin",
+ "omsi-plugin-ui",
  "omsi-render",
+ "omsi-scene",
  "omsi-scenery",
  "omsi-script",
  "omsi-sim",
+ "omsi-soundscape",
  "omsi-texture",
  "omsi-timetable",
  "omsi-ui",
  "omsi-vehicle",
- "openxr",
+ "omsi-weather",
+ "omsi-world",
+ "omsi-xr",
  "parking_lot",
  "pollster",
  "rayon",
@@ -3347,7 +3375,6 @@ dependencies = [
  "steamworks",
  "ureq",
  "wgpu",
- "wgpu-hal",
  "windows 0.62.2",
  "winit",
  "winresource",
@@ -3372,12 +3399,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "omsi-career"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "libc",
+ "log",
+ "omsi-cfg",
+ "omsi-content",
+ "omsi-sim",
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
 name = "omsi-cfg"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
  "flate2",
  "log",
+ "rayon",
  "ring",
  "thiserror 2.0.21",
  "unicode-normalization",
@@ -3432,6 +3474,87 @@ dependencies = [
 ]
 
 [[package]]
+name = "omsi-guard"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "omsi-cfg",
+ "omsi-platform",
+ "serde_json",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "omsi-htmlengine"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "log",
+ "omsi-cfg",
+ "omsi-sim",
+ "omsi-texture",
+]
+
+[[package]]
+name = "omsi-input"
+version = "0.1.0"
+dependencies = [
+ "block2 0.6.2",
+ "gilrs",
+ "glam",
+ "libc",
+ "log",
+ "objc2 0.6.4",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-game-controller",
+ "objc2-io-kit",
+ "omsi-cfg",
+ "omsi-content",
+ "omsi-script",
+ "omsi-sim",
+ "omsi-vehicle",
+ "windows 0.62.2",
+ "winit",
+]
+
+[[package]]
+name = "omsi-lan"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam",
+ "hashbrown 0.17.1",
+ "libc",
+ "log",
+ "omsi-cfg",
+ "omsi-map",
+ "omsi-net",
+ "omsi-script",
+ "omsi-sim",
+ "omsi-vehicle",
+ "rayon",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "windows 0.62.2",
+]
+
+[[package]]
+name = "omsi-launcher-api"
+version = "0.1.0"
+dependencies = [
+ "omsi-cfg",
+ "omsi-launcher-core",
+ "omsi-net",
+ "omsi-platform",
+ "omsi-weather",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "omsi-launcher-core"
 version = "0.1.0"
 dependencies = [
@@ -3453,6 +3576,38 @@ dependencies = [
  "windows 0.62.2",
  "winresource",
  "zip",
+]
+
+[[package]]
+name = "omsi-launcher-ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "glam",
+ "hashbrown 0.17.1",
+ "image",
+ "libc",
+ "log",
+ "omsi-cfg",
+ "omsi-content",
+ "omsi-guard",
+ "omsi-input",
+ "omsi-lan",
+ "omsi-launcher-core",
+ "omsi-map",
+ "omsi-net",
+ "omsi-platform",
+ "omsi-render",
+ "omsi-sim",
+ "omsi-timetable",
+ "omsi-ui",
+ "omsi-vehicle",
+ "omsi-weather",
+ "serde",
+ "serde_json",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]
@@ -3498,6 +3653,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "omsi-photo"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "omsi-render",
+ "rayon",
+]
+
+[[package]]
+name = "omsi-platform"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "omsi-cfg",
+ "omsi-launcher-core",
+ "serde_json",
+ "sha2 0.10.9",
+ "ureq",
+ "windows 0.62.2",
+ "zip",
+]
+
+[[package]]
 name = "omsi-plugin"
 version = "0.1.0"
 dependencies = [
@@ -3507,6 +3686,22 @@ dependencies = [
  "omsi-cfg",
  "oop-format",
  "wasmi",
+]
+
+[[package]]
+name = "omsi-plugin-ui"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "hashbrown 0.17.1",
+ "image",
+ "log",
+ "omsi-cfg",
+ "omsi-plugin",
+ "omsi-render",
+ "omsi-ui",
+ "pollster",
+ "wgpu",
 ]
 
 [[package]]
@@ -3533,6 +3728,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "omsi-scene"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam",
+ "hashbrown 0.17.1",
+ "image",
+ "log",
+ "omsi-audio",
+ "omsi-cfg",
+ "omsi-content",
+ "omsi-geometry",
+ "omsi-htmlengine",
+ "omsi-map",
+ "omsi-model",
+ "omsi-o3d",
+ "omsi-render",
+ "omsi-scenery",
+ "omsi-script",
+ "omsi-sim",
+ "omsi-soundscape",
+ "omsi-texture",
+ "omsi-ui",
+ "omsi-vehicle",
+ "omsi-weather",
+ "omsi-world",
+ "parking_lot",
+ "pollster",
+ "rayon",
+ "wgpu",
+ "zip",
+]
+
+[[package]]
 name = "omsi-scenery"
 version = "0.1.0"
 dependencies = [
@@ -3555,7 +3784,6 @@ dependencies = [
 name = "omsi-sim"
 version = "0.1.0"
 dependencies = [
- "ab_glyph",
  "anyhow",
  "glam",
  "hashbrown 0.17.1",
@@ -3574,6 +3802,26 @@ dependencies = [
  "omsi-vehicle",
  "parking_lot",
  "rayon",
+]
+
+[[package]]
+name = "omsi-soundscape"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam",
+ "hashbrown 0.17.1",
+ "log",
+ "omsi-audio",
+ "omsi-cfg",
+ "omsi-geometry",
+ "omsi-map",
+ "omsi-platform",
+ "omsi-scenery",
+ "omsi-sim",
+ "omsi-vehicle",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3619,6 +3867,51 @@ version = "0.1.0"
 dependencies = [
  "log",
  "omsi-cfg",
+]
+
+[[package]]
+name = "omsi-weather"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "log",
+ "omsi-cfg",
+ "omsi-content",
+ "omsi-map",
+ "omsi-sim",
+ "omsi-texture",
+]
+
+[[package]]
+name = "omsi-world"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "hashbrown 0.17.1",
+ "log",
+ "omsi-cfg",
+ "omsi-geometry",
+ "omsi-map",
+ "omsi-scenery",
+ "parking_lot",
+ "rayon",
+]
+
+[[package]]
+name = "omsi-xr"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam",
+ "log",
+ "omsi-cfg",
+ "omsi-render",
+ "openxr",
+ "serde",
+ "serde_json",
+ "wgpu",
+ "wgpu-hal",
+ "windows 0.62.2",
 ]
 
 [[package]]

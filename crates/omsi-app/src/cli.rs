@@ -215,6 +215,15 @@ pub(crate) struct Args {
     /// shortly before the bus has to set off (what the HUD says at the start).
     #[arg(skip)]
     pub(crate) clock_moved: Option<String>,
+    /// The game starts at this device's date and time (`real_time::start_at_now`): a duty
+    /// must not move the clock then. (A field, not a global: a second drive in the same
+    /// process - Android's launcher - starts from its own arguments.)
+    #[arg(skip)]
+    pub(crate) start_synced: bool,
+    /// The world the duty start opened, for the session to go on with (see
+    /// `duty_start::Preopened`).
+    #[arg(skip)]
+    pub(crate) preopened: crate::duty_start::Preopened,
     /// With a duty: start at the entry point nearest to its first stop by road (the
     /// launcher's "Automatic") instead of `--entry`.
     #[arg(long)]

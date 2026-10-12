@@ -197,6 +197,12 @@ impl TrafficSim {
                 continue;
             }
             let _ = self.cars[i].vehicle.trigger("ev_AI_Horn");
+            let heavy = self.cars[i].is_bus() || matches!(self.cars[i].state.veh_type, 2 | 3) || self.cars[i].state.length > 7.0;
+            self.honked.push((self.cars[i].id, heavy));
+            // (nobody asks without sound: the oldest go)
+            if self.honked.len() > 64 {
+                self.honked.remove(0);
+            }
             if omsi_cfg::flags::OMSI_DEBUG_TRAFFIC.is_set() {
                 log::info!("t={:.1}: car {} honks{}", now, self.cars[i].id, if sharp { " (a sharp stop ahead)" } else if at_whom.is_some() { " (stuck behind a vehicle that just stands)" } else { " back" });
             }

@@ -88,6 +88,7 @@ impl Offscreen<'_> {
             self.cabin_air.appearance(),
             &self.settings,
             self.run_clock.run_time as f32,
+            &self.sky,
         )
     }
 

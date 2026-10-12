@@ -20,7 +20,7 @@ impl App {
         // OMSI's autosave of the last situation: every five minutes of play
         if !self.paused && self.player.is_some() && self.clock.run_time - self.session.autosave_t >= 300.0 {
             self.session.autosave_t = self.clock.run_time;
-            self.save_last_situation();
+            self.autosave_last_situation();
         }
         // the time of day a script set last frame (the nearer way round the clock)
         // (not with the real-time sync on: the clock stays the device's)
@@ -132,7 +132,17 @@ impl App {
                     && !omsi_cfg::flags::OMSI_FIXED_SCALE.is_set();
                 if let (Some(r), true) = (self.renderer.as_mut(), free) {
                     let s = r.dynamic_scale();
-                    let step = render_scale_step(fps, wait_share);
+                    let mut step = render_scale_step(fps, wait_share);
+                    // (up only after two readings in a row ask for it, 10 s: a step down
+                    // takes the wait for the card away, and the next reading alone asked
+                    // to go up again - a step up and down every 10 s, each one new targets
+                    // and a full upload of the instances, a stutter every time)
+                    static UP_READINGS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+                    let ups = if step > 0.0 { UP_READINGS.load(std::sync::atomic::Ordering::Relaxed).saturating_add(1) } else { 0 };
+                    if step > 0.0 && ups < 2 {
+                        step = 0.0;
+                    }
+                    UP_READINGS.store(if step > 0.0 { 0 } else { ups }, std::sync::atomic::Ordering::Relaxed);
                     r.set_dynamic_scale(s + step);
                     if (r.dynamic_scale() - s).abs() > 1e-3 {
                         log::info!("frame rate {fps:.0} fps (presentation wait {:.0}%): the 3D picture is drawn at {:.0} % of the window now", wait_share * 100.0, r.dynamic_scale() * 100.0);

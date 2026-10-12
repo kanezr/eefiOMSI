@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "openOMSI Launcher",
+  "version": "0.2.33",
+  "identifier": "io.github.turbo-devv.openomsi.launcher",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "font-src": "'self'",
+        "img-src": "'self' data: blob: omsi: http://omsi.localhost https://omsi.localhost",
+        "connect-src": "'self' ipc: http://ipc.localhost omsi: http://omsi.localhost https://omsi.localhost",
+        "worker-src": "'self' blob:"
+      }
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../../assets/icons/app/openomsi-512.png",
+      "../../assets/icons/app/openomsi.icns",
+      "../../assets/icons/app/openomsi.ico"
+    ]
+  }
+}

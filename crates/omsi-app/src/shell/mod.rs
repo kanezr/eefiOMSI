@@ -54,6 +54,10 @@ pub(crate) struct Shell {
     picture: Option<(u32, u32, Vec<u8>)>,
     /// The picture's texture once it is on the card.
     pub(crate) picture_tex: Option<usize>,
+    /// The openOMSI logo (the launcher's sidebar has it) on the card, and in the graphics of
+    /// the `shot` pictures.
+    pub(crate) logo_tex: Option<usize>,
+    shot_logo: Option<usize>,
     /// Physical pixels per point of the last frame.
     pub(crate) scale: f32,
     /// The mouse was over a panel of the screens in the last frame.
@@ -74,7 +78,10 @@ struct Drawn {
 
 impl Shell {
     pub(crate) fn new() -> Shell {
-        Shell { ui: Ui::new(), gpu: None, shot_gpu: None, drawn: None, actions: Vec::new(), picture: None, picture_tex: None, scale: 1.0, over_ui: false, last_sel: None, dd_anchor: None, opaque: false }
+        // (the desktop launcher's calm look: graphite surfaces, no edges)
+        let mut ui = Ui::new();
+        ui.flat = true;
+        Shell { ui, gpu: None, shot_gpu: None, drawn: None, actions: Vec::new(), picture: None, picture_tex: None, logo_tex: None, shot_logo: None, scale: 1.0, over_ui: false, last_sel: None, dd_anchor: None, opaque: false }
     }
 
     /// A frame of the screens begins: the window's size in physical pixels and how many of
@@ -153,8 +160,12 @@ impl Shell {
             self.gpu = Some((Gpu::new(&r.device, format, 1, self.ui.atlas.size), format));
             self.ui.atlas.mark_all_dirty();
             self.picture_tex = None;
+            self.logo_tex = None;
         }
         let Some((gpu, _)) = self.gpu.as_mut() else { return };
+        if self.logo_tex.is_none() {
+            self.logo_tex = logo_pixels().map(|px| gpu.add_image(&r.device, &r.queue, LOGO_PX, LOGO_PX, &px));
+        }
         if let Some((pw, ph, px)) = self.picture.take() {
             match self.picture_tex {
                 Some(id) => gpu.update_image(&r.device, &r.queue, id, pw, ph, &px),
@@ -174,17 +185,37 @@ impl Shell {
         let d = self.drawn.as_ref()?;
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let size = self.ui.atlas.size;
-        let gpu = self.shot_gpu.get_or_insert_with(|| Gpu::new(&r.device, format, 1, size));
+        if self.shot_gpu.is_none() {
+            let mut g = Gpu::new(&r.device, format, 1, size);
+            self.shot_logo = logo_pixels().map(|px| g.add_image(&r.device, &r.queue, LOGO_PX, LOGO_PX, &px));
+            self.shot_gpu = Some(g);
+        }
+        let gpu = self.shot_gpu.as_mut().unwrap();
         self.ui.atlas.mark_all_dirty();
         Self::upload(gpu, r, &mut self.ui, d);
         self.ui.atlas.mark_all_dirty();
-        let draws: Vec<Draw> = d.ranges.iter().enumerate().filter(|(_, (_, tex))| *tex == 0).map(|(k, (range, tex))| Draw { buffer: 0, range: range.clone(), layer: k, texture: *tex }).collect();
+        // (the logo as well, from the shot's own copy of it)
+        let (logo, shot_logo) = (self.logo_tex, self.shot_logo);
+        let draws: Vec<Draw> = d.ranges.iter().enumerate().filter_map(|(k, (range, tex))| {
+            let texture = if *tex == 0 { 0 } else if Some(*tex) == logo { shot_logo? } else { return None };
+            Some(Draw { buffer: 0, range: range.clone(), layer: k, texture })
+        }).collect();
         let tex = r.device.create_texture(&wgpu::TextureDescriptor { label: Some("screens shot"), size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format, usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC, view_formats: &[] });
         let view = tex.create_view(&Default::default());
         let mut enc = r.device.create_command_encoder(&Default::default());
         gpu.render(&r.device, &r.queue, &mut enc, &view, (w, h), Some(wgpu::Color::TRANSPARENT), &d.layers, &draws);
         Some(read_back(r, enc, &tex, w, h))
     }
+}
+
+/// The launcher's logo (`launcher/ui/logo.svg`), as the pixels of a texture of `LOGO_PX`.
+const LOGO: &str = include_str!("../../../../launcher/ui/logo.svg");
+// (drawn 32 interface pixels wide, twice that on a Retina screen: a texture of about that
+// size, since a much larger one squeezed without mipmaps came out blurred and jagged)
+const LOGO_PX: u32 = 64;
+
+fn logo_pixels() -> Option<Vec<u8>> {
+    omsi_ui::icons::rasterize_rgba(LOGO, LOGO_PX, LOGO_PX)
 }
 
 /// `tex` (RGBA8, `w` x `h`) copied out after the commands of `enc`.

@@ -1,0 +1,30 @@
+[package]
+name = "omsi-lan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "openOMSI's multiplayer on top of omsi-net: the host's mods for joining players, the voice chat link, the public gateway and the server's status page, the sync tables and the spawn geometry"
+
+[dependencies]
+omsi-cfg = { path = "../omsi-cfg" }
+omsi-net = { path = "../omsi-net" }
+omsi-map = { path = "../omsi-map" }
+omsi-sim = { path = "../omsi-sim" }
+omsi-vehicle = { path = "../omsi-vehicle" }
+omsi-script = { path = "../omsi-script" }
+anyhow.workspace = true
+glam.workspace = true
+hashbrown.workspace = true
+log.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+ring.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+# the LAN store's key, sealed with the user's account (DPAPI, see `mods::store`)
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Cryptography"] }

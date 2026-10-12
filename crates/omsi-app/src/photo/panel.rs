@@ -179,7 +179,7 @@ fn page(ui: &mut Ui, ph: &mut Photo, info: &Info, x: f32, mut y: f32, w: f32, ac
             ui.text_in(&info.time, Rect::new(r.x + r.w * 0.38, r.y, r.w * 0.62, r.h), 15.0, Weight::Bold, ACCENT, Align::Center);
             let r = row(&mut y);
             let bw = (r.w - 18.0) / 4.0;
-            for (k, (text, secs)) in [("−1 h", -3600.0), ("−15 min", -900.0), ("+15 min", 900.0), ("+1 h", 3600.0)].into_iter().enumerate() {
+            for (k, (text, secs)) in [("-1 h", -3600.0), ("-15 min", -900.0), ("+15 min", 900.0), ("+1 h", 3600.0)].into_iter().enumerate() {
                 if ui.button(&format!("ph-clock-{k}"), Rect::new(r.x + k as f32 * (bw + 6.0), r.y, bw, r.h), text, None, ButtonKind::Normal) {
                     acts.push(Request::Clock(secs));
                 }
@@ -255,9 +255,9 @@ pub(crate) fn draw(sh: &mut Shell, ph: &mut Photo, info: &Info) {
             n.1 = left;
         }
         let a = left.clamp(0.0, 1.0);
-        let bg = if hover { Color::rgba(40, 40, 40, a) } else { Color::rgba(28, 28, 28, a) };
+        // (flat, as the launcher's toasts: lighter under the mouse, no edge)
+        let bg = if hover { SURFACE_3.alpha(a) } else { SURFACE_2.alpha(a) };
         ui.p().rounded(r, 8.0, bg);
-        ui.p().rounded_border(r, 8.0, 1.0, Color::WHITE.alpha(if hover { 0.25 } else { 0.1 } * a));
         let failed = text.starts_with(omsi_ui::tr("Not saved:").as_ref());
         let (icon, tint) = if ph.saved.is_some() { ("check_circle", OK) } else if failed { ("error", DANGER) } else { ("info", TEXT_DIM) };
         ui.icon(icon, Vec2::new(r.x + 20.0, r.y + 20.0), 18.0, tint.alpha(a));
@@ -294,13 +294,16 @@ pub(crate) fn draw(sh: &mut Shell, ph: &mut Photo, info: &Info) {
         ph.tab = tab;
     }
     // the pages scroll above the buttons
-    let foot = 44.0 + 10.0 + 38.0 + 8.0;
+    let foot = 44.0 + 10.0 + 38.0 + 8.0 + 40.0;
     let body = Rect::new(inner.x, inner.y + 100.0, inner.w, (inner.bottom() - foot - inner.y - 100.0).max(40.0));
     let key = format!("ph-page-{}", ph.tab);
     ui.scroll_area(&key, body, &mut |ui, v| {
         let end = page(ui, ph, info, v.x, v.y, v.w - 8.0, &mut acts);
         end - v.y + 6.0
     });
+    // the keys, over the buttons (going down was nowhere to be found)
+    let keys = Rect::new(inner.x, inner.bottom() - 44.0 - 46.0 - 40.0, inner.w, 34.0);
+    ui.paragraph(&omsi_ui::tr("W A S D: move, Space: up, Ctrl: down, Shift: faster, drag or arrows: look"), Vec2::new(keys.x, keys.y), keys.w, 11.5, Weight::Regular, TEXT_DIM);
     let b = Rect::new(inner.x, inner.bottom() - 44.0 - 46.0, inner.w, 44.0);
     if ui.button("ph-take", b, &if busy { format!("{}  {n} / {target}", omsi_ui::tr("Taking...")) } else { omsi_ui::tr("Take photo").into_owned() }, Some("photo_camera"), ButtonKind::Primary) && !busy {
         acts.push(Request::Take);

@@ -140,11 +140,12 @@ impl SceneBase {
                     fs != "fs_surface_depth",
                     fs == "fs_enhanced",
                 ),
-                // Only cutouts and painted terrain keep their discard; opaque and
-                // ordinary blended materials retain early depth testing.
+                // Cutouts and depth-writing blends discard uncovered pixels; opaque and
+                // depth-disabled blends retain early depth testing.
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &[
                         ("ALPHA_TEST", if alpha_to_coverage { 1.0 } else { 0.0 }),
+                        ("BLEND_DEPTH", if blend.is_some() && depth_write { 1.0 } else { 0.0 }),
                         (
                             "ALPHA_TO_COVERAGE",
                             if use_alpha_to_coverage { 1.0 } else { 0.0 },
@@ -190,8 +191,8 @@ impl SceneBase {
 /// The depth prepass's pipelines: single-sampled, and multisampled with MSAA.
 pub(crate) struct Prepass {
     pub pipelines: [wgpu::RenderPipeline; 6],
+    /// (drawn in the enhanced main pass, see `encode_prefill`)
     pub msaa_pipelines: Option<[wgpu::RenderPipeline; 6]>,
-    pub presurface_pipelines: Option<[wgpu::RenderPipeline; 4]>,
 }
 
 pub(crate) fn prepass(device: &wgpu::Device, scene: &SceneBase, msaa: u32) -> Prepass {
@@ -204,9 +205,12 @@ pub(crate) fn prepass(device: &wgpu::Device, scene: &SceneBase, msaa: u32) -> Pr
     // here would hide what the main pass then draws behind it
     let make_prepass_samples = |kind: u8, cull: bool, samples: u32, in_main: bool| {
         let fragment = match kind {
-            0 => "fs_shadow",
-            1 => "fs_shadow_test",
-            2 => "fs_transmap_depth",
+            0 => "fs_depth",
+            // (the multisampled prefill in the main pass: only what alpha-to-coverage will
+            // cover in full, see `fs_depth_cover`)
+            1 if in_main => "fs_depth_cover",
+            1 => "fs_depth_test",
+            2 => "fs_depth_transmap",
             _ => unreachable!(),
         };
         compile_pipeline(device, &wgpu::RenderPipelineDescriptor {
@@ -214,7 +218,8 @@ pub(crate) fn prepass(device: &wgpu::Device, scene: &SceneBase, msaa: u32) -> Pr
             layout: Some(&prepass_pl),
             vertex: wgpu::VertexState {
                 module: &scene.shader,
-                entry_point: Some("vs_main"),
+                // (the place and the cut-out's coverage only: see `vs_depth`)
+                entry_point: Some("vs_depth"),
                 buffers: &[scene.vertex_layout.clone()],
                 compilation_options: Default::default(),
             },
@@ -248,14 +253,11 @@ pub(crate) fn prepass(device: &wgpu::Device, scene: &SceneBase, msaa: u32) -> Pr
     ];
     // Apple views with cutout/blended draws also need these pipelines: their
     // visibility depends on shading, unlike opaque hidden-surface removal.
-    // Purely opaque Apple views still skip this pass below to avoid its cost.
+    // Purely opaque Apple views still skip the prefill to avoid its cost.
+    // (Only these: the prefill is drawn inside the main pass, with its colour targets.)
     let msaa_pipelines = (msaa > 1).then(|| {
         [(0, false), (0, true), (1, false), (1, true), (2, false), (2, true)]
-            .map(|(kind, cull)| make_prepass_samples(kind, cull, msaa, false))
-    });
-    let presurface_pipelines = (msaa > 1).then(|| {
-        [(0, false), (0, true), (2, false), (2, true)]
             .map(|(kind, cull)| make_prepass_samples(kind, cull, msaa, true))
     });
-    Prepass { pipelines, msaa_pipelines, presurface_pipelines }
+    Prepass { pipelines, msaa_pipelines }
 }

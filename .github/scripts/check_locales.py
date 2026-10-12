@@ -59,11 +59,17 @@ def load(path: str) -> dict:
 
 
 def code_strings(root: Path) -> set[str]:
-    """Every string literal of the Rust code, unescaped as far as texts need it."""
+    """Every string literal of the Rust code and of the desktop launcher's page (its JS
+    quotes texts with ' as well), unescaped as far as texts need it."""
     out = set()
     for p in root.glob("crates/**/*.rs"):
         for lit in re.findall(r'"((?:[^"\\]|\\.)*)"', p.read_text(encoding="utf-8", errors="replace")):
             out.add(lit.replace('\\"', '"').replace("\\n", "\n").replace("\\\\", "\\"))
+    for p in root.glob("launcher/ui/js/**/*.js"):
+        text = p.read_text(encoding="utf-8", errors="replace")
+        for q in ('"', "'"):
+            for lit in re.findall(q + r"((?:[^" + q + r"\\\n]|\\.)*)" + q, text):
+                out.add(lit.replace("\\" + q, q).replace("\\n", "\n").replace("\\\\", "\\"))
     return out
 
 

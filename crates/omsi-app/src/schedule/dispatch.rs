@@ -4,6 +4,10 @@
 use super::*;
 use omsi_render::{Renderer, Scene};
 
+/// Departures tried at most in one look for due ones (`Schedule::tick`) once the session
+/// has started: a few per call, the rest in the next.
+pub(crate) const RETRIES_PER_CALL: usize = 6;
+
 impl Schedule {
     /// The clock was set to another time (by hand, the menu, Ctrl+Shift+Page Up/Down): every
     /// timetable bus goes, and at the next tick each trip under way at the new time is put
@@ -98,9 +102,16 @@ impl Schedule {
         self.fleet(world, traffic, renderer, scene, day_time);
         self.tour_handover(world, traffic, view, renderer, scene, day_time);
         // a handful per call: spawning a bus builds its meshes, and a whole rush hour at
-        // once is a frame that lasts seconds (a departure that has to wait costs little)
+        // once is a frame that lasts seconds; and only a few tries: a departure that has to
+        // wait still looks for its route, and when the waiting ones all come back at once
+        // (every half minute, `queue_due`) two dozen of them were a heavy frame every tenth
+        // of a second until they were through (the rest are tried in the next calls). All of
+        // them while the traffic is still loading: the trips under way at the start may be
+        // put in plain view only then (`queued_at_startup`), and tried a few at a time some
+        // came too late for it and never appeared.
         let (mut spawned, mut tried) = (0, 0);
-        while spawned < if loading { 3 } else { 1 } && tried < 24 {
+        let tries = if loading || traffic.loading_phase() { 24 } else { RETRIES_PER_CALL };
+        while spawned < if loading { 3 } else { 1 } && tried < tries {
             let Some(i) = self.sim.next_pending() else {
                 break;
             };

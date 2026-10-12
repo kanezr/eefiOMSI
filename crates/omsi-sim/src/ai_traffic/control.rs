@@ -36,6 +36,22 @@ impl TrafficSim {
         c
     }
 
+    /// The next car that has parked (`ParkPlan::done`: in its space and standing), taken off
+    /// the road with its plan: the parked object takes its place, which the view does
+    /// (see [`TrafficSim::space_taken_back`]). The cars are taken in the order they stand
+    /// in the list, as the view sync took them one by one.
+    pub fn take_parked(&mut self) -> Option<(AiCar, ParkPlan)> {
+        let i = self.cars.iter().position(|c| c.park.is_some_and(|p| p.done))?;
+        let plan = self.cars[i].park?;
+        Some((self.take_off(i, Removal::Finished), plan))
+    }
+
+    /// The parked object is back in the space of `plan`: a car of the traffic may park
+    /// there no more, it is one of the lane's parked cars again.
+    pub fn space_taken_back(&mut self, plan: &ParkPlan) {
+        self.parked.entry(plan.lane).or_default().push((plan.s, plan.lat));
+    }
+
     /// Take the car of id `id` off the road (`cause`), if it is on it.
     pub fn take_off_id(&mut self, id: u64, cause: Removal) -> Option<AiCar> {
         let i = self.cars.iter().position(|c| c.id == id)?;

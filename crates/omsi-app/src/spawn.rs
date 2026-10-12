@@ -287,90 +287,10 @@ pub(crate) fn spawn_player_prepared(
         let keys: Vec<String> = doors.iter().enumerate().map(|(i, g)| format!("Shift+{} = {}", i + 1, g.join(" + "))).collect();
         log::info!("door keys: {}", keys.join(", "));
     }
-    let mut host = omsi_sim::VehicleHost::new(start_clock(args));
-    // the maintenance condition of the options (AI vehicles never wear)
-    host.wear_lifespan = crate::settings::Settings::load().wear_lifespan();
-    host.hof = find_hof(args, world, &vt);
-    host.font_lib = Some(world.fonts.clone());
-    if !world.ticket_pack.trim().is_empty() {
-        let p = omsi_cfg::resolve_path(&args.root, &world.ticket_pack);
-        match omsi_content::tickets::TicketPack::load(&p) {
-            Ok(t) => {
-                log::info!("ticket pack {}: {} tickets", p.display(), t.tickets.len());
-                host.tickets = Some(std::sync::Arc::new(t));
-            }
-            Err(e) => log::warn!("{e}"),
-        }
-    }
-    if let Some(h) = &host.hof {
-        log::info!(
-            "depot file {}: {} termini, {} bus stops, {} IBIS trips",
-            h.name,
-            h.termini.len(),
-            h.bus_stops.len(),
-            h.info_trips.len()
-        );
-    }
-    // number / ident are there before the scripts' first {init} instruction
-    let (number, ident) = player_identity(args, world, &vt);
-    host.initial_number = number;
-    host.initial_ident = ident;
-    // (the paint scheme's variables are there for the scripts' {init})
-    host.paint_scheme = Some(paint_scheme(&vt, args.paint.as_deref()));
+    let host = vehicle_host(args, world, &vt);
     let mut vehicle = omsi_sim::VehicleInstance::new(vt.clone(), host);
     // place at the entry point
-    if let Some(ep) = world
-        .global
-        .entry_points
-        .get(args.entry)
-        .or(world.global.entry_points.first())
-    {
-        let found = world.entry_point_place(ep);
-        match found {
-            Some((pos, rot)) => {
-                vehicle.position = pos;
-                // the height the map's editor recorded for the entry point (global.cfg), when
-                // it is at the same place but on another level: an entry point under a bridge
-                // whose object came out on the deck put the bus on the bridge
-                if let Some(rec) = recorded_entry_pos(ep, pos) {
-                    let off = ((rec.x - pos.x).powi(2) + (rec.y - pos.y).powi(2)).sqrt();
-                    if off < 3.0 && (rec.z - pos.z).abs() > 1.5 {
-                        log::info!("entry point {}: the object stands at height {:.1}, the map recorded {:.1}: the recorded one", ep.index, pos.z, rec.z);
-                        vehicle.position.z = rec.z;
-                    }
-                }
-                let pos = vehicle.position;
-                // on the road surface there, not at the marker's own height: a marker
-                // placed on the terrain a little under (or over) the road left one axle in
-                // the asphalt and the bus stood tilted from the start; a surface metres away
-                // (a bridge over the place, a lower level) is not this one
-                if let Some(g) = world.stand_height(pos.x, pos.y, pos.z) {
-                    vehicle.position.z = g;
-                } else if crate::scene::drive_probe(&world.terrains, &world.surfaces, pos.x, pos.y, pos.z + 1.5).below.is_none() {
-                    // nothing under the place at all (the marker came out under the ground):
-                    // on the ground above, not in the void under the map
-                    if let Some(g) = world.walk_height(pos.x, pos.y) {
-                        log::info!("entry point {}: nothing under its height {:.1}; put on the ground at {:.1}", ep.index, pos.z, g);
-                        vehicle.position.z = g;
-                    }
-                }
-                vehicle.heading = rot[0];
-                log::info!(
-                    "spawned at entry point {} \"{}\" ({:.1}, {:.1}, {:.1}) heading {:.0}",
-                    ep.index,
-                    ep.name,
-                    pos.x,
-                    pos.y,
-                    pos.z,
-                    rot[0]
-                );
-            }
-            None => log::warn!(
-                "entry point object {} not loaded; vehicle stays at origin",
-                ep.object_id
-            ),
-        }
-    }
+    place_at_entry_point(args, world, &mut vehicle);
     let scheme = paint_scheme(&vt, args.paint.as_deref());
     match scheme {
         Some(i) => log::info!(
@@ -477,32 +397,7 @@ pub(crate) fn spawn_player_prepared(
         }
         log::info!("spawn: the bus stands at height {:.2}", vehicle.position.z);
         vehicle.enable_rigid_body();
-        let rb = vehicle.rigid.as_ref().unwrap();
-        log::info!(
-            "rigid body: mass {:.0} kg, inertia {:?}, cog {:.2} m, {} wheels, loads {:?}",
-            rb.mass,
-            rb.inertia,
-            rb.cog.z,
-            rb.wheels.len(),
-            rb.wheels
-                .iter()
-                .map(|w| w.rest_load.round())
-                .collect::<Vec<_>>()
-        );
-        for a in 0..vehicle.ty.def.axles.len() {
-            let w = &rb.wheels[a * 2];
-            let model = vehicle.ty.wheel_geometry(0).get(a).copied().flatten();
-            log::info!(
-                "axle {a}: tyre r {:.3} m, hub {:.3} m unloaded{}, spring {:.0} kN/m x {:.2}, rest load {:.1} kN, sag {:.3} m",
-                w.radius,
-                w.attach.z,
-                model.map(|(z, r)| format!(" (model wheel centre {z:.3}, tyre {r:.3})")).unwrap_or_else(|| " (radius: no wheel mesh found)".into()),
-                w.spring / 1000.0,
-                w.spring_factor,
-                w.rest_load / 1000.0,
-                w.rest_compression()
-            );
-        }
+        log_rigid_body(&vehicle);
     }
     log::info!(
         "collision world: {} obstacle boxes, {} collision meshes of {} parts",
@@ -513,64 +408,7 @@ pub(crate) fn spawn_player_prepared(
     let bindings = omsi_content::KeyboardCfg::load(&crate::startup::keyboard_cfg(&args.root))
         .map(|k| k.with_game_defaults().vehicles)
         .unwrap_or_default();
-    static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    let mut p = Player {
-        uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        vehicle,
-        render,
-        trailer_renders,
-        axes: Default::default(),
-        analog: Default::default(),
-        cam_choice: (0, 0),
-        bindings,
-        sounds: None,
-        pressed_mesh: None,
-        press_info: (true, 0.0),
-        auto_drag: None,
-        pressed_trailer_mesh: None,
-        occlude_controls: false,
-        startup: None,
-        startup_at: None,
-        give_ticket: false,
-        give_change: false,
-        door_buttons: hashbrown::HashMap::new(),
-        cam_before_special: None,
-        held_keys: Default::default(),
-        held_repeat: Default::default(),
-        hand_coupled: 0,
-        rail_bound,
-        rail: None,
-        head: Vec3::ZERO,
-        head_vel: Vec3::ZERO,
-        head_omega: Vec3::ZERO,
-        head_idle: Default::default(),
-        steer_look: 0.0,
-        seat: Vec3::ZERO,
-        mirror_offsets: crate::settings::mirror_offsets(&vt.def.path),
-        mirror_shifts: crate::settings::mirror_shifts(&vt.def.path),
-        mirror_fovs: crate::settings::mirror_fovs(&vt.def.path),
-        mirrors_dirty: false,
-        take_change: false,
-        toggled_up: Default::default(),
-        momentary_gears: crate::settings::Settings::load().momentary_gears,
-        from_keyboard: false,
-        auto_shift: crate::settings::Settings::load().auto_shift,
-        auto_shift_wait: 0.0,
-        auto_shift_idle: 0.0,
-        auto_shift_max: 0.0,
-        auto_shift_climb: (0.0, 0.0),
-        side_lights_by_l: false,
-        driver: None,
-        ibis_duty: None,
-        blind_pick: None,
-        ibis_typist: None,
-        duty_typed: false,
-        html_next_stop: None,
-        ibis_background: false,
-        arm: Default::default(),
-        blinker_key_state: 0,
-        blinker_cancel: crate::settings::Settings::load().blinker_cancel,
-    };
+    let mut p = new_player(vehicle, render, trailer_renders, bindings, rail_bound, &vt);
     for _ in 0..3 {
         p.vehicle.update(1.0 / 30.0);
     }
@@ -618,9 +456,217 @@ pub(crate) fn spawn_player_prepared(
             log::warn!("trigger {name} not found");
         }
     }
+    log_debug_meshes(&p.vehicle);
+    log_debug_props(&p.vehicle);
+    p.driver = crate::driver::DriverFigure::new(world, renderer, scene, &p.vehicle, 0);
+    p.sync_transforms(
+        renderer,
+        scene,
+        matches!(args.view.as_str(), "driver" | "pax"),
+    );
+    // The sounds the scripts asked for while the bus was being set up ({init}, the state it
+    // is put in - cold, ready, the situation's) are not played: the first frame played them
+    // all, an engine stopping as every session began (#1198). Omsi.exe puts a bus down silent.
+    if !p.vehicle.host.fired_triggers.is_empty() {
+        log::info!("spawn: sound triggers of the set-up left silent: {:?}", p.vehicle.host.fired_triggers);
+    }
+    p.vehicle.host.fired_triggers.clear();
+    p.vehicle.host.fired_trigger_vars.clear();
+    Ok(Some(p))
+}
+
+/// The player's vehicle host: clock, wear, depot file, fonts, ticket pack, and the number,
+/// ident and paint scheme the scripts' {init} sees.
+fn vehicle_host(args: &Args, world: &World, vt: &Arc<omsi_sim::VehicleType>) -> omsi_sim::VehicleHost {
+    let mut host = omsi_sim::VehicleHost::new(start_clock(args));
+    // the maintenance condition of the options (AI vehicles never wear)
+    host.wear_lifespan = crate::settings::Settings::load().wear_lifespan();
+    host.hof = find_hof(args, world, &vt);
+    host.font_lib = Some(world.fonts.clone());
+    if !world.ticket_pack.trim().is_empty() {
+        let p = omsi_cfg::resolve_path(&args.root, &world.ticket_pack);
+        match omsi_content::tickets::TicketPack::load(&p) {
+            Ok(t) => {
+                log::info!("ticket pack {}: {} tickets", p.display(), t.tickets.len());
+                host.tickets = Some(std::sync::Arc::new(t));
+            }
+            Err(e) => log::warn!("{e}"),
+        }
+    }
+    if let Some(h) = &host.hof {
+        log::info!(
+            "depot file {}: {} termini, {} bus stops, {} IBIS trips",
+            h.name,
+            h.termini.len(),
+            h.bus_stops.len(),
+            h.info_trips.len()
+        );
+    }
+    // number / ident are there before the scripts' first {init} instruction
+    let (number, ident) = player_identity(args, world, &vt);
+    host.initial_number = number;
+    host.initial_ident = ident;
+    // (the paint scheme's variables are there for the scripts' {init})
+    host.paint_scheme = Some(paint_scheme(&vt, args.paint.as_deref()));
+    host
+}
+
+/// The vehicle put at the entry point `--entry` (or the map's first): on the road surface
+/// there, at the height the map recorded when the object came out on another level.
+fn place_at_entry_point(args: &Args, world: &World, vehicle: &mut omsi_sim::VehicleInstance) {
+    if let Some(ep) = world
+        .global
+        .entry_points
+        .get(args.entry)
+        .or(world.global.entry_points.first())
+    {
+        let found = world.entry_point_place(ep);
+        match found {
+            Some((pos, rot)) => {
+                vehicle.position = pos;
+                // the height the map's editor recorded for the entry point (global.cfg), when
+                // it is at the same place but on another level: an entry point under a bridge
+                // whose object came out on the deck put the bus on the bridge
+                if let Some(rec) = recorded_entry_pos(ep, pos) {
+                    let off = ((rec.x - pos.x).powi(2) + (rec.y - pos.y).powi(2)).sqrt();
+                    if off < 3.0 && (rec.z - pos.z).abs() > 1.5 {
+                        log::info!("entry point {}: the object stands at height {:.1}, the map recorded {:.1}: the recorded one", ep.index, pos.z, rec.z);
+                        vehicle.position.z = rec.z;
+                    }
+                }
+                let pos = vehicle.position;
+                // on the road surface there, not at the marker's own height: a marker
+                // placed on the terrain a little under (or over) the road left one axle in
+                // the asphalt and the bus stood tilted from the start; a surface metres away
+                // (a bridge over the place, a lower level) is not this one
+                if let Some(g) = world.stand_height(pos.x, pos.y, pos.z) {
+                    vehicle.position.z = g;
+                } else if crate::scene::drive_probe(&world.terrains, &world.surfaces, pos.x, pos.y, pos.z + 1.5).below.is_none() {
+                    // nothing under the place at all (the marker came out under the ground):
+                    // on the ground above, not in the void under the map
+                    if let Some(g) = world.walk_height(pos.x, pos.y) {
+                        log::info!("entry point {}: nothing under its height {:.1}; put on the ground at {:.1}", ep.index, pos.z, g);
+                        vehicle.position.z = g;
+                    }
+                }
+                vehicle.heading = rot[0];
+                log::info!(
+                    "spawned at entry point {} \"{}\" ({:.1}, {:.1}, {:.1}) heading {:.0}",
+                    ep.index,
+                    ep.name,
+                    pos.x,
+                    pos.y,
+                    pos.z,
+                    rot[0]
+                );
+            }
+            None => log::warn!(
+                "entry point object {} not loaded; vehicle stays at origin",
+                ep.object_id
+            ),
+        }
+    }
+}
+
+/// The log lines of the rigid body just enabled: mass, inertia, and each axle's tyre and spring.
+fn log_rigid_body(vehicle: &omsi_sim::VehicleInstance) {
+    let rb = vehicle.rigid.as_ref().unwrap();
+    log::info!(
+        "rigid body: mass {:.0} kg, inertia {:?}, cog {:.2} m, {} wheels, loads {:?}",
+        rb.mass,
+        rb.inertia,
+        rb.cog.z,
+        rb.wheels.len(),
+        rb.wheels
+            .iter()
+            .map(|w| w.rest_load.round())
+            .collect::<Vec<_>>()
+    );
+    for a in 0..vehicle.ty.def.axles.len() {
+        let w = &rb.wheels[a * 2];
+        let model = vehicle.ty.wheel_geometry(0).get(a).copied().flatten();
+        log::info!(
+            "axle {a}: tyre r {:.3} m, hub {:.3} m unloaded{}, spring {:.0} kN/m x {:.2}, rest load {:.1} kN, sag {:.3} m",
+            w.radius,
+            w.attach.z,
+            model.map(|(z, r)| format!(" (model wheel centre {z:.3}, tyre {r:.3})")).unwrap_or_else(|| " (radius: no wheel mesh found)".into()),
+            w.spring / 1000.0,
+            w.spring_factor,
+            w.rest_load / 1000.0,
+            w.rest_compression()
+        );
+    }
+}
+
+/// The player around a vehicle just set up, everything else at its start.
+fn new_player(vehicle: omsi_sim::VehicleInstance, render: scene::VehicleRender, trailer_renders: Vec<scene::VehicleRender>, bindings: Vec<omsi_content::KeyBinding>, rail_bound: bool, vt: &Arc<omsi_sim::VehicleType>) -> Player {
+    static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    Player {
+        uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        vehicle,
+        render,
+        trailer_renders,
+        axes: Default::default(),
+        analog: Default::default(),
+        cam_choice: (0, 0),
+        bindings,
+        sounds: None,
+        pressed_mesh: None,
+        press_info: (true, 0.0),
+        auto_drag: None,
+        pressed_trailer_mesh: None,
+        occlude_controls: false,
+        startup: None,
+        startup_at: None,
+        give_ticket: false,
+        give_change: false,
+        door_buttons: hashbrown::HashMap::new(),
+        cam_before_special: None,
+        held_keys: Default::default(),
+        held_repeat: Default::default(),
+        hand_coupled: 0,
+        rail_bound,
+        rail: None,
+        head: Vec3::ZERO,
+        head_vel: Vec3::ZERO,
+        head_omega: Vec3::ZERO,
+        head_idle: Default::default(),
+        steer_look: 0.0,
+        seat: Vec3::ZERO,
+        mirror_offsets: crate::settings::mirror_offsets(&vt.def.path),
+        mirror_shifts: crate::settings::mirror_shifts(&vt.def.path),
+        mirror_fovs: crate::settings::mirror_fovs(&vt.def.path),
+        mirrors_dirty: false,
+        take_change: false,
+        toggled_up: Default::default(),
+        momentary_gears: crate::settings::Settings::load().momentary_gears,
+        from_keyboard: false,
+        auto_shift: crate::settings::Settings::load().auto_shift,
+        auto_shift_wait: 0.0,
+        auto_shift_idle: 0.0,
+        auto_shift_max: 0.0,
+        auto_shift_climb: (0.0, 0.0),
+        gates: Default::default(),
+        side_lights_by_l: false,
+        driver: None,
+        ibis_duty: None,
+        blind_pick: None,
+        ibis_typist: None,
+        duty_typed: false,
+        html_next_stop: None,
+        ibis_background: false,
+        arm: Default::default(),
+        blinker_key_state: 0,
+        blinker_cancel: crate::settings::Settings::load().blinker_cancel,
+    }
+}
+
+/// `OMSI_DEBUG_MESHES`: every mesh of the vehicle with its bounds, and per material slot (of the
+/// meshes whose file the flag names) which part of its texture it shows.
+fn log_debug_meshes(vehicle: &omsi_sim::VehicleInstance) {
     if omsi_cfg::flags::OMSI_DEBUG_MESHES.is_set() {
-        for (i, vm) in p.vehicle.ty.meshes.iter().enumerate() {
-            let def = &p.vehicle.ty.model.meshes[vm.def_index];
+        for (i, vm) in vehicle.ty.meshes.iter().enumerate() {
+            let def = &vehicle.ty.model.meshes[vm.def_index];
             let (lo, hi) = vm.data.positions.iter().fold(
                 (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
                 |(lo, hi), v| (lo.min(*v), hi.max(*v)),
@@ -688,10 +734,14 @@ pub(crate) fn spawn_player_prepared(
             }
         }
     }
+}
+
+/// `OMSI_DEBUG_PROPS`: the meshes drawn see-through or hidden, and a few script variables.
+fn log_debug_props(vehicle: &omsi_sim::VehicleInstance) {
     if omsi_cfg::flags::OMSI_DEBUG_PROPS.is_set() {
-        for (i, vm) in p.vehicle.ty.meshes.iter().enumerate() {
-            let pr = &p.vehicle.mesh_props[i];
-            let def = &p.vehicle.ty.model.meshes[vm.def_index];
+        for (i, vm) in vehicle.ty.meshes.iter().enumerate() {
+            let pr = &vehicle.mesh_props[i];
+            let def = &vehicle.ty.model.meshes[vm.def_index];
             if pr.slot_alpha.iter().any(|a| *a < 1.0)
                 || !pr.visible
                 || def.materials.iter().any(|m| m.alphascale.is_some())
@@ -726,7 +776,7 @@ pub(crate) fn spawn_player_prepared(
             "IBIS_LinieKurs",
             "elec_busbar_main",
         ] {
-            log::info!("{v} = {:?}", p.vehicle.var(v));
+            log::info!("{v} = {:?}", vehicle.var(v));
         }
         for v in [
             "IBIS_terminus_name",
@@ -736,24 +786,9 @@ pub(crate) fn spawn_player_prepared(
             "IBIS",
             "Haltestelle",
         ] {
-            log::info!("${v} = {:?}", p.vehicle.str_var(v));
+            log::info!("${v} = {:?}", vehicle.str_var(v));
         }
     }
-    p.driver = crate::driver::DriverFigure::new(world, renderer, scene, &p.vehicle, 0);
-    p.sync_transforms(
-        renderer,
-        scene,
-        matches!(args.view.as_str(), "driver" | "pax"),
-    );
-    // The sounds the scripts asked for while the bus was being set up ({init}, the state it
-    // is put in - cold, ready, the situation's) are not played: the first frame played them
-    // all, an engine stopping as every session began (#1198). Omsi.exe puts a bus down silent.
-    if !p.vehicle.host.fired_triggers.is_empty() {
-        log::info!("spawn: sound triggers of the set-up left silent: {:?}", p.vehicle.host.fired_triggers);
-    }
-    p.vehicle.host.fired_triggers.clear();
-    p.vehicle.host.fired_trigger_vars.clear();
-    Ok(Some(p))
 }
 
 /// The paint scheme a vehicle wears: the one named (or numbered) by `--paint`; none named is

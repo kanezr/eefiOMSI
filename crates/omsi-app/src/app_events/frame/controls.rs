@@ -290,6 +290,12 @@ impl App {
             p.analog = analog;
             for (name, down) in actions {
                 if !down || (self.menus.game_menu.is_none() && self.menus.chooser.is_none()) {
+                    // a button on a pedal (the clutch, a throttle or brake button) works the
+                    // pedal as its key does; `action` only fires the bus's triggers (#2029)
+                    if let Some(a) = omsi_sim::engine_action(&name) {
+                        p.axes.set(a, down);
+                        continue;
+                    }
                     p.action(&name, down);
                 }
             }

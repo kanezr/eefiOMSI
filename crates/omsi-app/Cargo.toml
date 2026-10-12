@@ -7,7 +7,9 @@ description = "The openOMSI application: loads a map and renders it"
 
 # The game is a library with a small `main` around it: the Android build takes the same
 # library as a shared object (`cargo rustc --lib --crate-type cdylib`, see
-# scripts/build-android.sh), which the phone's NativeActivity loads.
+# scripts/build-android.sh), which the phone's NativeActivity loads; the iPhone, iPad and
+# Mac apps link it as a static library (`--crate-type staticlib`, see scripts/build-apple.sh)
+# into the Swift app, whose launcher talks to it through `apple_bridge`.
 [lib]
 name = "openomsi_game"
 path = "src/lib.rs"
@@ -28,7 +30,9 @@ omsi-o3d = { path = "../omsi-o3d" }
 omsi-texture = { path = "../omsi-texture" }
 omsi-geometry = { path = "../omsi-geometry" }
 omsi-render = { path = "../omsi-render" }
+omsi-photo = { path = "../omsi-photo" }
 omsi-sim = { path = "../omsi-sim" }
+omsi-htmlengine = { path = "../omsi-htmlengine" }
 omsi-plugin = { path = "../omsi-plugin" }
 omsi-vehicle = { path = "../omsi-vehicle" }
 omsi-content = { path = "../omsi-content" }
@@ -45,8 +49,21 @@ log.workspace = true
 env_logger.workspace = true
 rayon.workspace = true
 omsi-net = { path = "../omsi-net" }
+omsi-platform = { path = "../omsi-platform" }
+omsi-guard = { path = "../omsi-guard" }
+omsi-lan = { path = "../omsi-lan" }
+omsi-input = { path = "../omsi-input" }
+omsi-xr = { path = "../omsi-xr" }
+omsi-plugin-ui = { path = "../omsi-plugin-ui" }
+omsi-weather = { path = "../omsi-weather" }
+omsi-career = { path = "../omsi-career" }
+omsi-soundscape = { path = "../omsi-soundscape" }
+omsi-world = { path = "../omsi-world" }
+omsi-scene = { path = "../omsi-scene" }
 omsi-ui = { path = "../omsi-ui" }
 omsi-launcher-core = { path = "../omsi-launcher-core" }
+omsi-launcher-api = { path = "../omsi-launcher-api" }
+omsi-launcher-ui = { path = "../omsi-launcher-ui" }
 serde.workspace = true
 hashbrown.workspace = true
 parking_lot.workspace = true
@@ -62,10 +79,13 @@ rust-i18n = "4"
 # updates: the release archives from GitHub
 zip.workspace = true
 
-# the desktop's clipboard and file dialogs (a phone has neither in this form)
-[target.'cfg(not(target_os = "android"))'.dependencies]
+# the desktop's clipboard and file dialogs (a phone has neither in this form; an iPhone's
+# come from the Swift side, see `apple`)
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 arboard = { version = "3", default-features = false }
 rfd.workspace = true
+# the allocator of the desktop game (see main.rs)
+mimalloc = { version = "0.1.52", default-features = false }
 
 # Steam's rich presence: only where `assets/steam_redist` has the library (the build script
 # sets `cfg(steam)` for the same targets and puts the library beside the binary)
@@ -78,8 +98,6 @@ libc.workspace = true
 # Windows: the game controllers through DirectInput, as OMSI reads them (see `dinput`)
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_Graphics_Direct3D12", "Win32_Graphics_Dxgi_Common", "Win32_Security", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Memory", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
-openxr = { version = "0.22", default-features = false, features = ["static"] }
-wgpu-hal = { workspace = true, features = ["dx12"] }
 
 # Windows: wgpu's OpenGL ES backend on ANGLE's Direct3D 11 renderer (`GraphicsApi::Angle`,
 # tried last; Google's libEGL.dll and libGLESv2.dll beside the game). Only here: on a Mac
@@ -87,17 +105,6 @@ wgpu-hal = { workspace = true, features = ["dx12"] }
 [target.'cfg(windows)'.dependencies.wgpu]
 workspace = true
 features = ["angle"]
-
-# macOS: the axes of wheels and pedals straight from their HID elements (see `mac_hid`), and
-# Xbox-type controllers through the GameController framework (see `mac_game_controller`):
-# Apple's own driver takes them over completely and leaves gilrs nothing to read
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = { version = "0.6", default-features = false, features = ["std"] }
-block2 = { version = "0.6", default-features = false, features = ["std"] }
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFArray", "CFSet", "CFString", "CFDictionary", "CFNumber"] }
-objc2-io-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "hid"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSString"] }
-objc2-game-controller = { version = "0.3.2", default-features = false, features = ["std", "GCController", "GCDevice", "GCExtendedGamepad", "GCPhysicalInputProfile", "GCControllerElement", "GCControllerButtonInput", "GCControllerDirectionPad", "GCControllerAxisInput", "GCProductCategories", "block2"] }
 
 # the interface's machine translation (`mt`): CTranslate2 with Meta's NLLB model, as the
 # `trad` crate does it (Apple's Accelerate for the maths; Apple silicon only)
@@ -111,3 +118,12 @@ winit = { workspace = true, features = ["android-native-activity"] }
 android_logger = "0.15"
 jni = "0.21"
 ndk-context = "0.1"
+
+[dev-dependencies]
+# the control names from a table (`ControlNames::from_table`) for the key picker's tests
+omsi-input = { path = "../omsi-input", features = ["test-support"] }
+
+# iPhone and iPad: the window the game draws in is put on the app's scene (UIKit's scene life
+# cycle, which the Swift app keeps) through the Objective-C runtime
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = { version = "0.6", default-features = false, features = ["std"] }

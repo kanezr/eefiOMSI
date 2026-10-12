@@ -7,7 +7,9 @@ impl ScheduleSim {
     /// The vehicle departure `i` is driven with (see [`Choice`]).
     pub fn choose(&mut self, i: usize, world: &dyn TimetableWorld) -> Option<Choice> {
         let group = self.departures[i].ai_group.to_ascii_lowercase();
-        let h = self.tour_key(i);
+        let key = self.tour_key(i);
+        // the draw: the tour mixed with the session (#2250); `key` names the tour's choice
+        let h = if self.vehicle_seed == 0 { key } else { mix(key ^ self.vehicle_seed) };
         // trains: the group lists .zug files instead of depot vehicles
         let train = self
             .trains
@@ -26,7 +28,7 @@ impl ScheduleSim {
                 // depot the same share as the whole SD200 fleet.
                 // A tour's vehicle for the day: the one `car_use` gives it, else one drawn now
                 // and kept (a fleet number no other tour has, while there are any left).
-                let (k, j) = match self.tour_vehicle.get(&h) {
+                let (k, j) = match self.tour_vehicle.get(&key) {
                     Some(&kj) => kj,
                     None => {
                         let weights: Vec<usize> = vehicles.iter().map(|(_, n, _)| n.len().max(1)).collect();
@@ -49,7 +51,7 @@ impl ScheduleSim {
                         if let Some(n) = nums.get(j) {
                             self.used_numbers.insert((group.clone(), n.number.trim().to_string()));
                         }
-                        self.tour_vehicle.insert(h, (k, j));
+                        self.tour_vehicle.insert(key, (k, j));
                         (k, j)
                     }
                 };

@@ -108,14 +108,14 @@ impl App {
         }
         self.session.world_day = Some((date, season.clone()));
         let changed = if was_date != date { w.set_date(date) } else { Vec::new() };
-        let (Some(st), Some(r), Some(scene)) = (self.gfx.streamer.as_mut(), self.renderer.as_ref(), self.scene.as_mut()) else { return };
+        let Some(st) = self.gfx.streamer.as_mut() else { return };
         if was_season != season {
             log::info!("season: the textures of {:?} now (were {:?})", season, was_season);
             omsi_texture::set_season_folder(season);
             omsi_cfg::content_changed();
-            st.reload(r, scene, None, self.sound.audio.as_ref());
+            st.reload(None);
         } else if !changed.is_empty() {
-            st.reload(r, scene, Some(&changed), self.sound.audio.as_ref());
+            st.reload(Some(&changed));
         }
     }
 }

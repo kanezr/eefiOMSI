@@ -27,8 +27,25 @@ change behaviour is checked is in [REFACTOR_CHECKS.md](REFACTOR_CHECKS.md).
 | `mc_Form_Main`, main loop              | `omsi-app`                    | offscreen + window, start menu, HUD, tile streaming; the original's dialogs are the launcher |
 | vehicle runtime (`TRoadVehicleInst`)   | `omsi-sim`                    | scripts, animations, dynamic materials, keyboard/mouse input, IBIS typing, coupled parts |
 | AI (`mc_path`, `mc_pathrule`), humans, physics (ODE) | `omsi-sim` | `traffic` + `ai_motion` (rules, light programs, following, passing), `human` + `crowd` (poses, queues, avoidance), `rigid` + `physics` (wheels, collisions) |
-| Optionen and the start dialogs         | `omsi-app::launcher` + `omsi-launcher-core` | the game's own window (wgpu, `omsi-ui`): profile, bus, map, duty, weather, settings, mods, running games (the Tauri launcher is gone since round 9) |
-| - (no original counterpart)            | `omsi-net`, `omsi-app::lan`   | LAN play: UDP session, bit-packed vehicle states, chat |
+| Optionen and the start dialogs         | `omsi-launcher-ui` + `omsi-launcher-core` | the game's own window (wgpu, `omsi-ui`): profile, bus, map, duty, weather, settings, mods, running games (the Tauri launcher is gone since round 9) |
+| - (no original counterpart)            | `omsi-net`, `omsi-lan`, `omsi-app::lan` | LAN play: UDP session, bit-packed vehicle states, chat |
+
+## Crates
+
+The workspace is layered; `scripts/arch-guard.sh` (rules in `scripts/arch-rules.txt`, run on
+every pull request) keeps each crate off the layers above it, and `omsi-app` may only shrink.
+Bottom up:
+
+| Layer | Crates | What they hold |
+|---|---|---|
+| base | `omsi-cfg`, `omsi-ui` | text files, the virtual file system, settings, the `OMSI_*` flag registry, the panic guard; the immediate-mode UI toolkit |
+| formats and content | `omsi-o3d`, `omsi-texture`, `omsi-model`, `omsi-map`, `omsi-scenery`, `omsi-vehicle`, `omsi-timetable`, `omsi-content`, `omsi-script`, `omsi-geometry`, `omsi-world` | files in, plain data out; the map-wide index and the placement of attached objects (`omsi-world`) |
+| simulation | `omsi-sim` | vehicles (`vehicle/` by subsystem), scripts' host (`host/`), AI traffic, people, timetable, physics; no renderer, audio, texture decoder or network: pictures and HTML pages come through hooks the game registers (`image_decode`, `htmltex::set_backend`) |
+| beside the simulation | `omsi-htmlengine`, `omsi-weather`, `omsi-career` | the `[htmltexture]` engine; the weather and season models; the driver's career and real-time mode |
+| presentation | `omsi-render`, `omsi-audio`, `omsi-soundscape`, `omsi-photo`, `omsi-scene` | the renderer (`gpu/`, `resources/`, `scene/`, `lighting/`, `frame_plan`, shader parts); the mixer; ambience, scenery sounds and the radio; photo mode's lens and darkroom; the scene: loaded content turned into renderer data |
+| devices and services | `omsi-input`, `omsi-xr`, `omsi-net`, `omsi-lan`, `omsi-platform`, `omsi-plugin`, `omsi-plugin-ui` | controllers, force feedback, head tracking, key names; OpenXR; the LAN transport and the game-side session; updater, Discord, the presence count, version stamp; plugin hosting and its UI |
+| launcher | `omsi-launcher-core`, `omsi-launcher-ui` | the launcher's logic; its window and pages, talking to the game through `omsi_launcher_ui::host::Host` |
+| app | `omsi-app` | the glue: `App` and its field groups, the frame (`frame_stages`: one declared list of stages for the window and one for the offscreen run, one runner), view sync, the adapters that hold the crates' state in `App` |
 
 ## Threading
 
@@ -142,6 +159,32 @@ budget.
 * Map splines store x, height, y; objects store x, y, z. See `docs/FORMATS.md`.
 
 
+## Start guard
+
+A release that breaks the start must not strand anyone (it happened: the updater lives in the
+launcher, and a launcher that never drew its window never updated). `crates/omsi-guard` runs
+before anything that could break and needs no graphics card, window or game state (the arch
+rules forbid it the renderer, the UI, the simulation, the scene, the audio and the launcher UI):
+
+* `main` asks it first: `--self-test` (the updater runs a new program with it before installing
+  it - a build that cannot be loaded is refused there), `--guard-watch` (the watcher), safe
+  mode's switches, then `omsi_guard::start(Launcher)` for a launcher start, which starts the
+  watcher - the same program again, without a window - or heals right away when this version
+  already failed here.
+* The watcher waits for the launcher's first frames (`omsi_guard::healthy`, called by the
+  launcher at its first presented frame and by a game session after 60 frames), its end, or
+  `OMSI_GUARD_DEADLINE` (120 s, then it ends it). A failed start of a version that never ran
+  here, or two in a row, is healed (`rescue`): a newer release, else the version before
+  (`omsi_platform::recovery::rollback` - the updater keeps the replaced files until the new
+  version has started well), else safe mode, else a message. Meanwhile it reads the project's
+  list of broken releases (`release/health.json`); a listed version keeps its way back and goes
+  back at the next start.
+* `guard/starts.json` (the journal) also notes the game sessions the launcher starts and starts
+  no watcher saw: a start that never reached its first frames and whose process is gone failed.
+  `guard/bad-versions` lists what failed here; the updater offers none of them again.
+* Proof: `scripts/guard-e2e.sh <old build> <new build>` runs real release builds in a throwaway
+  installation against fake releases and versions broken on purpose (`OMSI_GUARD_TEST_BREAK`).
+
 ## Target layering
 
 Where the code is going (new code follows it, refactors move old code towards it):
@@ -172,8 +215,11 @@ checked against it.
 
 ## Known debt
 
-* **What is already in place.** The window and the offscreen run share the frame's steps
-  (`omsi-app/src/app_events/frame/steps.rs`); the AI traffic and the people simulate in
+* **What is already in place.** The frame is a declared list of stages run by one runner
+  (`omsi-app/src/frame_stages.rs`: `app_events::WINDOW_FRAME` for the window,
+  `offscreen::OFFSCREEN_STEP` for the offscreen run, each stage naming the field groups it
+  reads and writes and the values it hands on; tests pin both orders and the three places
+  where the two paths knowingly differ; `OMSI_FRAME_ORDER=1` logs them); the AI traffic and the people simulate in
   `omsi-sim`, with `omsi-app::traffic::Traffic` and `omsi-app::humans::Humans` as thin
   wrappers (the simulation, with the cars' sounds) that dereference to them; every `OMSI_*` switch goes through
   `omsi_cfg::flags` (`docs/DEBUG_FLAGS.md`); `App`'s state is grouped by subsystem
@@ -221,16 +267,37 @@ checked against it.
   cars), and the people who appeared or went at the end of every `Humans` call that made
   them (`BodyOp`s replayed by `Humans::show_bodies`). Those calls take the part of the
   `SimView` they change (`&mut TrafficView`, `&mut PeopleView`) with the renderer, and
-  the timetable's and the LAN world's steps that make them pass it through. The traffic's sync also still does two pieces of simulation: parked
-  cars leave the list there, and the AI vehicles get `Envir_Brightness`.
+  the timetable's and the LAN world's steps that make them pass it through. The traffic's sync still hands the AI vehicles `Envir_Brightness`; the cars that
+  finished parking are taken off by the simulation itself (`TrafficSim::take_parked`), the
+  sync only puts their parked objects back. The player's and the AI buses' per-frame sync
+  (materials, lamps, script and text textures, glass cracks, dents) is in the phase too:
+  `view_sync/vehicle.rs` and `vehicle_damage.rs`, and the AI cars' sounds in
+  `view_sync/traffic_audio.rs`.
 
-* **Global mutable state.** The introduction's "no global mutable state" is not true today:
-  `omsi-app` has about 45 module-level `static`s with interior mutability (`Mutex`, atomics,
-  `OnceLock`, `Lazy`), about as many again inside functions, and a dozen `thread_local!`s
-  (count them with
-  `grep -rnE '^(pub(\([a-z]+\))? )?static ' crates/omsi-app/src | grep -E 'Mutex|Atomic|OnceLock|RwLock|Cell|Lazy'`).
-  Some are caches of environment switches or platform handles; those that carry game state
-  between frames are to move into the app's state as the frame phases above take shape.
+* **Global mutable state.** The introduction's "no global mutable state" is still not
+  quite true, but what is left no longer carries a session's state into the next one. The
+  game state that lived in statics (a second drive started from the phone's launcher runs
+  in the same process, and the window, the offscreen run and the launcher's showroom share
+  it) moved into its owners: the physical weather model and the classic sky's cloud type
+  into `weather_setup::SkyState` (kept by the session, the offscreen run and the showroom),
+  the duty start's opened world and the real-time start into `Args`, the map lights near
+  the camera, the fading spotlight cookies, the spline-check ends and the season-mix counts
+  into `World`, the passengers' waiting voice lines, the photo mode's settings and the
+  settings window's flags into `App`'s groups, the `/admin` password into `LanGame`, the
+  drive's extremes into `Offscreen`, and which corona pictures a renderer holds into the
+  `Renderer` (`pictures_taken`). Left: in `omsi-app` 20 module-level statics with interior
+  mutability, 35 more inside functions and `thread_local!` blocks (9 of those); in
+  `omsi-scene` 14 and 15, no `thread_local!` (count them with
+  `grep -rnE '^\s*(pub(\([a-z:]+\))? )?static ' crates/omsi-app/src | grep -E 'Mutex|Atomic|OnceLock|RwLock|Cell|Lazy|Once\b'`
+  and `grep -rn 'thread_local!'`). They are install-once hooks, platform
+  handles and process resources (the signal handler, the tilt sensor, the translation
+  worker, thread pools, the LAN gateway and mods root), memos of file contents and
+  environment switches, rate limits of log lines and refreshes, the picture-file numbering
+  that is the same for every renderer, and a handful of settings and the session's weather
+  broadcast to loading code without game state at hand (`scene::host`, `SNOW_WEATHER`,
+  `rain::QUALITY`, `startup::{CLOUDS, SOUND_AI, ENHANCED_PLUS}`, the lamps' cone weather),
+  set again at every session start or frame. Those last are the next to go, once the
+  vehicle and world loading take them as arguments.
 * **Very long functions and files.** `scripts/size-budget.sh` (run on every pull request)
   keeps them from growing; `scripts/size-budget.txt` lists those over the limits
   (1500 lines a file, 300 a function) with their recorded sizes. The baseline only goes down.

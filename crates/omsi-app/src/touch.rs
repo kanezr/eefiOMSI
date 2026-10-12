@@ -176,6 +176,9 @@ pub struct Touch {
     /// The room the information bar has (`ui::Frame::info_room`): between the buttons along
     /// the top, which it lay under in the middle of the screen (#1164).
     pub info_room: Option<[f32; 3]>,
+    /// The gap between the buttons along the top, left and right, and their bottom: the
+    /// navigator keeps out of them.
+    pub top_gap: Option<[f32; 3]>,
 }
 
 impl Touch {
@@ -212,6 +215,7 @@ impl Touch {
             note: None,
             gear: None,
             info_room: None,
+            top_gap: None,
         }
     }
 
@@ -224,6 +228,11 @@ impl Touch {
                 b.rect.pad(4.0 * self.u, 4.0 * self.u).contains(p)
             }
         })
+    }
+
+    /// A finger holds a switch of the cockpit.
+    pub fn on_switch(&self) -> bool {
+        self.fingers.iter().any(|f| f.role == Role::Cockpit)
     }
 
     /// The window's graphics went away (a phone put the app in the background).
@@ -254,12 +263,52 @@ fn info_room(w: f32, pad: f32, left: f32, right: f32, bottom: f32, u: f32) -> [f
 impl App {
     /// Where the controls are, for a picture of `w` x `h` physical pixels, and what they
     /// show now.
+    /// The controls inside the part of the screen nothing covers (an iPhone's island and
+    /// rounded corners, see `platform::safe_insets`): laid out in it, then moved into place.
     fn touch_layout(&mut self, w: f32, h: f32) {
+        let (left, top, right, bottom) = crate::platform::safe_insets();
+        self.touch_layout_in((w - left - right).max(1.0), (h - top - bottom).max(1.0));
+        let t = &mut self.input.touch;
+        t.size = (w, h);
+        if left == 0.0 && top == 0.0 {
+            return;
+        }
+        let d = Vec2::new(left, top);
+        for b in &mut t.buttons {
+            b.rect.x += d.x;
+            b.rect.y += d.y;
+        }
+        for r in [&mut t.throttle_r, &mut t.brake_r, &mut t.clutch_r] {
+            r.x += d.x;
+            r.y += d.y;
+        }
+        t.wheel_c += d;
+        t.stick_c += d;
+        if let Some(room) = t.info_room.as_mut() {
+            room[0] += d.x;
+            room[1] += d.x;
+            room[2] += d.y;
+        }
+        if let Some(gap) = t.top_gap.as_mut() {
+            gap[0] += d.x;
+            gap[1] += d.x;
+            gap[2] += d.y;
+        }
+    }
+
+    fn touch_layout_in(&mut self, w: f32, h: f32) {
         let dpi = self.window.as_ref().map(|w| w.scale_factor() as f32).unwrap_or(1.0).max(0.5);
         // (a point is the screen's density, a little larger on a big tablet and smaller
         // on a small phone)
         let short = w.min(h) / dpi;
-        let u = dpi * (short / 400.0).clamp(0.85, 1.35);
+        let mut u = dpi * (short / 400.0).clamp(0.85, 1.35);
+        // ... and no larger than the bottom row fits across: the wheel and the horn on the
+        // left, the speed in the middle, the brakes, the pedals (a manual's clutch too) on
+        // the right - in points of the layout below. On a tablet held upright (an iPad mini's
+        // 744 points) the clutch pedal ran under the speed and the horn.
+        let clutch = self.player.as_ref().is_some_and(|p| p.vehicle.ty.program.manual_gearbox()) && !self.settings.auto_clutch;
+        let side = if clutch { 300.0 } else { 238.0 };
+        u = u.min(w / (2.0 * (side + 67.0) + 28.0)).max(dpi * 0.7);
         let pad = 14.0 * u;
         let t = &mut self.input.touch;
         t.u = u;
@@ -270,6 +319,7 @@ impl App {
             b.push(Button { btn, rect, icon, label: label.to_string(), on, round });
         };
         let menu_mode = self.menus.game_menu.is_some() || self.menus.chooser.is_some() || self.menus.navigator.as_ref().is_some_and(|n| n.map_open());
+        t.top_gap = None;
         if menu_mode {
             // only the way out: the menu is worked with the fingers as a mouse
             let r = 24.0 * u;
@@ -312,6 +362,7 @@ impl App {
         x -= step;
         push(&mut b, Btn::Screenshot, rb(x, y, r), "photo_camera", "", false, true);
         t.info_room = Some(info_room(w, pad, left_end, x - r, pad + r * 2.0, u));
+        t.top_gap = Some([left_end + 6.0 * u, x - r - 6.0 * u, pad + r * 2.0]);
         if !driving {
             // on foot or the free camera: a stick to walk or fly
             t.stick_r = 62.0 * u;
@@ -357,7 +408,7 @@ impl App {
             } else if has("automatic_D") {
                 vec![("automatic_R", "R"), ("automatic_N", "N"), ("automatic_D", "D")]
             } else if has("kw_s_plus") {
-                vec![("kw_s_minus", "−"), ("kw_s_N", "N"), ("kw_s_plus", "+")]
+                vec![("kw_s_minus", "-"), ("kw_s_N", "N"), ("kw_s_plus", "+")]
             } else {
                 vec![("kw_s_R", "R"), ("kw_s_N", "N"), ("kw_s_1", "1")]
             };

@@ -4,6 +4,7 @@
 //! (the OMSI 2 installation from $OMSI_ROOT)
 use std::path::PathBuf;
 fn main() {
+    omsi_sim::image_decode::install(decode_picture);
     let a: Vec<String> = std::env::args().collect();
     let content = PathBuf::from(&a[1]);
     omsi_cfg::add_content_root(content.clone());
@@ -44,4 +45,11 @@ fn main() {
             i, def.file, lo.x, hi.x, lo.y, hi.y, lo.z, hi.z, def.animations.len(), v.mesh_props[i].visible
         );
     }
+}
+
+/// The game's picture decoder for the simulation (as omsi-app registers it at start).
+fn decode_picture(path: &std::path::Path) -> Result<omsi_sim::image_decode::DecodedImage, String> {
+    omsi_texture::decode_file(path)
+        .map(|i| omsi_sim::image_decode::DecodedImage { width: i.width, height: i.height, rgba: i.rgba, has_alpha: i.has_alpha })
+        .map_err(|e| e.to_string())
 }

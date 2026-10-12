@@ -433,7 +433,7 @@ impl crate::App {
             self.service_msg = Some(("No server code: not in a LAN session or on a server".into(), 3.0));
             return;
         };
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             thread_local! {
                 // (kept alive: on X11 the text is gone when the clipboard is dropped)
@@ -446,6 +446,11 @@ impl crate::App {
                 }
                 c.as_mut().is_some_and(|cb| cb.set_text(code.clone()).is_ok())
             });
+            self.service_msg = Some(if ok { ("Server code copied".into(), 3.0) } else { (format!("{}: {code}", omsi_ui::tr("Server code")), 8.0) });
+        }
+        #[cfg(target_os = "ios")]
+        {
+            let ok = crate::apple::set_clipboard(&code);
             self.service_msg = Some(if ok { ("Server code copied".into(), 3.0) } else { (format!("{}: {code}", omsi_ui::tr("Server code")), 8.0) });
         }
         #[cfg(target_os = "android")]

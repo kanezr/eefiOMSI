@@ -1,0 +1,88 @@
+// The page checks itself in a hidden window (OPENOMSI_LAUNCHER_SELFTEST=1): the commands
+// answer, the content is read, a map picture comes through `omsi://`, the font is Inter, and
+// every page draws without an error. The report goes back to the program, which prints it.
+
+import { call, contentUrl } from './api.js';
+import { S, set } from './store.js';
+import { t } from './i18n.js';
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function until(f, ms = 60000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    if (f()) return true;
+    await sleep(100);
+  }
+  return false;
+}
+
+export async function selftest() {
+  const passed = [];
+  const failed = [];
+  const errors = [];
+  window.addEventListener('error', (e) => errors.push(String(e.message)));
+  window.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason?.message || e.reason)));
+  const check = (name, ok, detail) => (ok ? passed : failed).push(detail ? `${name}: ${detail}` : name);
+  const t0 = performance.now();
+
+  check('bootstrap', !!S.boot, S.boot?.version);
+  check('OMSI 2 found', !!S.boot?.root, S.boot?.root || S.boot?.root_error);
+  check('maps read', await until(() => S.maps?.length > 0), `${S.maps?.length ?? 0}`);
+  check('weather read', await until(() => S.weather != null), `${S.weather?.length ?? 0}`);
+  check('buses read', await until(() => S.vehicles?.length > 0, 180000), `${S.vehicles?.length ?? 0}`);
+  check('timetable read', await until(() => S.lines.list != null || S.lines.error), S.lines.error || `${S.lines.list?.length ?? 0} lines`);
+  check('translations', !S.boot?.language || S.boot.language === 'en' || t('Settings') !== 'Settings', S.boot?.language || 'en');
+  await document.fonts.ready;
+  check('font Inter', document.fonts.check('16px Inter'));
+  const map = S.maps?.[0];
+  if (map) {
+    const url = contentUrl(map.file.replace(/[^/]*$/, 'picture.jpg'));
+    const r = await fetch(url).catch((e) => ({ ok: false, status: e.message }));
+    check('omsi:// picture', r.ok, `${url} ${r.status}`);
+  }
+  // (OPENOMSI_LAUNCHER_SELFTEST=full: the game program draws the bus and reads the route map)
+  if (S.boot?.selftest === 'full' && S.vehicles?.length) {
+    const c = S.choice;
+    const bus = S.vehicles.find((v) => /SD77|SD202|NL202/i.test(v.file)) || S.vehicles[0];
+    try {
+      await call('preview_look', { bus: bus.file, paint: '', map: c.map, weather: c.weather, time: c.time, date: c.date });
+      let head = null;
+      let bytes = 0;
+      for (let i = 0; i < 600 && !(head?.picture && !head.busy && bytes); i++) {
+        const buf = new Uint8Array(await call('preview_frame', { w: 640, h: 360, force: i === 0 }));
+        const n = new DataView(buf.buffer, buf.byteOffset).getUint32(0, true);
+        head = JSON.parse(new TextDecoder().decode(buf.subarray(4, 4 + n)));
+        bytes = Math.max(bytes, buf.length - 4 - n);
+        if (head.failed) break;
+        await sleep(50);
+      }
+      check('bus preview (game renderer)', !!head?.picture && bytes > 1000, `${bus.file}: ${bytes} bytes of JPEG ${head?.error || ''}`);
+    } catch (e) {
+      check('bus preview (game renderer)', false, `${bus.file}: ${e.message || e}`);
+    }
+    const tour = S.lines.list?.flatMap((l) => l.tours)[0];
+    const trip = tour?.trips[0]?.name || '';
+    try {
+      const m = await call('route_map', { map: c.map, date: c.date, trip });
+      check('route map', m.roads?.length > 0 && (!trip || m.route.length > 0), `${m.roads?.length} roads, ${m.route?.length} route lanes, ${m.stops?.length} stops, ${m.entries?.length} entry points`);
+    } catch (e) {
+      check('route map', false, e.message || String(e));
+    }
+  }
+  for (const page of ['drive', 'multiplayer', 'profile', 'mods', 'settings', 'controls', 'games', 'tutorials', 'setup']) {
+    const before = errors.length;
+    set({ page });
+    await sleep(500);
+    const shown = document.querySelector('.page h1')?.textContent;
+    check(`page ${page}`, !!shown && errors.length === before, shown || errors.slice(before).join('; '));
+    // (no dash of any kind, no raised dot: a plain hyphen stands for them)
+    await sleep(50);
+    const dash = document.body.textContent.match(/.{0,20}[\u2010-\u2015\u2212\u2E3A\u2E3B\uFE58\uFF0D\u00B7].{0,20}/);
+    if (dash) check(`no dashes on ${page}`, false, dash[0]);
+  }
+  set({ page: 'drive' });
+  check('no script errors', errors.length === 0, errors.join('; '));
+  const report = { version: S.boot?.version, seconds: Math.round(performance.now() - t0) / 1000, passed, failed, errors };
+  await call('selftest_done', { report });
+}

@@ -1,0 +1,156 @@
+# Architecture rules, checked by scripts/arch-guard.sh (see there for the syntax).
+# The layers, bottom up: omsi-cfg; the file formats and content (o3d, texture, model, map, scenery,
+# vehicle, timetable, content, script, geometry); the simulation (omsi-sim); presentation
+# (omsi-render, omsi-audio, omsi-ui); network and plugins (omsi-net, omsi-plugin); the app's
+# subsystems (launcher, input, multiplayer, platform ...); omsi-app on top, gluing them together.
+
+# Nothing depends on the app: it is the top of the graph.
+forbid * omsi-app
+
+# The simulation knows nothing of how it is shown or heard, nor of the network or the launcher.
+forbid omsi-sim omsi-render
+forbid omsi-sim omsi-ui
+forbid omsi-sim omsi-audio
+forbid omsi-sim omsi-texture
+forbid omsi-sim omsi-net
+forbid omsi-sim omsi-plugin
+forbid omsi-sim omsi-launcher-*
+# (the [htmltexture] engine draws the pages: registered with omsi-sim by the game, below
+# neither the renderer nor sound)
+forbid omsi-sim omsi-htmlengine
+forbid omsi-htmlengine omsi-render
+forbid omsi-htmlengine omsi-audio
+forbid omsi-htmlengine omsi-ui
+
+# The renderer draws what it is given: no simulation, scripts, sound or network in it.
+forbid omsi-render omsi-sim
+forbid omsi-render omsi-script
+forbid omsi-render omsi-audio
+forbid omsi-render omsi-net
+forbid omsi-render omsi-vehicle
+
+# File formats and content stay below the simulation and presentation.
+forbid omsi-cfg omsi-*
+forbid omsi-o3d omsi-sim
+forbid omsi-o3d omsi-render
+forbid omsi-texture omsi-sim
+forbid omsi-texture omsi-render
+forbid omsi-model omsi-sim
+forbid omsi-model omsi-render
+forbid omsi-map omsi-sim
+forbid omsi-map omsi-render
+forbid omsi-scenery omsi-sim
+forbid omsi-scenery omsi-render
+forbid omsi-vehicle omsi-sim
+forbid omsi-vehicle omsi-render
+forbid omsi-timetable omsi-sim
+forbid omsi-timetable omsi-render
+forbid omsi-content omsi-sim
+forbid omsi-content omsi-render
+forbid omsi-script omsi-sim
+forbid omsi-script omsi-render
+forbid omsi-geometry omsi-sim
+forbid omsi-geometry omsi-render
+
+# Transport and plugin hosting do not know the game.
+forbid omsi-net omsi-sim
+forbid omsi-net omsi-render
+forbid omsi-plugin omsi-sim
+forbid omsi-plugin omsi-render
+
+# The weather is state and physics: it neither draws nor sounds, nor knows the network.
+forbid omsi-weather omsi-render
+forbid omsi-weather omsi-audio
+forbid omsi-weather omsi-ui
+forbid omsi-weather omsi-net
+forbid omsi-weather omsi-plugin
+forbid omsi-weather omsi-launcher-*
+
+# The driver's record keeps numbers: no drawing, sound or network in it.
+forbid omsi-career omsi-render
+forbid omsi-career omsi-audio
+forbid omsi-career omsi-ui
+forbid omsi-career omsi-net
+forbid omsi-career omsi-launcher-*
+
+# The sounds of the world are heard, not drawn, and know neither the simulation's renderer
+# side nor the network or the launcher.
+forbid omsi-soundscape omsi-render
+forbid omsi-soundscape omsi-ui
+forbid omsi-soundscape omsi-net
+forbid omsi-soundscape omsi-launcher-*
+
+# The map as data is decided before anything is drawn, simulated or heard.
+forbid omsi-world omsi-render
+forbid omsi-world omsi-sim
+forbid omsi-world omsi-audio
+forbid omsi-world omsi-ui
+forbid omsi-world omsi-net
+
+# The scene turns loaded content into the renderer's data: it knows neither the game's
+# app nor the network, the plugins, the input devices or the launcher.
+forbid omsi-scene omsi-net
+forbid omsi-scene omsi-lan
+forbid omsi-scene omsi-plugin
+forbid omsi-scene omsi-input
+forbid omsi-scene omsi-xr
+forbid omsi-scene omsi-launcher-*
+
+# The input devices read controllers and keys: they neither draw nor sound, nor know the network,
+# the plugins or the launcher.
+forbid omsi-input omsi-render
+forbid omsi-input omsi-ui
+forbid omsi-input omsi-audio
+forbid omsi-input omsi-net
+forbid omsi-input omsi-plugin
+forbid omsi-input omsi-launcher-*
+
+# The VR session draws the renderer's scene into the headset: it does not run the simulation.
+forbid omsi-xr omsi-sim
+forbid omsi-xr omsi-audio
+forbid omsi-xr omsi-net
+
+# The plugins' panels are drawn from the plugins' tables: no simulation, sound or network.
+forbid omsi-plugin-ui omsi-sim
+forbid omsi-plugin-ui omsi-audio
+forbid omsi-plugin-ui omsi-net
+
+# Multiplayer above the transport: what a session needs of the world comes in as values - no
+# drawing, sound, interface or launcher in it.
+forbid omsi-lan omsi-render
+forbid omsi-lan omsi-audio
+forbid omsi-lan omsi-ui
+forbid omsi-lan omsi-launcher-*
+
+# The platform services (updates, presence) know nothing of the game: no simulation, drawing,
+# sound or network sessions.
+forbid omsi-platform omsi-sim
+forbid omsi-platform omsi-render
+forbid omsi-platform omsi-audio
+forbid omsi-platform omsi-net
+forbid omsi-platform omsi-lan
+
+# The photo mode's lens and darkroom work on the renderer's pictures: no simulation, sound,
+# interface, network or launcher in them.
+forbid omsi-photo omsi-sim
+forbid omsi-photo omsi-audio
+forbid omsi-photo omsi-ui
+forbid omsi-photo omsi-net
+forbid omsi-photo omsi-launcher-*
+
+# The launcher's data side (what `omsi-launcher --cli` offers a terminal too) knows nothing of
+# its interface: the interface crate stands on it, never the other way round.
+forbid omsi-launcher-core omsi-launcher-ui
+forbid omsi-launcher-core omsi-ui
+forbid omsi-launcher-core omsi-render
+
+# The start guard runs before anything that could break: no graphics, window, game state in it.
+forbid omsi-guard omsi-render
+forbid omsi-guard omsi-ui
+forbid omsi-guard omsi-sim
+forbid omsi-guard omsi-scene
+forbid omsi-guard omsi-audio
+forbid omsi-guard omsi-launcher-ui
+
+# Lines of Rust in crates/omsi-app (may grow 2 % past this; lower with --update).
+app-lines 69722

@@ -50,11 +50,7 @@ impl App {
         // terrain alone: the terrain comes first while the tile is placed, and a
         // parked bus taken over after a restart fell through its yard onto the
         // ground below before the surfaces came, as Omsi.exe holds it, #1279)
-        let ground_here = self.world.as_ref().is_none_or(|w| {
-            let at = p.vehicle.position;
-            let k = ((at.x / omsi_map::tile_size()).floor() as i32, (at.y / omsi_map::tile_size()).floor() as i32);
-            w.surfaces.read().contains_key(&k)
-        });
+        let ground_here = self.world.as_ref().is_none_or(|w| ground_under(w, p.vehicle.position));
         if let Some((v, crashes)) = self.input.cruise {
             if p.vehicle.crashes != crashes {
                 log::info!("cruise: crashed at {:.1}, {:.1}, {:.1} - let go", p.vehicle.position.x, p.vehicle.position.y, p.vehicle.position.z);
@@ -136,7 +132,13 @@ impl App {
         // player's bus meets them
         let mut placed_boxes = Vec::new();
         for q in self.session.placed.iter_mut() {
-            if !self.paused {
+            // (held where it stands while its tile is not loaded, as the driven bus is:
+            // with the player far off the tile goes, and the bus fell through the world
+            // and was saved there, #2132)
+            if !self.paused && self.world.as_ref().is_none_or(|w| ground_under(w, q.vehicle.position)) {
+                if let Some(w) = self.world.as_ref() {
+                    reground(w, &mut q.vehicle);
+                }
                 q.vehicle.update(dt);
             }
             q.sync_transforms(r, scene, false);
@@ -217,7 +219,10 @@ impl App {
         // their scripts and are drawn where they are (the player's frame did it)
         if let (None, Some(r), Some(scene)) = (self.player.as_ref(), self.renderer.as_ref(), self.scene.as_mut()) {
             for q in self.session.placed.iter_mut() {
-                if !self.paused {
+                if !self.paused && self.world.as_ref().is_none_or(|w| ground_under(w, q.vehicle.position)) {
+                    if let Some(w) = self.world.as_ref() {
+                        reground(w, &mut q.vehicle);
+                    }
                     q.vehicle.update(dt);
                 }
                 q.sync_transforms(r, scene, false);
@@ -240,5 +245,35 @@ impl App {
                 None => self.sound.radio.stop(a),
             }
         }
+    }
+}
+
+/// Whether the wheel surfaces of the tile under `at` are loaded (roads, bridges, yards - not
+/// the terrain alone): a vehicle there has ground to stand on.
+fn ground_under(w: &crate::scene::World, at: glam::DVec3) -> bool {
+    let k = ((at.x / omsi_map::tile_size()).floor() as i32, (at.y / omsi_map::tile_size()).floor() as i32);
+    w.surfaces.read().contains_key(&k)
+}
+
+/// A placed vehicle found under the ground (one saved after it had fallen through a tile that
+/// was not loaded, #2132) is put back on the highest ground there, as `admin::guard_fall`
+/// does for the driven bus.
+fn reground(w: &crate::scene::World, v: &mut omsi_sim::VehicleInstance) {
+    let at = v.position;
+    if crate::scene::drive_probe(&w.terrains, &w.surfaces, at.x, at.y, at.z + 1.5).below.is_some() {
+        return;
+    }
+    let Some(g) = w.walk_height(at.x, at.y) else { return };
+    if at.z >= g - 8.0 {
+        return;
+    }
+    log::warn!("a placed vehicle lay under the ground at ({:.1}, {:.1}, {:.1}): put back on it at {g:.1}", at.x, at.y, at.z);
+    let origin = glam::DVec3::new(at.x, at.y, g);
+    v.position = origin;
+    if let Some(rb) = v.rigid.as_mut() {
+        rb.place(origin, v.heading);
+    }
+    for t in v.trailers.iter_mut() {
+        t.realign();
     }
 }

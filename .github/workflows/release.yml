@@ -70,6 +70,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          workspaces: |
+            . -> target
+            launcher/src-tauri -> target
       - name: Workspace regression tests
         if: matrix.arch == 'x64'
         run: cargo test --locked --workspace --no-fail-fast
@@ -187,6 +190,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          workspaces: |
+            . -> target
+            launcher/src-tauri -> target
       - name: Build
         run: scripts/build-macos.sh
       - name: Package
@@ -229,11 +235,15 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            launcher/src-tauri -> target
       - name: System libraries
         run: |
           for i in 1 2 3; do
             sudo apt-get update && sudo apt-get install -y build-essential pkg-config libasound2-dev \
-              libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libssl-dev zip clang lld && break
+              libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libssl-dev libwebkit2gtk-4.1-dev zip clang lld && break
             sleep 20
           done
       - name: Workspace regression tests

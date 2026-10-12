@@ -1,0 +1,747 @@
+//! Point lights, coronas and smoke: what the frame's lights are, their grid on the GPU,
+//! the lamps that cast shadows, and the light map tiles.
+
+use crate::*;
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GpuPointLight {
+    pub(crate) pos: [f32; 4],
+    pub(crate) color: [f32; 4],
+    /// Spot direction and cosine of the outer cone (-2 = a point light).
+    pub(crate) dir: [f32; 4],
+    /// Cosine of the inner cone, the core radius, a headlamp's beam (1 low, -1 full), the
+    /// radius (`pos.w` is 0 on a light only the enhanced path draws, which the vanilla
+    /// shader then passes by).
+    pub(crate) extra: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GpuCorona {
+    pub(crate) pos: [f32; 3],
+    pub(crate) size: f32,
+    pub(crate) color: [f32; 4],
+    pub(crate) dir: [f32; 4],
+    /// xyz: the up axis; w: rotating mode
+    pub(crate) up: [f32; 4],
+    /// x: inner cone cosine, y: z offset, z: flags
+    pub(crate) extra: [f32; 4],
+}
+
+/// A point light in world space (`[maplight]`, `[interiorlight]`, headlights).
+#[derive(Debug, Clone, Copy)]
+pub struct PointLight {
+    pub position: DVec3,
+    pub radius: f32,
+    pub color: [f32; 3],
+    pub intensity: f32,
+    /// A spot light's direction (zero = a point light) and the cosines of its inner and
+    /// outer cone (enhanced path).
+    pub direction: Vec3,
+    pub cone: [f32; 2],
+    /// The radius within which the light is at full strength (`[maplight]`'s); 0 = an
+    /// eighth of `radius` (enhanced path; vanilla always takes the eighth).
+    pub core: f32,
+    /// A headlamp (enhanced path), lit by a road lamp's profile instead of the cone: 1 a low
+    /// beam, with its cut-off at the lamp's horizon, -1 a full beam, without; 0 any other light.
+    pub beam: f32,
+    /// A lamp in a housing - a street lamp's head, a platform's light (`[maplight]`): the
+    /// enhanced path sends its light down and out, a few per cent above its horizon.
+    pub housed: bool,
+    /// A virtual source embedded in a pole fixture. Its fixture cannot occlude
+    /// its own output; it remains a caster for other lamps and the sun.
+    pub shadow_owner: Option<i64>,
+    /// Which path draws the light.
+    pub mode: LightMode,
+    /// The enhanced path lights it by a picture of its beam (`[spotlight_cookie]`, see
+    /// `cookies`) within its cone, when a layer is free for the picture that frame.
+    pub cookie: Option<Cookie>,
+}
+
+impl Default for PointLight {
+    fn default() -> Self {
+        Self {
+            position: DVec3::ZERO,
+            radius: 0.0,
+            color: [1.0; 3],
+            intensity: 1.0,
+            direction: Vec3::ZERO,
+            cone: [1.0, 0.0],
+            core: 0.0,
+            beam: 0.0,
+            housed: false,
+            shadow_owner: None,
+            mode: LightMode::Both,
+            cookie: None,
+        }
+    }
+}
+
+/// Which renderer a light belongs to: a vehicle's headlight is three point lights along
+/// its axis for the vanilla path and one real spot light for the enhanced one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LightMode {
+    #[default]
+    Both,
+    Vanilla,
+    Enhanced,
+}
+
+/// One particle of a `[smoke]` system (exhaust, boiling coolant, wheel spray, chimneys).
+///
+/// Omsi.exe draws its puffs (0x5a4180: fog and lighting off, blended over the scene, depth
+/// tested but not written) as squares facing the screen, each turned by its own angle and
+/// moved a tenth of a metre towards the eye in depth (0x5a2b5c), and lets them sink on
+/// through the road, which cuts every one off in a straight line where it goes in. Under a
+/// wheel's spray - dozens of fresh puffs a second, falling in - that is a stack of bright
+/// bands across the road. Here a puff that knows its `ground` fades out over its lowest
+/// part into it instead (see `vs_main` in corona.wgsl).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmokeParticle {
+    pub position: DVec3,
+    /// Half its width (m).
+    pub size: f32,
+    pub color: [f32; 3],
+    pub alpha: f32,
+    /// The angle its picture is turned by about the line of sight (radians).
+    pub spin: f32,
+    /// How far its depth is moved towards the eye (m), its place and size on the screen
+    /// kept: Omsi.exe's 0.1 for every `[smoke]` particle (0x5a1d54 sets it, 0x5a2b5c
+    /// subtracts it from the view depth it projects the depth at).
+    pub z_offset: f32,
+    /// World z of the ground under it (the road its vehicle stands on): it fades out
+    /// towards it, and one wholly under it is left out. `None`: drawn as it is.
+    pub ground: Option<f64>,
+}
+
+/// How high over its ground a smoke puff of half width `size` fades out into it (m): a fifth
+/// of its drawn radius, between 6 and 25 cm - enough that no line shows where the road
+/// meets it, little enough that a wheel's spray, all but a few tens of centimetres of which
+/// is under the road, still shows as the mist round the tyres Omsi.exe draws.
+pub(crate) fn smoke_ground_fade(size: f32) -> f32 {
+    (0.2 * 0.9 * size).clamp(0.06, 0.25)
+}
+
+/// The corona shader's sprite for a smoke particle (`extra.w` 3: the smoke branch of
+/// `vs_main`): `dir` the cosine and sine of its spin, `up` its ground (relative to the
+/// render origin `ro`, `up.y` 1 when it has one), its z offset and how high the fade into
+/// the ground reaches. `None` for a puff too faint or small to draw, or wholly under its
+/// ground.
+pub(crate) fn smoke_sprite(p: &SmokeParticle, ro: DVec3) -> Option<GpuCorona> {
+    if !(p.alpha > 0.002 && p.size > 0.0) {
+        return None;
+    }
+    // (drawn at 0.9 of its size, see `vs_main`)
+    if p.ground.is_some_and(|g| p.position.z + (p.size * 0.9) as f64 <= g) {
+        return None;
+    }
+    let (sin, cos) = p.spin.sin_cos();
+    let ground = p.ground.filter(|g| g.is_finite());
+    Some(GpuCorona {
+        pos: (p.position - ro).as_vec3().to_array(),
+        size: p.size,
+        color: [p.color[0], p.color[1], p.color[2], p.alpha.clamp(0.0, 1.0)],
+        dir: [cos, sin, 0.0, 0.0],
+        up: [ground.map(|g| (g - ro.z) as f32).unwrap_or(0.0), if ground.is_some() { 1.0 } else { 0.0 }, p.z_offset.max(0.0), smoke_ground_fade(p.size)],
+        extra: [-2.0, 0.0, 0.0, 3.0],
+    })
+}
+
+/// The light map atlas: tiles a side and pixels a tile.
+pub const LM_ATLAS_TILES: u32 = 5;
+pub const LM_TILE_PX: u32 = 256;
+
+/// A light corona sprite (`[light_enh]`, `[light_enh_2]`).
+#[derive(Debug, Clone, Copy)]
+pub struct Corona {
+    pub position: DVec3,
+    pub size: f32,
+    pub color: [f32; 3],
+    /// 0..2 (a `[light_enh_2]` fading variable of 2 is double brightness).
+    pub brightness: f32,
+    /// Facing direction (zero = omnidirectional) and cosine of the visibility half-cone
+    /// (the outer cone: where it begins to be seen).
+    pub direction: Vec3,
+    pub cone_cos: f32,
+    /// Cosine of the inner cone (full brightness); below `cone_cos` = no inner cone.
+    pub inner_cos: f32,
+    /// `[light_enh_2]` rotating: 0 a flat sprite facing `direction`, 1 turned to the viewer
+    /// about `up`, 2 turned to the viewer about every axis (a billboard).
+    pub rotating: u8,
+    pub up: Vec3,
+    /// How far the spot is moved from its place towards the viewer (m), so that a lamp
+    /// inside its housing still shows; negative = the old default (half its size, at most
+    /// half a metre).
+    pub z_offset: f32,
+    /// `[light_enh_2]` parameter bits: 1 star, 2 no fog, 4 only effects.
+    pub flags: u8,
+    /// Its picture: 0 the standard glow, else one registered with
+    /// [`Renderer::set_corona_texture`] (a light's own `bitmap`, the fog cone's picture).
+    pub texture: u16,
+    /// A light's cone in the fog rather than its glow (OMSI's `light_cone.bmp` fan, see
+    /// corona.wgsl): `size` is the fan's radius, `cone_cos` and `inner_cos` hold the outer
+    /// and inner half angles (radians), `beam_width` the fog's visibility (m).
+    pub beam: bool,
+    pub beam_width: f32,
+    /// The halo round a light in fog: a billboard of `size`, pulled
+    /// towards the viewer, seen from in front of the light; the angles and the visibility
+    /// travel as for a cone.
+    pub halo: bool,
+}
+
+impl Default for Corona {
+    fn default() -> Self {
+        Corona {
+            position: DVec3::ZERO,
+            size: 0.1,
+            color: [1.0; 3],
+            brightness: 0.0,
+            direction: Vec3::ZERO,
+            cone_cos: -1.0,
+            inner_cos: -2.0,
+            rotating: 2,
+            up: Vec3::Z,
+            z_offset: -1.0,
+            flags: 0,
+            texture: 0,
+            beam: false,
+            beam_width: 0.0,
+            halo: false,
+        }
+    }
+}
+
+pub(crate) const LIGHT_CELL: f32 = 25.0;
+/// Enhanced: how many street lamps cast shadows (their maps are tiles of a quarter of the
+/// shadow size under the far map), and how far from the camera a lamp's reach may end.
+pub(crate) const LAMP_SHADOWS: usize = 4;
+/// The shadow casters' lists of a frame: the near, far and close cascades, then one per
+/// street lamp's map (each lamp's own: an embedded source leaves its own fixture out).
+pub(crate) const SHADOW_LISTS: usize = 3 + LAMP_SHADOWS;
+pub(crate) const LAMP_SHADOW_REACH: f32 = 45.0;
+/// The far map's height over its width: the lamps' tiles take the quarter under it.
+pub(crate) const FAR_MAP_ASPECT: f32 = 1.25;
+/// A lamp's shadow map looks straight down from its head over this field of view (a
+/// street lamp's light leaves it downwards, see `PointLight::housed`).
+pub(crate) const LAMP_SHADOW_FOV: f32 = 150.0;
+
+/// A street lamp that casts shadows this frame.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LampShadow {
+    /// Its index in the light buffer, where it is (render-origin relative) and its reach.
+    pub(crate) index: u32,
+    pub(crate) position: Vec3,
+    pub(crate) range: f32,
+    pub(crate) owner: Option<i64>,
+    /// The player's headlamps' map (`passes::headlamp_shadow`): it looks this way along the
+    /// road (level, unit) instead of down; and the vehicle they belong to, whose own parts
+    /// cast nothing into it.
+    pub(crate) look: Option<Vec3>,
+    pub(crate) own: Option<passes::VehicleBox>,
+}
+
+impl LampShadow {
+    /// The shadow map's view and projection: straight down, depth 0..1 over its reach (the
+    /// headlamps' along the road, see `headlamp_view_proj`).
+    pub(crate) fn view_proj(&self) -> Mat4 {
+        if let Some(look) = self.look {
+            return self.headlamp_view_proj(look);
+        }
+        let proj = Mat4::perspective_rh(LAMP_SHADOW_FOV.to_radians(), 1.0, 0.1, self.range.max(1.0));
+        let view = Mat4::look_to_rh(self.position, -Vec3::Z, Vec3::Y);
+        proj * view
+    }
+}
+pub(crate) const LIGHT_GRID_SIDE: usize = 64;
+/// (32: a depot or a bus interior with many lamps lost the farthest past 16 in a cell)
+pub(crate) const LIGHT_CELL_CAP: usize = 32;
+
+/// Does this path draw the light? (See `Renderer::prepare_lights`.)
+pub(crate) fn drawn_by(l: &PointLight, enhanced: bool) -> bool {
+    l.radius > 0.0
+        && l.intensity > 0.0
+        && l.mode
+            != if enhanced {
+                LightMode::Vanilla
+            } else {
+                LightMode::Enhanced
+            }
+}
+
+/// A light as the shaders read it, at `p` relative to the render origin.
+pub(crate) fn gpu_light(l: &PointLight, p: Vec3) -> GpuPointLight {
+    let spot = l.direction.length_squared() > 1e-6;
+    let dir = if spot {
+        l.direction.normalize().extend(l.cone[1]).to_array()
+    } else if l.mode == LightMode::Vanilla {
+        // (a vehicle's headlight stand-in: lights a light-mapped road too, see
+        // shader.wgsl point_lights)
+        [1.0, 0.0, 0.0, -2.0]
+    } else if l.housed {
+        // (z: a housed lamp, see `PointLight::housed`; the classic shader reads only x)
+        [0.0, 0.0, -1.0, -2.0]
+    } else {
+        [0.0, 0.0, 0.0, -2.0]
+    };
+    let vanilla_radius = if l.mode == LightMode::Enhanced {
+        0.0
+    } else {
+        l.radius
+    };
+    GpuPointLight {
+        pos: [p.x, p.y, p.z, vanilla_radius],
+        color: [l.color[0], l.color[1], l.color[2], l.intensity],
+        dir,
+        extra: [l.cone[0], l.core, l.beam, l.radius],
+    }
+}
+
+impl Renderer {
+    /// Upload this frame's point lights into the light grid around the camera. Returns the
+    /// grid origin (render-origin relative). `enhanced`: the frame is drawn by the enhanced
+    /// path, which takes a headlight as one spot light where the vanilla path takes three
+    /// points (`LightMode`). Its mirrors (the vanilla shader) and its picture share the
+    /// enhanced list, so that it is not sent twice a frame: the vanilla shader passes a spot
+    /// by, whose radius it reads as 0, and the mirrors show no headlight pools. The three
+    /// stand-in points stay out of it, or a street full of cars would fill the grid cells'
+    /// sixteen places before the street lamps got theirs.
+    pub(crate) fn prepare_lights(&self, scene: &mut Scene, cam_rel: Vec3, enhanced: bool, lamp_shadows: bool, own: Option<&(DVec3, f64, [f32; 6])>) -> ([f32; 4], Vec<LampShadow>) {
+        // the street lamps that get a shadow map: the few lighting the camera's
+        // surroundings most (by their strength over the distance)
+        let mut chosen: Vec<(f32, LampShadow, [i64; 3])> = Vec::new();
+        let ro = scene.render_origin;
+        let side = LIGHT_GRID_SIDE;
+        let half = side as f32 * LIGHT_CELL * 0.5;
+        // snapped to whole cells, so that the grid stays the same while nothing moves
+        let origin = [
+            ((cam_rel.x - half) / LIGHT_CELL).floor() * LIGHT_CELL,
+            ((cam_rel.y - half) / LIGHT_CELL).floor() * LIGHT_CELL,
+        ];
+        let mut gpu_lights: Vec<GpuPointLight> =
+            Vec::with_capacity(scene.interior_lights.len() + scene.lights.len().max(1));
+        // the vehicles' interior lamps first, at the indices their meshes name (they are in
+        // no grid cell: only those meshes look them up)
+        for l in &scene.interior_lights {
+            gpu_lights.push(gpu_light(l, (l.position - ro).as_vec3()));
+        }
+        // (the player's headlamps, which share a map of their own: see `passes::headlamp_shadow`)
+        let own = own.filter(|_| lamp_shadows && enhanced).map(|b| passes::VehicleBox::new(b, ro));
+        let mut own_lamps: Vec<(Vec3, Vec3, f32)> = Vec::new();
+        self.lights.cookies.begin_frame();
+        // The grid is made in a room kept all unused but for the cells the last one filled,
+        // which are cleared first: half a megabyte set and compared twice a frame (the
+        // window's picture and a mirror's) for the few thousand cells lamps reach.
+        let cells = side * side;
+        let mut grid = std::mem::take(&mut scene.grid_scratch);
+        if grid.len() != cells * LIGHT_CELL_CAP {
+            grid.clear();
+            grid.resize(cells * LIGHT_CELL_CAP, u32::MAX);
+            scene.grid_filled.clear();
+        }
+        for &c in &scene.grid_filled {
+            let base = c as usize * LIGHT_CELL_CAP;
+            grid[base..base + LIGHT_CELL_CAP].fill(u32::MAX);
+        }
+        scene.grid_filled.clear();
+        let mut counts = std::mem::take(&mut scene.grid_counts);
+        counts.clear();
+        counts.resize(cells, 0);
+        for l in &scene.lights {
+            // Every light the grid reaches is in the list, the other path's too (a headlight
+            // is three points for the plain shader and one spot for the enhanced): only the
+            // grid tells which a path draws. The window's Enhanced picture and its plainly
+            // shaded mirrors then send the same list, at the same places, and grids that
+            // differ only round the vehicles' lamps - not everything again twice a frame.
+            if !(l.radius > 0.0 && l.intensity > 0.0) {
+                continue;
+            }
+            let p = (l.position - ro).as_vec3();
+            let x0 = ((p.x - l.radius - origin[0]) / LIGHT_CELL).floor();
+            let x1 = ((p.x + l.radius - origin[0]) / LIGHT_CELL).floor();
+            let y0 = ((p.y - l.radius - origin[1]) / LIGHT_CELL).floor();
+            let y1 = ((p.y + l.radius - origin[1]) / LIGHT_CELL).floor();
+            if x1 < 0.0 || y1 < 0.0 || x0 >= side as f32 || y0 >= side as f32 {
+                continue;
+            }
+            let idx = gpu_lights.len() as u32;
+            gpu_lights.push(gpu_light(l, p));
+            if !drawn_by(l, enhanced) {
+                continue;
+            }
+            // The enhanced path's own marks in `pos.w`, which the classic shader reads as a
+            // radius of none (these lights are the enhanced path's alone): 1 + its layer for
+            // a lamp with a picture of its beam (without a free layer, its cone lights it),
+            // and 16 more for one of the player's headlamps, which read their shared map
+            // (see `passes::headlamp_shadow`, enhanced.wgsl `light_marks`).
+            let mut marks = 0.0;
+            if let Some(layer) = l.cookie.filter(|_| enhanced && l.mode == LightMode::Enhanced).and_then(|c| self.lights.cookies.layer(&c)) {
+                marks += 1.0 + layer as f32;
+            }
+            if own.as_ref().is_some_and(|b| passes::own_headlamp(l, p, b)) {
+                marks += 16.0;
+                own_lamps.push((p, l.direction, l.radius));
+            }
+            if marks > 0.0 {
+                if let Some(g) = gpu_lights.last_mut() {
+                    g.pos[3] = -marks;
+                }
+            }
+            if lamp_shadows && enhanced && l.housed && l.intensity > 0.0 {
+                let d = (p - cam_rel).length();
+                if d < l.radius + LAMP_SHADOW_REACH {
+                    let mut score = l.intensity * (l.color[0] + l.color[1] + l.color[2]) * l.core * l.core / (d * d + 25.0);
+                    // (a lamp that had a map keeps it until another is clearly stronger: the
+                    // set changing with every metre the camera moved switched shadows on and
+                    // off between lamps that light the view about alike, #1613)
+                    let key = l.position.to_array().map(|c| (c * 100.0).round() as i64);
+                    if scene.lamp_shadow_last.contains(&key) {
+                        score *= 1.6;
+                    }
+                    chosen.push((score, LampShadow { index: idx, position: p, range: l.radius, owner: l.shadow_owner, look: None, own: None }, key));
+                }
+            }
+            for y in (y0.max(0.0) as usize)..=(y1.min(side as f32 - 1.0) as usize) {
+                for x in (x0.max(0.0) as usize)..=(x1.min(side as f32 - 1.0) as usize) {
+                    let cell = y * side + x;
+                    let n = counts[cell] as usize;
+                    if n < LIGHT_CELL_CAP {
+                        if n == 0 {
+                            scene.grid_filled.push(cell as u32);
+                        }
+                        grid[cell * LIGHT_CELL_CAP + n] = idx;
+                        counts[cell] += 1;
+                    } else if omsi_cfg::flags::OMSI_DEBUG_LIGHT_GRID.is_set() {
+                        log::info!("light grid: cell ({x}, {y}) full, light at ({:.1}, {:.1}) radius {:.0} {} left out", p.x, p.y, l.radius, if l.direction.length_squared() > 0.5 { "spot" } else { "point" });
+                    }
+                }
+            }
+        }
+        // (the beams' pictures the lamps found layers for, after the lights: see `cookies`)
+        self.lights.cookies.append(&mut gpu_lights);
+        if gpu_lights.is_empty() {
+            gpu_lights.push(GpuPointLight {
+                pos: [0.0; 4],
+                color: [0.0; 4],
+                dir: [0.0; 4],
+                extra: [0.0; 4],
+            });
+        }
+        scene.grid_counts = counts;
+        let lbytes: &[u8] = bytemuck::cast_slice(&gpu_lights);
+        let mut rebuilt = false;
+        match &scene.light_buf {
+            Some(b) if b.size() >= lbytes.len() as u64 => {
+                // (only the lights from the first that changed to the last: most stand still)
+                let unit = std::mem::size_of::<GpuPointLight>();
+                let old = &scene.last_lights;
+                let first = (0..lbytes.len() / unit).find(|k| old.get(k * unit..(k + 1) * unit) != Some(&lbytes[k * unit..(k + 1) * unit]));
+                if let Some(first) = first {
+                    let last = (first..lbytes.len() / unit).rev().find(|k| old.get(k * unit..(k + 1) * unit) != Some(&lbytes[k * unit..(k + 1) * unit])).unwrap_or(first);
+                    b.write(&self.queue, (first * unit) as u64, &lbytes[first * unit..(last + 1) * unit]);
+                }
+            }
+            _ => {
+                let cap = (lbytes.len() * 2).max(64 * std::mem::size_of::<GpuPointLight>());
+                let b = GpuArray::new(&self.device, "lights", cap as u64, 16, false);
+                b.write(&self.queue, 0, lbytes);
+                scene.light_buf = Some(b);
+                rebuilt = true;
+            }
+        }
+        if scene.grid_buf.is_none() || scene.last_grid.len() != grid.len() {
+            let b = GpuArray::new(&self.device, "light grid", (grid.len() * 4) as u64, 4, false);
+            b.write(&self.queue, 0, bytemuck::cast_slice(&grid));
+            scene.grid_buf = Some(b);
+            scene.last_grid.clone_from(&grid);
+            scene.grid_sent.clone_from(&scene.grid_filled);
+            rebuilt = true;
+        } else if let Some(b) = &scene.grid_buf {
+            // Only the cells that differ from what the buffer holds are sent: those either
+            // grid has lamps in, compared, in runs of neighbouring cells.
+            let mut marks = std::mem::take(&mut scene.grid_marks);
+            marks.clear();
+            marks.resize(cells, false);
+            for &c in scene.grid_sent.iter().chain(&scene.grid_filled) {
+                marks[c as usize] = true;
+            }
+            let mut runs: Vec<(usize, usize)> = Vec::new();
+            for (c, m) in marks.iter().enumerate() {
+                let r = c * LIGHT_CELL_CAP..(c + 1) * LIGHT_CELL_CAP;
+                if !*m || grid[r.clone()] == scene.last_grid[r.clone()] {
+                    continue;
+                }
+                scene.last_grid[r.clone()].copy_from_slice(&grid[r]);
+                // (a gap of a few unchanged cells is sent along rather than starting another
+                // write: each makes a staging buffer of its own)
+                match runs.last_mut() {
+                    Some(run) if c - run.1 <= 8 => run.1 = c + 1,
+                    _ => runs.push((c, c + 1)),
+                }
+            }
+            if runs.len() > 32 {
+                runs = vec![(runs[0].0, runs[runs.len() - 1].1)];
+            }
+            for (a, z) in runs {
+                let r = a * LIGHT_CELL_CAP..z * LIGHT_CELL_CAP;
+                b.write(&self.queue, (r.start * 4) as u64, bytemuck::cast_slice(&scene.last_grid[r]));
+            }
+            scene.grid_marks = marks;
+            scene.grid_sent.clone_from(&scene.grid_filled);
+        }
+        scene.last_lights.clear();
+        scene.last_lights.extend_from_slice(lbytes);
+        scene.grid_scratch = grid;
+        if rebuilt {
+            self.rebuild_camera_bind_group(scene);
+        }
+        chosen.sort_by(|a, b| b.0.total_cmp(&a.0));
+        // (the headlamps' map, when there is one, takes the last tile: they light the road
+        // the driver looks along, nearer than any street lamp)
+        let headlamps = own.and_then(|b| passes::headlamp_shadow(&own_lamps, b, cam_rel));
+        chosen.truncate(LAMP_SHADOWS - usize::from(headlamps.is_some()));
+        scene.lamp_shadow_last = chosen.iter().map(|c| c.2).collect();
+        let lamps = chosen.into_iter().map(|c| c.1).chain(headlamps).collect();
+        ([origin[0], origin[1], LIGHT_CELL, side as f32], lamps)
+    }
+
+    /// Upload this frame's smoke particles, farthest first (they are blended over each other).
+    pub(crate) fn prepare_smoke(&self, scene: &mut Scene, eye: DVec3) {
+        let ro = scene.render_origin;
+        // (the order is sorted as keys with the sprite's place in the list, the sprites
+        // gathered after: sorting the 80-byte sprites themselves moved them about many
+        // times over, for the window's picture and again for each mirror; a stable sort of
+        // the same keys gives the same order)
+        let (mut sprites, mut order, mut data) = std::mem::take(&mut scene.smoke_scratch);
+        sprites.clear();
+        sprites.extend(
+            scene
+                .smoke
+                .iter()
+                .filter_map(|p| smoke_sprite(p, ro).map(|g| (-(p.position - eye).length_squared(), g))),
+        );
+        order.clear();
+        order.extend(sprites.iter().enumerate().map(|(i, (d, _))| (*d, i as u32)));
+        order.sort_by(|a, b| a.0.total_cmp(&b.0));
+        data.clear();
+        data.extend(order.iter().map(|&(_, i)| sprites[i as usize].1));
+        scene.smoke_count = data.len() as u32;
+        self.upload_smoke(scene, &data);
+        scene.smoke_scratch = (sprites, order, data);
+    }
+
+    /// The sorted smoke sprites into the smoke buffer, grown when they do not fit.
+    pub(crate) fn upload_smoke(&self, scene: &mut Scene, data: &[GpuCorona]) {
+        if data.is_empty() {
+            return;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(data);
+        match &scene.smoke_buf {
+            Some(b) if b.size() as usize >= bytes.len() => {
+                // (compared with what the smoke buffer holds: compared with the coronas'
+                // bytes, which it never equals, it was written again every frame)
+                if scene.smoke_sent != bytes {
+                    self.queue.write_buffer(b, 0, bytes);
+                }
+            }
+            _ => {
+                let b = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("smoke"),
+                    size: (bytes.len() * 2) as u64,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.queue.write_buffer(&b, 0, bytes);
+                scene.smoke_buf = Some(b);
+            }
+        }
+        scene.smoke_sent.clear();
+        scene.smoke_sent.extend_from_slice(bytes);
+    }
+
+    /// Put a tile's light map into its place of the atlas (`slot`: column from the west, row
+    /// from the north, 0..5); a picture of another size is scaled to 256 px.
+    pub fn set_light_map_tile(&self, slot: (u32, u32), img: Option<&omsi_texture::Image>) {
+        let n = LM_TILE_PX as usize;
+        let mut px = vec![0u8; n * n * 4];
+        if let Some(img) = img.filter(|i| i.width > 0 && i.height > 0) {
+            for y in 0..n {
+                for x in 0..n {
+                    let sx = x * img.width as usize / n;
+                    let sy = y * img.height as usize / n;
+                    let o = (sy * img.width as usize + sx) * 4;
+                    px[(y * n + x) * 4..(y * n + x) * 4 + 4].copy_from_slice(&img.rgba[o..o + 4]);
+                }
+            }
+        }
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &self.lights.lm_atlas, mip_level: 0, origin: wgpu::Origin3d { x: slot.0 * LM_TILE_PX, y: slot.1 * LM_TILE_PX, z: 0 }, aspect: wgpu::TextureAspect::All },
+            &px,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(LM_TILE_PX * 4), rows_per_image: None },
+            wgpu::Extent3d { width: LM_TILE_PX, height: LM_TILE_PX, depth_or_array_layers: 1 },
+        );
+    }
+
+    /// Where the light map atlas lies: its south-west corner (world x, y) and its side (m).
+    pub fn set_light_map_place(&self, x: f64, y: f64, side: f64) {
+        self.lights.lm_place.set((x, y, side));
+    }
+
+    /// Register picture `id` for coronas (`Corona::texture`): a light's own bitmap, whose
+    /// brightness is the glow's shape.
+    pub fn set_corona_texture(&mut self, id: u16, img: &omsi_texture::Image) {
+        let t = upload_texture(&self.device, &self.queue, img, true);
+        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("corona picture"),
+            layout: &self.lights.corona_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&t.view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.lights.corona_sampler) },
+            ],
+        });
+        let i = id as usize;
+        if self.lights.corona_textures.len() <= i {
+            self.lights.corona_textures.resize_with(i + 1, || None);
+        }
+        self.lights.corona_textures[i] = Some(bg);
+    }
+
+    /// How many of its caller's numbered corona pictures and cookie pictures this renderer
+    /// has been handed (as `set_corona_texture` / `set_cookie_picture`). The numbers are the
+    /// same for every renderer of the process; a renderer of its own - a second session's,
+    /// one made again after a lost device - starts at none and so is handed them all.
+    pub fn pictures_taken(&self) -> (usize, usize) {
+        self.lights.pictures_taken
+    }
+
+    /// See [`Renderer::pictures_taken`].
+    pub fn set_pictures_taken(&mut self, taken: (usize, usize)) {
+        self.lights.pictures_taken = taken;
+    }
+
+    /// A light cookie's picture (`PointLight::cookie`), under the number its lamps name.
+    pub fn set_cookie_picture(&self, id: u16, img: &omsi_texture::Image) {
+        self.lights.cookies.set_picture(id, img);
+    }
+
+    /// The picture of a smoke particle: the game's `Texture/rauch.tga` (OMSI's default
+    /// for every `[smoke]`), alpha as its mask.
+    pub fn set_smoke_texture(&mut self, img: &omsi_texture::Image) {
+        let t = upload_texture(&self.device, &self.queue, img, true);
+        self.lights.smoke_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("smoke"),
+            layout: &self.lights.corona_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&t.view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.lights.corona_sampler) },
+            ],
+        });
+    }
+
+    /// Upload this frame's coronas.
+    /// `cab`: the box of the vehicle the camera is in, whose own flares Omsi.exe draws
+    /// after the vehicle (0x6f0a2c -> 0x6f07bc), the others before it (0x6f0400/0x6f0418).
+    pub(crate) fn prepare_coronas(&self, scene: &mut Scene, night: f32, cab: Option<&(DVec3, f64, [f32; 6])>) {
+        let ro = scene.render_origin;
+        // (its lamps sit on the skin of its box: half a metre round it is the vehicle's)
+        let cab = cab.map(|&(o, h, mut bb)| {
+            for v in &mut bb[..3] {
+                *v += 1.0;
+            }
+            (o, h, bb)
+        });
+        let late = |c: &Corona| cab.as_ref().is_some_and(|b| point_in_vehicle_box(c.position, b));
+        let mut order: Vec<(bool, &Corona)> = scene.coronas.iter().filter(|c| c.brightness > 0.001).map(|c| (late(c), c)).collect();
+        order.sort_by_key(|(l, c)| (*l, c.texture));
+        let mut runs: Vec<(u16, u32, u32, bool)> = Vec::new();
+        for (k, &(l, c)) in order.iter().enumerate() {
+            match runs.last_mut() {
+                Some(r) if r.0 == c.texture && r.3 == l => r.2 += 1,
+                _ => runs.push((c.texture, k as u32, 1, l)),
+            }
+        }
+        let order: Vec<&Corona> = order.into_iter().map(|(_, c)| c).collect();
+        if omsi_cfg::flags::OMSI_DEBUG_CONES.is_set() {
+            log::info!("coronas: {} in {} runs {:?}, {} beams", order.len(), runs.len(), runs, order.iter().filter(|c| c.beam).count());
+        }
+        scene.corona_runs = runs;
+        let data: Vec<GpuCorona> = order
+            .into_iter()
+            .map(|c| {
+                let p = (c.position - ro).as_vec3();
+                // (a raindrop's streak keeps its own level; a snowflake, -3, is scaled as a
+                // light's corona is, as it always was in the classic picture)
+                let b = if (c.cone_cos < -1.5 && c.cone_cos > -2.5) || c.beam || c.halo {
+                    c.brightness
+                } else {
+                    // the original: ((1 - ambient)^2 + 0.8) 0.6 times the light's
+                    // brightness (the shader takes the viewing angle and clamps it to 1)
+                    c.brightness * (night * night + 0.8) * 0.6
+                };
+                GpuCorona {
+                    pos: p.to_array(),
+                    size: c.size,
+                    color: [c.color[0], c.color[1], c.color[2], b],
+                    dir: [c.direction.x, c.direction.y, c.direction.z, c.cone_cos],
+                    up: [c.up.x, c.up.y, c.up.z, c.rotating as f32],
+                    extra: [c.inner_cos, if c.beam || c.halo { c.beam_width } else { c.z_offset }, c.flags as f32, if c.beam { 1.0 } else if c.halo { 2.0 } else { 0.0 }],
+                }
+            })
+            .collect();
+        scene.corona_count = data.len() as u32;
+        if data.is_empty() {
+            return;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(&data);
+        match &scene.corona_buf {
+            Some(b) if b.size() as usize >= bytes.len() => {
+                if scene.corona_sent != bytes {
+                    self.queue.write_buffer(b, 0, bytes);
+                }
+            }
+            _ => {
+                let b = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("coronas"),
+                    size: (bytes.len() * 2) as u64,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.queue.write_buffer(&b, 0, bytes);
+                scene.corona_buf = Some(b);
+            }
+        }
+        scene.corona_sent.clear();
+        scene.corona_sent.extend_from_slice(bytes);
+    }
+}
+
+/// The lights' resources beside the scene's grid: coronas, smoke, snowfall, cookies, the tile light maps and the lamps in the fog.
+pub(crate) struct LightRes {
+    pub(crate) corona_bind_group: wgpu::BindGroup,
+    /// The snowfall's parameters (snow.wgsl `SnowParams`) and their bind group.
+    pub(crate) snow_buf: wgpu::Buffer,
+    pub(crate) snow_bind_group: wgpu::BindGroup,
+    /// The smoke texture (`Texture/rauch.tga`, see [`Renderer::set_smoke_texture`]).
+    pub(crate) smoke_bind_group: wgpu::BindGroup,
+    /// The coronas' pictures besides the standard glow (index = `Corona::texture`; entry 0
+    /// unused).
+    pub(crate) corona_textures: Vec<Option<wgpu::BindGroup>>,
+    /// How far this renderer has come through the numbered corona and cookie pictures its
+    /// caller keeps (see [`Renderer::pictures_taken`]).
+    pub(crate) pictures_taken: (usize, usize),
+    /// The light cookies' pictures and the frame's layers of them.
+    pub(crate) cookies: cookies::CookieAtlas,
+    pub(crate) corona_layout: wgpu::BindGroupLayout,
+    pub(crate) corona_sampler: wgpu::Sampler,
+    /// Enhanced: the lamps' light the fog scatters, added over the drawn picture (none on
+    /// OpenGL and without storage buffers), its bind group layout and parameters.
+    pub(crate) fog_lamps_pipeline: Option<[wgpu::RenderPipeline; 2]>,
+    pub(crate) fog_lamps_layout: wgpu::BindGroupLayout,
+    pub(crate) fog_lamps_buf: wgpu::Buffer,
+    /// The tile light maps (`.map.LM.bmp`) of the 5x5 tiles around the camera, north up, and
+    /// where that square lies (world x, y of its south-west corner, its side in metres).
+    pub(crate) lm_atlas: wgpu::Texture,
+    pub(crate) lm_atlas_view: wgpu::TextureView,
+    pub(crate) lm_uniform: wgpu::Buffer,
+    pub(crate) lm_place: std::cell::Cell<(f64, f64, f64)>,
+}

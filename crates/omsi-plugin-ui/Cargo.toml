@@ -1,0 +1,20 @@
+[package]
+name = "omsi-plugin-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The Lua plugins' panels and notifications on the screen: laid out from omsi_plugin::ui's tables and drawn with omsi-ui into overlay textures"
+
+[dependencies]
+omsi-cfg = { path = "../omsi-cfg" }
+omsi-plugin = { path = "../omsi-plugin" }
+omsi-render = { path = "../omsi-render" }
+omsi-ui = { path = "../omsi-ui" }
+wgpu.workspace = true
+glam.workspace = true
+hashbrown.workspace = true
+image.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true

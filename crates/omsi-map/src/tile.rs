@@ -369,134 +369,11 @@ impl Tile {
                     }
                 }
                 "spline" | "spline_h" => {
-                    // (0x795530: the detail level from version 9 on, the IDCode from 6 on;
-                    // before version 11 one line links the spline to the one written before
-                    // it - -1 for none - instead of the IDs of both neighbours, before 5 there
-                    // is no cant, before 14 no skew, before 11 no texture offset)
-                    if has(t.version, 9) {
-                        let _detail = r.line();
-                    }
-                    let file_name = r.str().to_string();
-                    let id = if has(t.version, 6) { r.i64() } else { auto_id(&mut auto) };
-                    let (prev_id, next_id) = if has(t.version, 11) {
-                        (r.i64(), r.i64())
-                    } else {
-                        let linked = r.i64() != -1;
-                        match t.splines.last_mut().filter(|_| linked) {
-                            Some(p) => {
-                                p.next_id = id;
-                                (p.id, 0)
-                            }
-                            None => (0, 0),
-                        }
-                    };
-                    // Splines store x, height, y (verified by prev/next continuity of stock maps).
-                    let x = r.f64();
-                    let z = r.f64();
-                    let y = r.f64();
-                    let pos = [x, y, z];
-                    let heading = r.f64();
-                    let length = r.f64();
-                    let radius = r.f64();
-                    let grad_start = r.f64();
-                    let grad_end = r.f64();
-                    // [spline_h]: gradients, then the height change, then the rest as in [spline]
-                    let is_h = k == "spline_h";
-                    let delta_h = if is_h { Some(r.f64()) } else { None };
-                    let (cant_start, cant_end) = if has(t.version, 5) { (r.f64(), r.f64()) } else { (0.0, 0.0) };
-                    // Newer files have skew_start/skew_end; count remaining numeric lines.
-                    let mut nums: Vec<f64> = Vec::new();
-                    let mut mirror = false;
-                    loop {
-                        let save = r.pos();
-                        let l = r.str();
-                        let w = l.trim();
-                        if w.is_empty()
-                            || omsi_cfg::keyword_of(l).is_some()
-                            || w.starts_with("Object Nr.")
-                        {
-                            r.seek(save);
-                            break;
-                        }
-                        if w.eq_ignore_ascii_case("mirror") {
-                            mirror = true;
-                            break;
-                        }
-                        nums.push(omsi_cfg::parse_f64(w));
-                    }
-                    let (skew_start, skew_end, tex_offset) = match nums.len() {
-                        0 => (0.0, 0.0, 0.0),
-                        1 | 2 => (0.0, 0.0, nums[0]),
-                        _ => (nums[0], nums[1], nums[2]),
-                    };
-                    t.splines.push(MapSpline {
-                        file: file_name,
-                        id,
-                        prev_id,
-                        next_id,
-                        pos,
-                        heading,
-                        length,
-                        radius,
-                        grad_start,
-                        grad_end,
-                        delta_h,
-                        cant_start,
-                        cant_end,
-                        skew_start,
-                        skew_end,
-                        tex_offset,
-                        map_chain_offset: has(t.version, 11).then(|| {
-                            if tex_offset.is_finite() && tex_offset > 0.0 { tex_offset } else { 0.0 }
-                        }),
-                        mirror,
-                        is_h,
-                        rules: Vec::new(),
-                        terrain_align: None,
-                        terrain_align_flag: false,
-                        deleted: false,
-                    });
+                    read_spline(&mut t, &mut r, &k, &mut auto);
                     last = Last::Spline;
                 }
                 "splineattachement" | "splineattachement_repeater" => {
-                    // (the detail level from version 9 on, the IDCode from 6 on, as for objects)
-                    if has(t.version, 9) {
-                        let _detail = r.line();
-                    }
-                    let repeater = if k.ends_with("repeater") {
-                        let tile = r.i64().max(0) as usize;
-                        let first = r.i64().max(0) as usize;
-                        Some((tile, first))
-                    } else {
-                        None
-                    };
-                    let file_name = r.str().to_string();
-                    let id = if has(t.version, 6) { r.i64() } else { auto_id(&mut auto) };
-                    records.push(id);
-                    let spline_index = r.i32();
-                    let offset = r.f64s::<3>();
-                    // (as for objects: pitch, bank and the tilt flag from version 12 on,
-                    // strings from version 4 on - Omsi.exe 0x794892..0x794bd7)
-                    let modern = t.version >= 12 || t.version == 0;
-                    let rot = if modern { r.f64s::<3>() } else { [r.f64(), 0.0, 0.0] };
-                    let interval = r.f64();
-                    let range = r.f64();
-                    let tilt = if modern { r.i32() != 0 } else { false };
-                    let strings = if has(t.version, 4) { read_labels(&mut r).1 } else { Vec::new() };
-                    t.spline_attachments.push(SplineAttachment {
-                        file: file_name,
-                        id,
-                        spline_index,
-                        offset,
-                        rot,
-                        interval,
-                        range,
-                        tilt,
-                        strings,
-                        repeater,
-                        var_parent: None,
-                        rules: Vec::new(),
-                    });
+                    read_spline_attachment(&mut t, &mut r, &k, &mut auto, &mut records);
                     last = Last::SplineAttach;
                 }
                 "varparent" => {
@@ -689,6 +566,141 @@ impl Tile {
         let (x, y) = stem.rsplit_once('_')?;
         Some((x.parse().ok()?, y.parse().ok()?))
     }
+}
+
+/// A `[spline]` or `[spline_h]` record (keyword `k`), read as the tile's `[version]` writes it
+/// and added to `t`'s splines (an old tile links it to the spline written before it).
+fn read_spline(t: &mut Tile, r: &mut omsi_cfg::CfgReader, k: &str, auto: &mut usize) {
+    // (0x795530: the detail level from version 9 on, the IDCode from 6 on;
+    // before version 11 one line links the spline to the one written before
+    // it - -1 for none - instead of the IDs of both neighbours, before 5 there
+    // is no cant, before 14 no skew, before 11 no texture offset)
+    if has(t.version, 9) {
+        let _detail = r.line();
+    }
+    let file_name = r.str().to_string();
+    let id = if has(t.version, 6) { r.i64() } else { auto_id(auto) };
+    let (prev_id, next_id) = if has(t.version, 11) {
+        (r.i64(), r.i64())
+    } else {
+        let linked = r.i64() != -1;
+        match t.splines.last_mut().filter(|_| linked) {
+            Some(p) => {
+                p.next_id = id;
+                (p.id, 0)
+            }
+            None => (0, 0),
+        }
+    };
+    // Splines store x, height, y (verified by prev/next continuity of stock maps).
+    let x = r.f64();
+    let z = r.f64();
+    let y = r.f64();
+    let pos = [x, y, z];
+    let heading = r.f64();
+    let length = r.f64();
+    let radius = r.f64();
+    let grad_start = r.f64();
+    let grad_end = r.f64();
+    // [spline_h]: gradients, then the height change, then the rest as in [spline]
+    let is_h = k == "spline_h";
+    let delta_h = if is_h { Some(r.f64()) } else { None };
+    let (cant_start, cant_end) = if has(t.version, 5) { (r.f64(), r.f64()) } else { (0.0, 0.0) };
+    // Newer files have skew_start/skew_end; count remaining numeric lines.
+    let mut nums: Vec<f64> = Vec::new();
+    let mut mirror = false;
+    loop {
+        let save = r.pos();
+        let l = r.str();
+        let w = l.trim();
+        if w.is_empty()
+            || omsi_cfg::keyword_of(l).is_some()
+            || w.starts_with("Object Nr.")
+        {
+            r.seek(save);
+            break;
+        }
+        if w.eq_ignore_ascii_case("mirror") {
+            mirror = true;
+            break;
+        }
+        nums.push(omsi_cfg::parse_f64(w));
+    }
+    let (skew_start, skew_end, tex_offset) = match nums.len() {
+        0 => (0.0, 0.0, 0.0),
+        1 | 2 => (0.0, 0.0, nums[0]),
+        _ => (nums[0], nums[1], nums[2]),
+    };
+    t.splines.push(MapSpline {
+        file: file_name,
+        id,
+        prev_id,
+        next_id,
+        pos,
+        heading,
+        length,
+        radius,
+        grad_start,
+        grad_end,
+        delta_h,
+        cant_start,
+        cant_end,
+        skew_start,
+        skew_end,
+        tex_offset,
+        map_chain_offset: has(t.version, 11).then(|| {
+            if tex_offset.is_finite() && tex_offset > 0.0 { tex_offset } else { 0.0 }
+        }),
+        mirror,
+        is_h,
+        rules: Vec::new(),
+        terrain_align: None,
+        terrain_align_flag: false,
+        deleted: false,
+    });
+}
+
+/// A `[splineAttachement]` (or its `_repeater`, keyword `k`) record, read as the tile's
+/// `[version]` writes it, added to `t`'s spline attachments and its id to `records`.
+fn read_spline_attachment(t: &mut Tile, r: &mut omsi_cfg::CfgReader, k: &str, auto: &mut usize, records: &mut Vec<i64>) {
+    // (the detail level from version 9 on, the IDCode from 6 on, as for objects)
+    if has(t.version, 9) {
+        let _detail = r.line();
+    }
+    let repeater = if k.ends_with("repeater") {
+        let tile = r.i64().max(0) as usize;
+        let first = r.i64().max(0) as usize;
+        Some((tile, first))
+    } else {
+        None
+    };
+    let file_name = r.str().to_string();
+    let id = if has(t.version, 6) { r.i64() } else { auto_id(auto) };
+    records.push(id);
+    let spline_index = r.i32();
+    let offset = r.f64s::<3>();
+    // (as for objects: pitch, bank and the tilt flag from version 12 on,
+    // strings from version 4 on - Omsi.exe 0x794892..0x794bd7)
+    let modern = t.version >= 12 || t.version == 0;
+    let rot = if modern { r.f64s::<3>() } else { [r.f64(), 0.0, 0.0] };
+    let interval = r.f64();
+    let range = r.f64();
+    let tilt = if modern { r.i32() != 0 } else { false };
+    let strings = if has(t.version, 4) { read_labels(r).1 } else { Vec::new() };
+    t.spline_attachments.push(SplineAttachment {
+        file: file_name,
+        id,
+        spline_index,
+        offset,
+        rot,
+        interval,
+        range,
+        tilt,
+        strings,
+        repeater,
+        var_parent: None,
+        rules: Vec::new(),
+    });
 }
 
 #[cfg(test)]

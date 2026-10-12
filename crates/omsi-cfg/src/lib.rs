@@ -25,8 +25,11 @@ use std::path::{Path, PathBuf};
 
 pub mod codepage;
 pub mod flags;
+pub mod lang;
 mod keywords;
 pub mod number;
+pub mod par;
+pub mod panic_guard;
 pub mod vfs;
 pub mod install_search;
 pub use install_search::find_original_install;
@@ -1003,6 +1006,32 @@ pub fn is_writable(dir: &Path) -> bool {
     let ok = std::fs::write(&probe, b"x").is_ok();
     let _ = std::fs::remove_file(&probe);
     ok
+}
+
+/// The game's own content folder, where it writes what it makes (drivers, saves, journeys):
+/// `OMSI_CONTENT`, else the content folder beside the program (beside an .app bundle) when it
+/// may be written, else `~/.openomsi/content`.
+pub fn content_dir() -> Option<PathBuf> {
+    if let Some(d) = crate::flags::OMSI_CONTENT.os() {
+        return Some(PathBuf::from(d));
+    }
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?.to_path_buf();
+    // inside an .app bundle the binary sits in Contents/MacOS: use the folder beside the bundle
+    let dir = if dir.ends_with("Contents/MacOS") {
+        dir.parent()?.parent()?.parent()?.to_path_buf()
+    } else {
+        dir
+    };
+    let cand = content_folder_of(&dir);
+    if !is_programs_folder(&cand) && (cand.exists() || std::fs::create_dir_all(&cand).is_ok()) && is_writable(&cand) {
+        Some(cand)
+    } else {
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+        let fallback = PathBuf::from(home).join(".openomsi").join("content");
+        let _ = ensure_content_layout(&fallback);
+        Some(fallback)
+    }
 }
 
 /// Create the content folder layout at `dir` (idempotent).

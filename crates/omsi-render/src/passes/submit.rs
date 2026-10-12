@@ -14,38 +14,32 @@ impl Renderer {
             let commands = encoder.finish();
             (commands, start.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0))
         };
-        let (shadow_commands, prepass_commands, part_commands, commands, finish_times) = if big && self.encoding_pool.is_some() {
-            self.encoding_pool.as_ref().unwrap().in_place_scope_fifo(|scope| {
-                let (shadow_tx, shadow_rx) = std::sync::mpsc::sync_channel(1);
-                let (prepass_tx, prepass_rx) = std::sync::mpsc::sync_channel(1);
-                let parts = main_parts.len();
-                let (part_tx, part_rx) = std::sync::mpsc::sync_channel(parts.max(1));
-                let finish = &finish;
-                scope.spawn_fifo(move |_| { let _ = shadow_tx.send(finish(shadow_encoder)); });
-                scope.spawn_fifo(move |_| { let _ = prepass_tx.send(finish(prepass_encoder)); });
-                for (k, e) in main_parts.into_iter().enumerate() {
-                    let tx = part_tx.clone();
-                    scope.spawn_fifo(move |_| { let _ = tx.send((k, finish(e).0)); });
-                }
-                let (commands, main_secs) = finish(encoder);
-                let wait = std::time::Instant::now();
-                let (shadow_commands, shadow_secs) = shadow_rx.recv().expect("command encoding worker");
-                let shadow_wait = wait.elapsed().as_secs_f64();
-                let wait = std::time::Instant::now();
-                let (prepass_commands, prepass_secs) = prepass_rx.recv().expect("command encoding worker");
-                let mut part_commands: Vec<Option<wgpu::CommandBuffer>> = (0..parts).map(|_| None).collect();
-                for _ in 0..parts {
-                    let (k, c) = part_rx.recv().expect("command encoding worker");
-                    part_commands[k] = Some(c);
-                }
-                (
-                    shadow_commands,
-                    prepass_commands,
-                    part_commands.into_iter().map(|c| c.expect("main pass part")).collect::<Vec<_>>(),
-                    commands,
-                    [shadow_secs, prepass_secs, main_secs, shadow_wait, wait.elapsed().as_secs_f64()],
-                )
-            })
+        let (shadow_commands, prepass_commands, part_commands, commands, finish_times) = if let (true, Some(pool)) = (big, self.encoding_pool.as_ref()) {
+            // Every encoder is finished by whoever is free, this thread too: it no longer waits
+            // for a helper the system has not run yet to finish the one it was given.
+            let caller = std::thread::current().id();
+            let parts = main_parts.len();
+            let jobs: Vec<std::sync::Mutex<Option<wgpu::CommandEncoder>>> = [encoder, shadow_encoder, prepass_encoder]
+                .into_iter()
+                .chain(main_parts)
+                .map(|e| std::sync::Mutex::new(Some(e)))
+                .collect();
+            let start = std::time::Instant::now();
+            let done = run_parts(Some(pool), jobs.len(), |k| {
+                let e = jobs[k].lock().unwrap_or_else(|e| e.into_inner()).take().expect("an encoder finished twice");
+                let (c, secs) = finish(e);
+                (c, secs, std::thread::current().id() == caller)
+            });
+            // (what this thread spent waiting: the whole less the encoders it finished itself)
+            let own: f64 = done.iter().filter(|d| d.2).map(|d| d.1).sum();
+            let wait = if profiling { (start.elapsed().as_secs_f64() - own).max(0.0) } else { 0.0 };
+            let mut done = done.into_iter();
+            let (commands, main_secs, _) = done.next().expect("the picture's encoder");
+            let (shadow_commands, shadow_secs, _) = done.next().expect("the shadows' encoder");
+            let (prepass_commands, prepass_secs, _) = done.next().expect("the prepass's encoder");
+            let part_commands: Vec<wgpu::CommandBuffer> = done.map(|d| d.0).collect();
+            debug_assert_eq!(part_commands.len(), parts);
+            (shadow_commands, prepass_commands, part_commands, commands, [shadow_secs, prepass_secs, main_secs, wait, 0.0])
         } else if big {
             std::thread::scope(|scope| {
                 let finish = &finish;
@@ -76,9 +70,9 @@ impl Renderer {
         if self.profiling {
             // These overlap across helper threads; do not add them to the stage totals.
             let keys = if with_overlays {
-                ["finish.shadow", "finish.prepass", "finish.main", "finish.wait shadow", "finish.wait prepass"]
+                ["finish.shadow", "finish.prepass", "finish.main", "finish.wait", "finish.wait prepass"]
             } else {
-                ["mirror.finish.shadow", "mirror.finish.prepass", "mirror.finish.main", "mirror.finish.wait shadow", "mirror.finish.wait prepass"]
+                ["mirror.finish.shadow", "mirror.finish.prepass", "mirror.finish.main", "mirror.finish.wait", "mirror.finish.wait prepass"]
             };
             for (key, secs) in keys.into_iter().zip(finish_times) {
                 *self.stats.borrow_mut().entry(key).or_default() += secs;

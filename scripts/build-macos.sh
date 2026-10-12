@@ -21,6 +21,9 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "target/$target/release/openomsi" "$app/Contents/MacOS/openomsi"
 cp "target/$target/release/openomsi-launcher" "$app/Contents/MacOS/openomsi-launcher"
 cp "assets/steam_redist/libsteam_api.dylib" "$app/Contents/MacOS/"
+# the desktop launcher (launcher/, Tauri on WebKit)
+cargo build --locked --release --target "$target" --manifest-path launcher/src-tauri/Cargo.toml
+cp "launcher/src-tauri/target/$target/release/openomsi-launcher-app" "$app/Contents/MacOS/openomsi-launcher-app"
 cp assets/icons/app/openomsi.icns "$app/Contents/Resources/openomsi.icns"
 # (the bundle's version is numbers only: a test build's -pr<number> is left out there)
 sed -e "s/@VERSION@/${version%%-*}/g" scripts/macos/Info.plist > "$app/Contents/Info.plist"

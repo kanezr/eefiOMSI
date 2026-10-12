@@ -252,12 +252,17 @@ pub struct TrafficSim {
     /// Where the last `tick` spent its time (s, OMSI_PROFILE): who is on which lane and the
     /// light programs, every car's plan, the bodies and scripts on the workers.
     pub tick_split: [f64; 3],
+    /// `tick_split` summed over the steps of the last frame (`advance`).
+    pub frame_split: [f64; 3],
     /// Seconds each of them has stood still.
     pub others_still: HashMap<u32, f32>,
     /// Per car: `AiCar::geo_block` of the frame before (who waits for whom by geometry).
     pub geo_prev: Vec<Option<u64>>,
     /// Car index by id (as of the start of the tick).
     pub index_of: HashMap<u64, usize>,
+    /// The plans of a tick's cars and the order they plan in, kept for the next tick.
+    pub frames_buf: Vec<Option<AiFrame>>,
+    pub order_buf: Vec<usize>,
     /// `pull_out_room` by vehicle file.
     pub pull_out_rooms: HashMap<std::path::PathBuf, f32>,
     /// Timetable buses taken off the road because the tile under them was unloaded (their
@@ -281,6 +286,10 @@ pub struct TrafficSim {
     /// Cars the last `tick` took off the road (their ids): their sounds and pictures are
     /// for the game to let go (see omsi-app's `Traffic::tick`).
     pub retired: Vec<u64>,
+    /// The cars that honked since the game last asked (`horn`): id and whether it is a heavy
+    /// vehicle. The stock cars' sounds have nothing on `ev_AI_Horn`, so the game plays
+    /// OMSI's own AI horn for them.
+    pub honked: Vec<(u64, bool)>,
     /// The LAN players' vehicles as of this tick (`others` is taken for the tick's scene):
     /// the lane changes look at them (`players_on`).
     pub others_now: Vec<PlayerBox>,
@@ -294,7 +303,7 @@ pub struct TrafficSim {
     /// How far this frame's picture is from the step before the last to the last (0..1).
     pub frame_alpha: f32,
     /// Every car's parts as they stood before the last step, by id (see `fixed_step`).
-    pub pose_before: HashMap<u64, Vec<fixed_step::PartPose>>,
+    pub poses: fixed_step::StepPoses,
     /// The lane changes the cars' ways require and those begun this step (see
     /// `lateral::ChangeClaim`).
     pub change_claims: Vec<lateral::ChangeClaim>,

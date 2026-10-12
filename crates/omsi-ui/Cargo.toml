@@ -3,7 +3,7 @@ name = "omsi-ui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Interface drawing shared by the game's navigator and the launcher: Roboto text, Material Symbols icons, anti-aliased shapes and a wgpu pipeline for them"
+description = "Interface drawing shared by the game's navigator and the launcher: Inter text, Material Symbols icons, anti-aliased shapes and a wgpu pipeline for them"
 
 [dependencies]
 wgpu.workspace = true

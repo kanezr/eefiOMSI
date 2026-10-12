@@ -31,12 +31,15 @@ impl PeopleSim {
         const R: f64 = 0.22;
         const CELL: f64 = 12.0;
         let collision = world.collision();
-        let places: Vec<DVec2> = world.waiting_places().iter().map(|w| w.1.truncate()).collect();
-        let (boxes, meshes, since) = (collision.boxes.len(), collision.meshes.len(), self.wall_key.3);
-        if (boxes, meshes, places.len()) != (self.wall_key.0, self.wall_key.1, self.wall_key.2) || self.time - since > 2.0 || self.time < since {
+        let n_places = world.waiting_places().len();
+        let (boxes, meshes) = (collision.boxes.len(), collision.meshes.len());
+        if (boxes, meshes, n_places) != (self.wall_key.0, self.wall_key.1, self.wall_key.2) {
             self.wall_cells.clear();
-            self.wall_key = (boxes, meshes, places.len(), self.time);
+            self.wall_key = (boxes, meshes, n_places, self.time);
         }
+        // (the waiting places only when a cell is made: they were copied every frame)
+        let mut places: Option<Vec<DVec2>> = None;
+        let now = self.time;
         let mut cells = std::mem::take(&mut self.wall_cells);
         for (k, w) in ground.iter_mut() {
             let i = who[*k];
@@ -49,7 +52,9 @@ impl PeopleSim {
             }
             let z = self.people[i].position.z;
             let key = ((p0.x / CELL).floor() as i32, (p0.y / CELL).floor() as i32, z.floor() as i32);
-            let walls = cells.entry(key).or_insert_with(|| {
+            let made = cells.get(&key).is_some_and(|(at, _)| now - at <= 2.0 && now >= *at);
+            if !made {
+                let places = places.get_or_insert_with(|| world.waiting_places().iter().map(|w| w.1.truncate()).collect());
                 let c = DVec2::new((key.0 as f64 + 0.5) * CELL, (key.1 as f64 + 0.5) * CELL);
                 let probe = crate::collision::Obb {
                     center: c,
@@ -65,7 +70,7 @@ impl PeopleSim {
                 let near = collision.obstacles_near(&probe);
                 let reach = near.iter().map(|o| (o.center - c).length() + o.half.length() + 1.0).fold(0.0, f64::max);
                 let local: Vec<DVec2> = places.iter().copied().filter(|q| (*q - c).length() < reach).collect();
-                near.into_iter()
+                let walls = near.into_iter()
                     .filter(|o| {
                         // a shelter given as one solid box has its waiting places inside:
                         // people go in there
@@ -84,8 +89,10 @@ impl PeopleSim {
                             o.z1,
                         )
                     })
-                    .collect()
-            });
+                    .collect();
+                cells.insert(key, (now, walls));
+            }
+            let walls = &cells[&key].1;
             for (b, z0, z1) in walls.iter() {
                 // between the knees and the head of somebody standing here
                 if *z0 > z + 1.6 || *z1 < z + 0.5 {
@@ -129,6 +136,10 @@ impl PeopleSim {
                     w.vel = t * self.people[i].detour_side * speed * 0.8;
                 }
             }
+        }
+        // (the cells nobody walked in for a while go, as they all did every 2 s)
+        if cells.len() > 256 {
+            cells.retain(|_, (at, _)| now - *at <= 2.0 && now >= *at);
         }
         self.wall_cells = cells;
     }
@@ -274,7 +285,7 @@ impl PeopleSim {
                     .as_ref()
                     .and_then(|p| {
                         p.end_node(net, &leg)
-                            .and_then(|n| p.next_leg(net, n, leg.lane, pick))
+                            .and_then(|n| p.next_leg(net, n, &leg, pick))
                     })
                     .unwrap_or_else(|| {
                         // a leg that ends in the middle of its path (the point of a stop
@@ -434,8 +445,13 @@ impl PeopleSim {
         pace: f64,
         held: f32,
     ) -> Result<(), &'static str> {
-        if !next.from_end(net) {
+        if !next.from_end(net) && !ped.as_deref().is_some_and(|p| p.is_tap(next.lane, next.a)) {
             return Ok(());
+        }
+        if let Some(p) = ped.as_deref_mut().filter(|p| p.taps.contains_key(&next.lane)) {
+            if !p.crosses_on(net, next) {
+                return Ok(());
+            }
         }
         let lane = &net.lanes[next.lane];
         let t_cross = next.len() as f64 / pace.max(0.5) + 1.0;
@@ -465,9 +481,10 @@ impl PeopleSim {
         // out in front of a car that is about to be there (after 45 s they used to ignore
         // the cars altogether)
         let margin = if held > 45.0 { 0.0 } else if held > 20.0 { 1.0 } else { 2.5 };
-        for x in ped.crossings(net, next.lane) {
+        let crossings = if ped.taps.contains_key(&next.lane) { ped.crossings_on(net, next) } else { ped.crossings(net, next.lane).to_vec() };
+        for x in crossings {
             for (p, v, half) in cars {
-                let rel = *x - *p;
+                let rel = x - *p;
                 let dist = rel.length();
                 if dist > 90.0 {
                     continue;

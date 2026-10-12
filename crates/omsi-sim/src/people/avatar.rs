@@ -193,7 +193,7 @@ impl PeopleSim {
     /// to one bus.
     pub fn seat_near(&self, at: DVec3, reach: f64, only: Option<BusId>) -> Option<SeatSpot> {
         let mut best: Option<(f64, SeatSpot)> = None;
-        for bn in &self.last_buses {
+        for bn in self.last_buses.iter() {
             if only.map(|o| o != bn.id).unwrap_or(false) {
                 continue;
             }

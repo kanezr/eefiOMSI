@@ -42,13 +42,16 @@ impl Renderer {
         let (width, height, lighting) = (f.width, f.height, f.lighting);
         let (enhanced, prepass_on, with_overlays, masked_frame) = (f.enhanced, f.prepass_on, f.with_overlays, f.masked_frame);
         let fog_lamps = enhanced_weather_fog(lighting) >= 2e-4 && !scene.lights.is_empty();
-        let shafts = lighting.shadows && lighting.sun_dir.z > 0.0;
-        let glare = lighting.sun_dir.z > -0.01 && lighting.sun_intensity > 0.0 && !f.env.no_glare;
+        let shafts = lighting.shadows && lighting.sun_dir.z > 0.0 && self.shafts_seen(vp_mat, lighting.sun_dir);
+        // (the glare goes by how much of the sun is seen, which is none with the sun behind
+        // the camera - fog_lamps.wgsl `sun_seen`: then there is no glare to add)
+        let sun_ahead = ahead_of_camera(vp_mat, lighting.sun_dir);
+        let glare = lighting.sun_dir.z > -0.01 && lighting.sun_intensity > 0.0 && !f.env.no_glare && sun_ahead;
         if f.env.debug_fog_lamps {
             log::info!("fog lamps: enhanced {enhanced} prepass {prepass_on} overlays {with_overlays} masked {masked_frame} fog {:.5} lights {} shafts {shafts} glare {glare}", enhanced_weather_fog(lighting), scene.lights.len());
         }
         if enhanced && prepass_on && with_overlays && masked_frame && (fog_lamps || shafts || glare) {
-            if let (Some(pipes), Some(ao), Some(cam_bg)) = (self.fog_lamps_pipeline.as_ref(), self.ao.as_ref(), scene.camera_bind_group.as_ref()) {
+            if let (Some(pipes), Some(ao), Some(cam_bg)) = (self.lights.fog_lamps_pipeline.as_ref(), self.targets.ao.as_ref(), scene.camera_bind_group.as_ref()) {
                 if let Some(fog_bg) = ao.fog_bg.as_ref() {
                     // (how much of the weather's extinction is mist and fog - droplets of some
                     // ten micrometres, which scatter a lamp's light into a halo and its beam
@@ -59,9 +62,13 @@ impl Renderer {
                     let fog_all = enhanced_weather_fog(lighting);
                     let rain_part = if lighting.rain > 0.0 && lighting.snowfall <= 0.0 { 2.3 / (2500.0 - 1800.0 * lighting.rain.clamp(0.0, 1.0)) } else { 0.0 };
                     let droplets = if fog_all > 0.0 { ((fog_all - rain_part) / fog_all).clamp(0.0, 1.0) } else { 0.0 };
-                    let u = FogLampUniform { inv_view_proj: vp_mat.inverse().to_cols_array_2d(), size: [width as f32, height as f32, if glare { 1.0 } else { 0.0 }, droplets] };
-                    self.queue.write_buffer(&self.fog_lamps_buf, 0, bytemuck::bytes_of(&u));
-                    let h = &self.hdr_targets[&(width, height)];
+                    // (z: 1 the sun's glare is added, 2 it is all there is to add - no lamps in
+                    // the fog, no shafts to see - and the half-size pass works out only the
+                    // row with how much of the sun is seen)
+                    let glare_only = !fog_lamps && !shafts;
+                    let u = FogLampUniform { inv_view_proj: vp_mat.inverse().to_cols_array_2d(), size: [width as f32, height as f32, if glare_only { 2.0 } else if glare { 1.0 } else { 0.0 }, droplets] };
+                    self.queue.write_buffer(&self.lights.fog_lamps_buf, 0, bytemuck::bytes_of(&u));
+                    let h = &self.targets.hdr_targets[&(width, height)];
                     let view = h.puddles.as_ref().filter(|_| puddles_on).map_or(&h.view, |p| &p.view);
                     for (k, (target, load)) in [(&ao.fog_view, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)), (view, wgpu::LoadOp::Load)].into_iter().enumerate() {
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -75,6 +82,10 @@ impl Renderer {
                             occlusion_query_set: None,
                             multiview_mask: None,
                         });
+                        if k == 0 && glare_only {
+                            let size = ao.fog_view.texture().size();
+                            pass.set_scissor_rect(0, size.height - 1, 1, 1);
+                        }
                         pass.set_pipeline(&pipes[k]);
                         pass.set_bind_group(0, cam_bg, &[]);
                         pass.set_bind_group(1, &fog_bg[k], &[]);
@@ -85,14 +96,35 @@ impl Renderer {
         }
     }
 
+    /// Whether the sun's shafts can show anywhere in the picture: the shader's own test
+    /// (fog_lamps.wgsl `sun_shafts`, `most`) for the ray nearest the sun. Looking away from
+    /// the sun, in clear air, they never can, and the half-size pass and the full-size
+    /// gather over its result are left out (the glare alone needs neither).
+    fn shafts_seen(&self, vp_mat: Mat4, sun_dir: Vec3) -> bool {
+        let u = &self.tone.enh_last;
+        let e_sun = u.sun[0].max(u.sun[1]);
+        // (the uniform of the frame: zero before the first enhanced frame)
+        if u.exposure[0] <= 0.0 {
+            return true;
+        }
+        if e_sun < 1e-4 {
+            return false;
+        }
+        let cos_t = nearest_ray_cos(vp_mat, sun_dir);
+        let hg = |c: f32, g: f32| (1.0 - g * g) / (4.0 * std::f32::consts::PI * (1.0 + g * g - 2.0 * g * c).max(1e-4).powf(1.5));
+        let most = (u.fog[0] * hg(cos_t, 0.55) * 0.9 + u.fog[3] * hg(cos_t, 0.7)) * e_sun * 180.0 * u.exposure[0];
+        // (180 m: the shader's SHAFT_REACH; with a margin under its 0.004)
+        most >= 0.002
+    }
+
     /// The rain films on the panes, over a copy of the clean current picture.
     pub(crate) fn encode_rain_film(&self, encoder: &mut wgpu::CommandEncoder, scene: &Scene, f: &FrameCtx, rain_batches: &[Batch], puddles_on: bool) {
         let (width, height, masked_frame) = (f.width, f.height, f.masked_frame);
         let scene_view = f.scene_view();
         if f.glass_on {
-            let hdr = masked_frame.then(|| &self.hdr_targets[&(width, height)]);
+            let hdr = masked_frame.then(|| &self.targets.hdr_targets[&(width, height)]);
             let view = hdr.map_or(scene_view, |h| h.puddles.as_ref().filter(|_| puddles_on).map_or(&h.view, |p| &p.view));
-            let behind = self.glass_picture.as_ref().unwrap();
+            let behind = self.targets.glass_picture.as_ref().unwrap();
             encoder.copy_texture_to_texture(
                 wgpu::TexelCopyTextureInfo { texture: view.texture(), mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
                 wgpu::TexelCopyTextureInfo { texture: behind.texture(), mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
@@ -121,7 +153,7 @@ impl Renderer {
                 label: Some("rain on current scene"),
                 color_attachments: &colours[..if colours[2].is_some() { 4 } else if hdr.is_some() { 2 } else { 1 }],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.ao.as_ref().unwrap().depth_view,
+                    view: &self.targets.ao.as_ref().unwrap().depth_view,
                     depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store }),
                     stencil_ops: None,
                 }),
@@ -138,7 +170,7 @@ impl Renderer {
         let (width, height) = (f.width, f.height);
         let overlays = &f.overlays;
         if f.reflection_frame {
-            let h = &self.hdr_targets[&(width, height)];
+            let h = &self.targets.hdr_targets[&(width, height)];
             let bg = h.puddles.as_ref().filter(|_| puddles_on).map_or(&h.classic_bg, |p| &p.classic_bg);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("classic reflections present"),
@@ -149,7 +181,7 @@ impl Renderer {
                 depth_stencil_attachment: None, timestamp_writes: None,
                 occlusion_query_set: None, multiview_mask: None,
             });
-            pass.set_pipeline(&self.copy_pipeline);
+            pass.set_pipeline(&self.scale.copy_pipeline);
             pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
             if !overlays.is_empty() && !f.scaled {
@@ -162,5 +194,69 @@ impl Renderer {
                 }
             }
         }
+    }
+}
+
+/// Whether a direction (the sun's) points ahead of the camera of `vp_mat`: where the
+/// clip w of a point far along it is above zero, as the shaders' `sun_seen` needs it
+/// (with a margin: it is never said to be behind where the shader would see it).
+pub(crate) fn ahead_of_camera(vp_mat: Mat4, dir: Vec3) -> bool {
+    vp_mat.row(3).truncate().dot(dir.normalize_or_zero()) > -1e-4
+}
+
+/// The largest cosine between `dir` and any of the picture's rays (at most): the
+/// picture's rays lie in a cone round its middle one, as wide as its corners are off it.
+pub(crate) fn nearest_ray_cos(vp_mat: Mat4, dir: Vec3) -> f32 {
+    let inv = vp_mat.inverse();
+    let ray = |x: f32, y: f32| {
+        let near = inv.project_point3(Vec3::new(x, y, 1.0));
+        let mid = inv.project_point3(Vec3::new(x, y, 0.5));
+        (mid - near).normalize_or_zero()
+    };
+    let centre = ray(0.0, 0.0);
+    let spread = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+        .iter()
+        .map(|&(x, y)| centre.dot(ray(x, y)).clamp(-1.0, 1.0).acos())
+        .fold(0.0f32, f32::max);
+    let off = centre.dot(dir.normalize_or_zero()).clamp(-1.0, 1.0).acos();
+    (off - spread).max(0.0).cos()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn view_proj() -> Mat4 {
+        // looking along +y from 2 m up, 60 degrees high, 16:9, reversed Z as the game has it
+        let proj = Mat4::perspective_rh(60f32.to_radians(), 16.0 / 9.0, 3000.0, 0.1);
+        proj * Mat4::look_at_rh(Vec3::new(0.0, 0.0, 2.0), Vec3::new(0.0, 1.0, 2.0), Vec3::Z)
+    }
+
+    #[test]
+    fn the_sun_behind_the_camera_is_not_ahead_of_it() {
+        let vp = view_proj();
+        assert!(ahead_of_camera(vp, Vec3::new(0.0, 1.0, 0.3)));
+        assert!(ahead_of_camera(vp, Vec3::new(0.9, 0.1, 0.2)));
+        assert!(!ahead_of_camera(vp, Vec3::new(0.0, -1.0, 0.3)));
+        assert!(!ahead_of_camera(vp, Vec3::new(0.3, -0.5, 0.8)));
+    }
+
+    #[test]
+    fn the_nearest_ray_bounds_every_pixel_of_the_picture() {
+        let vp = view_proj();
+        let inv = vp.inverse();
+        for sun in [Vec3::new(0.0, 1.0, 0.2), Vec3::new(1.0, 0.3, 0.5), Vec3::new(0.2, -1.0, 0.4), Vec3::new(-0.6, 0.5, 0.9)] {
+            let bound = nearest_ray_cos(vp, sun);
+            let s = sun.normalize();
+            for i in 0..=20 {
+                for j in 0..=20 {
+                    let (x, y) = (i as f32 / 10.0 - 1.0, j as f32 / 10.0 - 1.0);
+                    let d = (inv.project_point3(Vec3::new(x, y, 0.5)) - inv.project_point3(Vec3::new(x, y, 1.0))).normalize();
+                    assert!(d.dot(s) <= bound + 1e-4, "{sun:?} at {x},{y}: {} > {bound}", d.dot(s));
+                }
+            }
+        }
+        // straight into the sun: a ray meets it
+        assert!(nearest_ray_cos(vp, Vec3::Y) > 0.9999);
     }
 }

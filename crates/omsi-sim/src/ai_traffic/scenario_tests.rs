@@ -497,4 +497,24 @@ fn the_order_the_cars_stand_in_the_list_decides_nothing() {
     assert_eq!(a, run(&[2, 4, 0, 3, 1]));
 }
 
+/// The cars' bodies and scripts come out the same whether the frame's thread runs them
+/// alone or the workers help (`step_bodies`): told each car took a millisecond the step
+/// before, the step is shared out among the workers.
+#[test]
+fn the_cars_step_alike_with_and_without_the_workers() {
+    let f = Fixture::new();
+    let run = |helped: bool| {
+        let mut t = busy_crossroads(&f, &[0, 1, 2, 3, 4]);
+        for _ in 0..1000 {
+            if helped {
+                t.cars.iter_mut().for_each(|c| c.ai_secs = 1e-3);
+                assert!(omsi_cfg::par::helpers_for(5e-3, super::tick::BODY_SECS_PER_HELPER) > 0);
+            }
+            t.advance(SIM_DT_TEST, None);
+        }
+        snapshot(&t)
+    };
+    assert_eq!(run(false), run(true));
+}
+
 const SIM_DT_TEST: f32 = super::fixed_step::SIM_DT;

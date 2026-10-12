@@ -243,6 +243,9 @@ pub fn arrive(from: DVec2, to: DVec2, pace: f64) -> DVec2 {
 /// Seconds after one passenger's greeting or complaint before anybody says another.
 pub const CHAT_PAUSE: f64 = 12.0;
 
+/// A cell of `PeopleSim::wall_cells`: when it was made, and its walls with their heights.
+pub type WallCell = (f64, Vec<(Block, f64, f64)>);
+
 pub struct PeopleSim {
     pub types: Vec<Arc<HumanType>>,
     pub people: Vec<Person>,
@@ -250,7 +253,9 @@ pub struct PeopleSim {
     pub next_id: u32,
     /// Seconds since the start.
     pub time: f64,
-    pub wall_cells: HashMap<(i32, i32, i32), Vec<(Block, f64, f64)>>,
+    /// The walls of `keep_out_of_walls` by cell, with the time each cell was made (each is
+    /// made again 2 s after, on its own: all made again in one frame was a step every 2 s).
+    pub wall_cells: HashMap<(i32, i32, i32), WallCell>,
     pub wall_key: (usize, usize, usize, f64),
     /// Passenger cabins by vehicle files (the front vehicle and its coupled parts).
     pub cabins: HashMap<Vec<PathBuf>, Option<Arc<Cabin>>>,
@@ -354,7 +359,9 @@ pub struct PeopleSim {
     /// Avatars not drawn (the first-person view), by person id.
     pub avatar_hidden: HashMap<u32, bool>,
     /// The buses of the last tick (for the avatars' seats and doors).
-    pub last_buses: Vec<BusNow>,
+    /// (Shared with the step that made them rather than copied: a copy was every bus's door
+    /// lists and names again, every frame.)
+    pub last_buses: Arc<Vec<BusNow>>,
     /// Only avatars: nobody else is put on the map (the passengers are off).
     pub avatar_only: bool,
     /// The player has got up and left the wheel: a standing bus with a door open is left
@@ -389,6 +396,9 @@ pub struct PeopleSim {
     /// counted against it instead.
     pub max_people: usize,
     pub stroll_timer: f32,
+    /// Set by the app for this frame: other periodic heavy work ran in it (the traffic
+    /// putting out vehicles): the filling of the stops and pavements due now waits a frame.
+    pub defer_populate: bool,
     /// Passengers pay the exact fare: no change is ever due.
     pub exact_fare: bool,
     /// How passengers board (`boarding` in the settings): `auto` - pay and take the
@@ -451,6 +461,10 @@ pub struct PeopleSim {
     /// up - and the client's bus took them all, one stream of passengers that never ended
     /// (#842, #840, #830).
     pub handed: Vec<(i64, u64)>,
+    /// The step's working lists, kept from frame to frame (see `scratch`).
+    pub scratch: super::scratch::Scratch,
+    /// Where the people's frames spent their time, stage by stage (OMSI_PROFILE).
+    pub stage_stats: super::scratch::StageStats,
 }
 
 /// Resolve each map entry directly, including human packs with nested folders.

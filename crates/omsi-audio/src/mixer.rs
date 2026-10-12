@@ -111,13 +111,33 @@ impl Default for Listener {
     }
 }
 
+/// What the game asks of the mixer, taken in at the start of its next block.
+enum Cmd {
+    Play(Box<Voice>),
+    /// New parameters, with the time they were given (for the Doppler shift).
+    Params(VoiceId, VoiceParams, std::time::Instant),
+    Stop(VoiceId),
+    /// The bus radio's effects on a stream voice, with new ones made ready in case it has none.
+    RadioFx(VoiceId, crate::radio_fx::RadioFxParams, Option<Box<crate::radio_fx::RadioFx>>),
+}
+
 struct Shared {
+    /// The voices as the mixer plays them, by rising id (each is put in by the queue, where
+    /// its id is drawn). Only the mixer takes this lock while it plays: it holds it for a
+    /// whole block.
     voices: Mutex<Vec<Voice>>,
-    /// New parameters for voices, taken in by the mixer at the start of its next block
-    /// (with the time they were given, for the Doppler shift). The game sets every voice's
-    /// parameters every frame; through the voice list's lock each of those calls waited
-    /// for a whole block to be mixed.
-    updates: Mutex<Vec<(VoiceId, VoiceParams, std::time::Instant)>>,
+    /// New voices, parameters and stops, taken in by the mixer at the start of its next
+    /// block. The game sets every voice's parameters every frame; through the voice list's
+    /// lock each of those calls waited for a whole block to be mixed.
+    updates: Mutex<Vec<Cmd>>,
+    /// The mixer's half of `updates` (swapped with it each block, so that neither list is
+    /// grown again every block).
+    taken: Mutex<Vec<Cmd>>,
+    /// The voices playing, with the parameters they play with: what the game asks (whether
+    /// a voice still plays, how loud it is - thousands of times a frame) without waiting for
+    /// a block being mixed. Started and stopped voices go in and out at once; the mixer
+    /// takes out those that ended by themselves and puts in the parameters it took in.
+    live: parking_lot::RwLock<HashMap<VoiceId, VoiceParams>>,
     listener: Mutex<Listener>,
     /// The echo of an underpass, fed from the mix.
     reverb: Mutex<Reverb>,
@@ -143,6 +163,8 @@ impl Shared {
         Shared {
             voices: Mutex::new(Vec::new()),
             updates: Mutex::new(Vec::new()),
+            taken: Mutex::new(Vec::new()),
+            live: Default::default(),
             listener: Mutex::new(Listener::default()),
             reverb: Mutex::new(Reverb::default()),
             limiter: Mutex::new(1.0),
@@ -170,16 +192,13 @@ impl Shared {
             *s = 0.0;
         }
         let listener = *self.listener.lock();
-        let updates = std::mem::take(&mut *self.updates.lock());
+        let mut taken = self.taken.lock();
+        std::mem::swap(&mut *taken, &mut *self.updates.lock());
         let mut voices = self.voices.lock();
-        if !updates.is_empty() {
-            let index: HashMap<VoiceId, usize> = voices.iter().enumerate().map(|(k, v)| (v.id, k)).collect();
-            for (id, params, at) in updates {
-                if let Some(&k) = index.get(&id) {
-                    apply_params(&mut voices[k], params, at, listener.position);
-                }
-            }
+        if !taken.is_empty() {
+            self.take_in(&mut voices, &mut taken, listener.position);
         }
+        drop(taken);
         let ch = self.channels.load(Ordering::Relaxed).max(1);
         let frames = out.len() / ch;
         let rate = self.sample_rate.load(Ordering::Relaxed).max(1);
@@ -337,7 +356,18 @@ impl Shared {
                 v.pos += step;
             }
         }
-        voices.retain(|v| !v.finished);
+        if voices.iter().any(|v| v.finished) {
+            if crate::trace::on() {
+                let ended: Vec<VoiceId> = voices.iter().filter(|v| v.finished).map(|v| v.id).collect();
+                crate::trace::ended(&ended);
+            }
+            let mut live = self.live.write();
+            for v in voices.iter().filter(|v| v.finished) {
+                live.remove(&v.id);
+            }
+            drop(live);
+            voices.retain(|v| !v.finished);
+        }
         drop(voices);
         if listener.reverb_mix > 0.001 && listener.reverb_time > 0.05 {
             self.reverb.lock().process(out, ch, rate, listener.reverb_time.min(3.0), listener.reverb_mix.min(1.0));
@@ -361,6 +391,64 @@ impl Shared {
         for s in out.iter_mut() {
             *s = if self.muted { 0.0 } else { s.clamp(-1.0, 1.0) };
         }
+    }
+}
+
+impl Shared {
+    /// The game's commands, in the order given, applied to `voices`; the parameters taken
+    /// in published to `live`.
+    fn take_in(&self, voices: &mut Vec<Voice>, cmds: &mut Vec<Cmd>, listener: Vec3) {
+        // (by rising id: a binary search; a voice put in some other way is still found)
+        fn find(voices: &[Voice], id: VoiceId) -> Option<usize> {
+            voices.binary_search_by_key(&id, |v| v.id).ok().or_else(|| voices.iter().position(|v| v.id == id))
+        }
+        let mut live = None;
+        for cmd in cmds.drain(..) {
+            match cmd {
+                Cmd::Play(v) => voices.push(*v),
+                Cmd::Params(id, params, at) => {
+                    if let Some(k) = find(voices, id) {
+                        apply_params(&mut voices[k], params, at, listener);
+                        if let Some(p) = live.get_or_insert_with(|| self.live.write()).get_mut(&id) {
+                            *p = params;
+                        }
+                    }
+                }
+                Cmd::Stop(id) => {
+                    if let Some(k) = find(voices, id) {
+                        voices[k].finished = true;
+                    }
+                }
+                Cmd::RadioFx(id, params, fresh) => {
+                    if let Some(k) = find(voices, id) {
+                        let v = &mut voices[k];
+                        match (v.fx.as_mut(), params.is_off()) {
+                            (_, true) => v.fx = None,
+                            (Some(fx), false) => fx.set(params, self.sample_rate.load(Ordering::Relaxed)),
+                            (None, false) => v.fx = fresh,
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A command for the mixer: queued for its next block, or (with no mixer taking them
+    /// in: an engine without a device) applied to the voices at once.
+    fn send(&self, direct: bool, cmd: Cmd) {
+        if direct {
+            let listener = self.listener.lock().position;
+            let mut one = vec![cmd];
+            self.take_in(&mut self.voices.lock(), &mut one, listener);
+            return;
+        }
+        let mut q = self.updates.lock();
+        // (a game paused while the device stopped calling back must not pile up parameters;
+        // new voices and stops are kept)
+        if q.len() > 4096 {
+            q.retain(|c| !matches!(c, Cmd::Params(..)));
+        }
+        q.push(cmd);
     }
 }
 
@@ -437,6 +525,8 @@ pub struct AudioEngine {
     pub enabled: bool,
     /// Mixed on demand, for a recording (see [`AudioEngine::capture`]).
     capture: bool,
+    /// Mixed never (see [`AudioEngine::silent`]): the voices are kept as they are told.
+    silent: bool,
 }
 
 fn muted() -> bool {
@@ -447,7 +537,7 @@ fn muted() -> bool {
 pub fn read_clip(path: &Path) -> Option<Arc<Clip>> {
     let bytes = omsi_cfg::vfs::read(path).ok()?;
     let compressed = bytes.starts_with(b"OggS") || bytes.starts_with(b"fLaC") || crate::wav::is_mp3(&bytes);
-    match if compressed { crate::wav::parse_compressed(&bytes) } else { crate::wav::parse_wav(&bytes) } {
+    let clip = match if compressed { crate::wav::parse_compressed(&bytes) } else { crate::wav::parse_wav(&bytes) } {
         Ok(w) => Some(Arc::new(Clip {
             sample_rate: w.sample_rate,
             channels: w.channels,
@@ -457,7 +547,11 @@ pub fn read_clip(path: &Path) -> Option<Arc<Clip>> {
             log::warn!("{}: {e}", path.display());
             None
         }
+    };
+    if let Some(c) = &clip {
+        crate::trace::clip_read(Arc::as_ptr(c) as usize, path);
     }
+    clip
 }
 
 /// Every two seconds, the name of the system's default output device: when it is not the
@@ -481,6 +575,7 @@ impl AudioEngine {
     /// An engine without a device: clips load and voices are kept, nothing is mixed or
     /// heard - for tools that look at sound configurations.
     pub fn silent() -> AudioEngine {
+        crate::trace::engine("silent");
         AudioEngine {
             stream: std::cell::RefCell::new(None),
             device: std::cell::RefCell::new(String::new()),
@@ -493,6 +588,7 @@ impl AudioEngine {
             loading: Default::default(),
             enabled: true,
             capture: false,
+            silent: true,
         }
     }
 
@@ -501,6 +597,7 @@ impl AudioEngine {
     /// long a picture takes. Clips are read at once (a background read would leave the
     /// first seconds silent), and the clock of the parameters is the mixed sound's own.
     pub fn capture(rate: u32) -> AudioEngine {
+        crate::trace::engine("capture");
         AudioEngine {
             stream: std::cell::RefCell::new(None),
             device: std::cell::RefCell::new(String::new()),
@@ -513,6 +610,7 @@ impl AudioEngine {
             loading: Default::default(),
             enabled: true,
             capture: true,
+            silent: false,
         }
     }
 
@@ -523,10 +621,19 @@ impl AudioEngine {
             return Vec::new();
         };
         let mut out = vec![0.0f32; frames * 2];
+        crate::trace::mixed(frames);
         self.shared.render(&mut out);
         let rate = self.shared.sample_rate.load(Ordering::Relaxed).max(1) as u64;
         us.fetch_add(frames as u64 * 1_000_000 / rate, Ordering::Relaxed);
         out
+    }
+
+    /// The time the engine goes by: the wall clock, or a recording's own (the mixed sound's,
+    /// see [`AudioEngine::capture`]) - a sound's fade-in by the seconds it has played
+    /// (`[volcurve] -1`) is heard in a recording as it is in the game, however long the
+    /// pictures take to draw.
+    pub fn clock(&self) -> std::time::Instant {
+        self.shared.now()
     }
 
     /// The device's (or the capture's) sample rate.
@@ -536,6 +643,7 @@ impl AudioEngine {
 
     /// Open the default output device. Returns a silent engine if none is available.
     pub fn new() -> AudioEngine {
+        crate::trace::engine("device");
         let shared = Arc::new(Shared::new(48_000, 2, muted(), false));
         let reopen = Arc::new(AtomicBool::new(false));
         let engine = AudioEngine {
@@ -550,6 +658,7 @@ impl AudioEngine {
             loading: Default::default(),
             enabled: false,
             capture: false,
+            silent: false,
         };
         let enabled = engine.open_default();
         let engine = AudioEngine { enabled, ..engine };
@@ -756,8 +865,8 @@ impl AudioEngine {
     }
 
     fn play_at(&self, clip: Arc<Clip>, params: VoiceParams, start: f64) -> VoiceId {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.shared.voices.lock().push(Voice {
+        let trace_clip = Arc::as_ptr(&clip) as usize;
+        self.start_voice(Some(trace_clip), params, start, |id| Voice {
             id,
             clip,
             stream: None,
@@ -769,15 +878,37 @@ impl AudioEngine {
             lp_fresh: false,
             fx: None,
             doppler: (0.0, None, 1.0),
-        });
+        })
+    }
+
+    /// A new voice given its id (drawn under the queue's lock, so that the mixer's list
+    /// stays in the order of the ids) and handed to the mixer; playing from now on.
+    fn start_voice(&self, trace_clip: Option<usize>, params: VoiceParams, start: f64, voice: impl FnOnce(VoiceId) -> Voice) -> VoiceId {
+        if self.direct() {
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            crate::trace::play(id, trace_clip, &params, start);
+            self.shared.live.write().insert(id, params);
+            self.shared.send(true, Cmd::Play(Box::new(voice(id))));
+            return id;
+        }
+        // (the queue's lock held from the id to the push)
+        let mut q = self.shared.updates.lock();
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        crate::trace::play(id, trace_clip, &params, start);
+        self.shared.live.write().insert(id, params);
+        q.push(Cmd::Play(Box::new(voice(id))));
         id
+    }
+
+    /// No mixer takes the commands in: an engine without a device (see [`AudioEngine::silent`]).
+    fn direct(&self) -> bool {
+        !self.enabled || self.silent
     }
 
     /// Play what `stream` is fed with (see `stream::StreamBuf`); the voice ends when the
     /// stream is closed.
     pub fn play_stream(&self, stream: Arc<crate::stream::StreamBuf>, params: VoiceParams) -> VoiceId {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.shared.voices.lock().push(Voice {
+        self.start_voice(None, params, 0.0, |id| Voice {
             id,
             clip: Arc::new(Clip { sample_rate: 44100, channels: 2, samples: Vec::new() }),
             stream: Some(stream),
@@ -789,68 +920,50 @@ impl AudioEngine {
             lp_fresh: false,
             fx: None,
             doppler: (0.0, None, 1.0),
-        });
-        id
+        })
     }
 
     /// The bus radio's effects on stream voice `id` (see `radio_fx`): made, retuned, or
     /// done away with when all of them are 0.
     pub fn set_radio_fx(&self, id: VoiceId, params: crate::radio_fx::RadioFxParams) {
+        crate::trace::radio_fx(id, &params);
         let rate = self.shared.sample_rate.load(Ordering::Relaxed);
-        if let Some(v) = self.shared.voices.lock().iter_mut().find(|v| v.id == id) {
-            match (v.fx.as_mut(), params.is_off()) {
-                (_, true) => v.fx = None,
-                (Some(fx), false) => fx.set(params, rate),
-                (None, false) => v.fx = crate::radio_fx::RadioFx::new(params, rate).map(Box::new),
-            }
-        }
+        // (made here, should the voice have none yet: the mixer's thread allocates nothing)
+        let fresh = if params.is_off() { None } else { crate::radio_fx::RadioFx::new(params, rate).map(Box::new) };
+        self.shared.send(self.direct(), Cmd::RadioFx(id, params, fresh));
     }
 
     /// New parameters for a voice: queued for the mixer's next block (a few milliseconds),
     /// so the game never waits for a block being mixed. Given twice before that block, the
     /// later ones win.
     pub fn set_params(&self, id: VoiceId, params: VoiceParams) {
+        crate::trace::set(id, &params);
         // (no device, no mixer to take them in: straight onto the voice)
-        if !self.enabled {
-            let listener = self.shared.listener.lock().position;
-            if let Some(v) = self.shared.voices.lock().iter_mut().find(|v| v.id == id) {
-                apply_params(v, params, self.shared.now(), listener);
-            }
-            return;
-        }
-        let mut q = self.shared.updates.lock();
-        // (a game paused while the device stopped calling back must not pile them up)
-        if q.len() > 4096 {
-            q.clear();
-        }
-        q.push((id, params, self.shared.now()));
+        self.shared.send(self.direct(), Cmd::Params(id, params, self.shared.now()));
     }
 
     /// What a voice plays with now, and how loud it arrives at the listener (gain after
     /// distance), while it plays.
+    /// (from the voices' published states: never waits for a block being mixed)
     pub fn voice_state(&self, id: VoiceId) -> Option<(VoiceParams, f32)> {
-        let listener = *self.shared.listener.lock();
-        let voices = self.shared.voices.lock();
-        let v = voices.iter().find(|v| v.id == id && !v.finished)?;
-        let spatial = v
-            .params
+        let params = *self.shared.live.read().get(&id)?;
+        let listener = self.shared.listener.lock().position;
+        let spatial = params
             .position
-            .map(|p| distance_gain(v.params.range, (p - listener.position).length()))
+            .map(|p| distance_gain(params.range, (p - listener).length()))
             .unwrap_or(1.0);
-        Some((v.params, v.params.gain * spatial))
+        Some((params, params.gain * spatial))
     }
 
+    /// (from the voices' published states: never waits for a block being mixed)
     pub fn is_playing(&self, id: VoiceId) -> bool {
-        self.shared
-            .voices
-            .lock()
-            .iter()
-            .any(|v| v.id == id && !v.finished)
+        self.shared.live.read().contains_key(&id)
     }
 
     pub fn stop(&self, id: VoiceId) {
-        if let Some(v) = self.shared.voices.lock().iter_mut().find(|v| v.id == id) {
-            v.finished = true;
+        crate::trace::stop(id);
+        if self.shared.live.write().remove(&id).is_some() {
+            self.shared.send(self.direct(), Cmd::Stop(id));
         }
     }
 
@@ -859,11 +972,13 @@ impl AudioEngine {
     }
 
     pub fn set_listener(&self, l: Listener) {
+        crate::trace::listener(&l);
         *self.shared.listener.lock() = l;
     }
 
+    /// The voices playing.
     pub fn voice_count(&self) -> usize {
-        self.shared.voices.lock().len()
+        self.shared.live.read().len()
     }
 }
 
@@ -907,7 +1022,7 @@ mod tests {
         let clip = Arc::new(Clip { sample_rate: 48_000, channels: 1, samples: vec![16_384; 5] });
         let s = shared();
         s.voices.lock().push(voice(clip, 1.0));
-        s.updates.lock().push((1, VoiceParams { gain: 0.0, looping: true, ..Default::default() }, std::time::Instant::now()));
+        s.updates.lock().push(Cmd::Params(1, VoiceParams { gain: 0.0, looping: true, ..Default::default() }, std::time::Instant::now()));
         let mut out = vec![0.0f32; 4];
         s.render(&mut out);
         assert_eq!(s.voices.lock()[0].params.gain, 0.0);
@@ -928,6 +1043,18 @@ mod tests {
         }
         assert_eq!(own.doppler.2, 1.0);
         assert!(passing.doppler.2 < 1.0);
+    }
+
+    /// A recording's clock is the sound it mixed, not the wall clock: a fade-in by seconds
+    /// played comes out the same however slowly the run goes.
+    #[test]
+    fn a_recording_goes_by_the_sound_it_mixed() {
+        let e = AudioEngine::capture(48_000);
+        let t0 = e.clock();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert_eq!(e.clock(), t0);
+        e.render_capture(24_000);
+        assert_eq!(e.clock() - t0, std::time::Duration::from_millis(500));
     }
 
     /// The stream opened again (as when the system's output device changed) keeps playing;
@@ -968,6 +1095,39 @@ mod tests {
         assert!((e.shared.now() - t0).as_millis() == 100, "the clock moves with the sound");
         assert!(a[2000..].iter().all(|x| (*x - 0.25).abs() < 0.01));
         assert!(AudioEngine::new_for_test_device_less().render_capture(10).is_empty());
+    }
+
+    /// What the game asks and tells a voice never waits for a block being mixed (the mixer
+    /// holds the voices a whole block); a voice that ended by itself is gone once mixed, one
+    /// stopped at once.
+    #[test]
+    fn the_game_never_waits_for_the_mixer() {
+        let e = AudioEngine::capture(48_000);
+        let clip = Arc::new(Clip { sample_rate: 48_000, channels: 1, samples: vec![8_192; 480] });
+        let short = e.play(clip.clone(), VoiceParams::default());
+        let looped = e.play(clip.clone(), VoiceParams { looping: true, ..Default::default() });
+        e.render_capture(4_800);
+        assert!(!e.is_playing(short) && e.is_playing(looped) && e.voice_count() == 1);
+        // (a block being mixed: the voices held for half a second)
+        let (shared, (tx, rx)) = (e.shared.clone(), std::sync::mpsc::channel());
+        let mixer = std::thread::spawn(move || {
+            let _mixing = shared.voices.lock();
+            tx.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        });
+        rx.recv().unwrap();
+        let t = std::time::Instant::now();
+        e.set_params(looped, VoiceParams { gain: 0.5, looping: true, ..Default::default() });
+        let other = e.play(clip, VoiceParams::default());
+        e.set_radio_fx(other, Default::default());
+        let asked = (e.is_playing(looped), e.voice_state(looped).map(|s| s.1), e.is_playing(other));
+        e.stop(other);
+        assert!(t.elapsed() < std::time::Duration::from_millis(250), "the game waited for the mixer");
+        assert_eq!((asked, e.is_playing(other)), ((true, Some(1.0), true), false));
+        mixer.join().unwrap();
+        e.render_capture(480);
+        assert_eq!(e.voice_state(looped).map(|s| s.1), Some(0.5));
+        assert_eq!(e.shared.voices.lock().len(), 1);
     }
 
     impl AudioEngine {

@@ -113,6 +113,16 @@ impl MirrorHud {
         self.enabled && !self.panels.is_empty()
     }
 
+    /// The mirrors the panels show (each once), into `out`.
+    pub fn cams_into(&self, out: &mut Vec<usize>) {
+        out.clear();
+        for p in &self.panels {
+            if !out.contains(&p.cam) {
+                out.push(p.cam);
+            }
+        }
+    }
+
     /// The glass shapes the world has found in the bus's model.
     /// (copied into the panels' own lists, which keep their room: this comes every frame)
     pub fn set_aspects(&mut self, a: &[f32]) {
@@ -635,6 +645,19 @@ mod tests {
         ]);
         assert!(m.press(true, (150.0, 150.0), (1000.0, 1000.0)));
         assert_eq!(m.panels.last().map(|q| q.cam), Some(0));
+    }
+
+    /// The mirrors drawn for the panels every frame: each shown one once, none of the others.
+    #[test]
+    fn the_panels_name_each_of_their_mirrors_once() {
+        let m = editing(vec![
+            Panel { cam: 2, x: 0.1, y: 0.1, h: 0.3, aspect: 1.0 },
+            Panel { cam: 0, x: 0.5, y: 0.5, h: 0.3, aspect: 1.0 },
+            Panel { cam: 2, x: 0.7, y: 0.1, h: 0.2, aspect: 1.0 },
+        ]);
+        let mut cams = vec![9];
+        m.cams_into(&mut cams);
+        assert_eq!(cams, vec![2, 0]);
     }
 
     #[test]

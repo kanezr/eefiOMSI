@@ -848,6 +848,15 @@ impl Model {
                 let pos = r.f32s::<3>();
                 self.interior_lights.push(InteriorLight { variable, range, color, pos });
             }
+            _ => return self.handle_material_keyword(k, r),
+        }
+        true
+    }
+
+    /// `handle_keyword`'s second half: the texture changes, `[matl]` and the commands on the
+    /// material it opened, and the smoke and particle emitters.
+    fn handle_material_keyword(&mut self, k: &str, r: &mut CfgReader) -> bool {
+        match k {
             "texchanges" => self.texchanges.push(r.str().to_string()),
             "matl" => {
                 let texture = r.str().to_string();

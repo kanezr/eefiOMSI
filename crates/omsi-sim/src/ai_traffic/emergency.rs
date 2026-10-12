@@ -62,7 +62,9 @@ pub const WALK: f32 = 1.0;
 pub const WARN_GAP: f32 = 50.0;
 /// An emergency vehicle that has stood this long lets go the cars waiting for it that it
 /// cannot get past (s): they drive on, and it follows. Nobody waits for one that will not
-/// come by.
+/// come by. (3 s and 8 s let a car making way drive on while the other lane's traffic still
+/// came, and the siren never got past it - kept at 8 and 30 until the release is taken back
+/// once the way is clear.)
 pub const STUCK_RELEASE: f32 = 8.0;
 /// ... and after this long every car waiting for it.
 pub const STUCK_RELEASE_ALL: f32 = 30.0;

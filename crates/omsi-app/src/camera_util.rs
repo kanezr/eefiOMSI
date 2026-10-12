@@ -335,16 +335,29 @@ pub(crate) fn driver_eye(p: &Player) -> DVec3 {
     }
 }
 
-/// Draw the views of the vehicle's `[add_camera_reflexion]` cameras into its mirror textures.
-/// `only`: render just one mirror, the `i % n`-th of those `view` sees (round robin, as
-/// OMSI takes its turns among the mirrors in the picture; with no view, of all of them).
+/// Which of the vehicle's mirrors [`render_mirrors`] draws.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum MirrorPick<'a> {
+    /// Every mirror `view` sees (all of them with no view) but those in the list.
+    All(&'a [usize]),
+    /// Just one, the `k % n`-th of those `view` sees and the list leaves out (round robin, as
+    /// OMSI takes its turns among the mirrors in the picture).
+    Turn(usize, &'a [usize]),
+    /// These mirrors, seen or not (the mirror panels': they are on the screen wherever the
+    /// glass is).
+    Only(&'a [usize]),
+}
+
+/// Draw the views of the vehicle's `[add_camera_reflexion]` cameras into its mirror textures,
+/// those `pick` takes; the number of mirrors it chose among (those in the picture, or the
+/// list `Only` gives).
 pub(crate) fn render_mirrors(
     renderer: &mut Renderer,
     scene: &mut Scene,
     world: &scene::World,
     p: &Player,
     lighting: &omsi_render::Lighting,
-    only: Option<usize>,
+    pick: MirrorPick,
     view: Option<(Camera, f32)>,
 ) -> usize {
     // (aimed from the eye of the view being drawn, as Omsi.exe aims them - from the
@@ -407,15 +420,22 @@ pub(crate) fn render_mirrors(
     }
     // the mirrors in the picture (all of them without a view); none in it, none redrawn (a
     // static camera's screen is somewhere else than the camera: it always takes its turn)
-    let seen: Vec<usize> = (0..cams.len())
-        .filter(|&i| cams[i].0.fixed || view.as_ref().map(|v| mirror_in_view(cams[i].1 .0, cams[i].0.extra.unwrap_or(0.0).max(MIRROR_MIN_RADIUS), v)).unwrap_or(true))
-        .collect();
+    let seen: Vec<usize> = match pick {
+        MirrorPick::Only(set) => (0..cams.len()).filter(|i| set.contains(i)).collect(),
+        MirrorPick::All(skip) | MirrorPick::Turn(_, skip) => (0..cams.len())
+            .filter(|i| !skip.contains(i))
+            .filter(|&i| cams[i].0.fixed || view.as_ref().map(|v| mirror_in_view(cams[i].1 .0, cams[i].0.extra.unwrap_or(0.0).max(MIRROR_MIN_RADIUS), v)).unwrap_or(true))
+            .collect(),
+    };
     if seen.is_empty() {
         return 0;
     }
-    let pick = only.map(|k| seen[k % seen.len()]);
+    let turn = match pick {
+        MirrorPick::Turn(k, _) => Some(seen[k % seen.len()]),
+        _ => None,
+    };
     for (i, (c, at)) in cams.iter().enumerate() {
-        if !seen.contains(&i) || pick.is_some_and(|k| k != i) {
+        if !seen.contains(&i) || turn.is_some_and(|k| k != i) {
             continue;
         }
         let Some(Some(tex)) = textures.get(i) else {

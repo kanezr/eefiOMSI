@@ -19,12 +19,12 @@ impl Renderer {
         {
             log::error!("the graphics device was lost (test): OMSI_FAKE_GPU_ERROR=lost");
             self.device.destroy();
-            *self.device_lost.lock().unwrap_or_else(|e| e.into_inner()) = Some("test".into());
+            *self.errors.device_lost.lock().unwrap_or_else(|e| e.into_inner()) = Some("test".into());
         }
         // the device is gone: nothing can be drawn, and the readbacks (the exposure meter)
         // would find their buffers taken away - "Error in Buffer::get_mapped_range:
         // Validation Error" ended the game instead of the session ending in order
-        if self.device_lost.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+        if self.errors.device_lost.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
             return false;
         }
         #[cfg(feature = "test-hooks")]
@@ -48,9 +48,9 @@ impl Renderer {
                 view_formats: &[],
             });
         }
-        if self.rt_error.load(std::sync::atomic::Ordering::Relaxed) {
+        if self.errors.rt_error.load(std::sync::atomic::Ordering::Relaxed) {
             self.fall_back_without_ray_tracing(scene);
-        } else if self.gpu_error.load(std::sync::atomic::Ordering::Relaxed) {
+        } else if self.errors.gpu_error.load(std::sync::atomic::Ordering::Relaxed) {
             self.fall_back_to_single_sample(scene);
         }
         true
@@ -123,9 +123,12 @@ impl Renderer {
             && !env.no_puddle_reflections;
         let reflection_frame = !enhanced && puddles_wanted && self.reflection_pass.is_some();
         let masked_frame = enhanced || reflection_frame;
-        let (grid, lamp_shadows) = self.prepare_lights(scene, cam_rel, enhanced_frame, lighting.lamp_shadows && with_overlays && projection.is_none() && self.shadow_pipelines.len() > 6, lighting.inside.as_ref());
+        let (grid, lamp_shadows) = self.prepare_lights(scene, cam_rel, enhanced_frame, lighting.lamp_shadows && with_overlays && projection.is_none() && self.shadows.shadow_pipelines.len() > 6, lighting.inside.as_ref());
         self.prepare_coronas(scene, lighting.night, lighting.inside.as_ref().filter(|v| point_in_vehicle_box(camera.position, v)));
-        self.prepare_smoke(scene, camera.position);
+        // (the mirrors draw no smoke, see `encode_main_late`)
+        if exclude_texture.is_none() {
+            self.prepare_smoke(scene, camera.position);
+        }
         // ambient occlusion only for the real picture, not for the mirrors
         // Enhanced+: the window's picture traces its sun shadow and ambient occlusion (not the
         // mirrors, a headset's eyes or a triple screen's panels: they keep the shadow map)
@@ -134,16 +137,16 @@ impl Renderer {
         // the enhanced path's shading is costly: the depth prepass keeps it to the visible
         // surface (without multisampling, see `share_depth`)
         let prepass_on = ao_on || puddles_wanted || glass_on || (enhanced && (with_overlays || xr_view));
+        // (only the bind group is made again, by `upload_draw_list`: dropping the instance
+        // buffers for it wrote every instance's entries again at each render-scale step)
         if prepass_on && self.ensure_ao(width, height) {
             // a new AO texture: the camera bind group must point at it
-            scene.dirty = true;
-            scene.model_buf = None;
-            self.hdr_targets.clear();
+            scene.camera_bind_group = None;
+            self.targets.hdr_targets.clear();
         }
         if rt_frame && self.rt.as_mut().is_some_and(|rt| rt.ensure_targets(&self.device, width, height)) {
             // the camera bind group must point at the new lighting texture
-            scene.dirty = true;
-            scene.model_buf = None;
+            scene.camera_bind_group = None;
         }
         if masked_frame {
             self.hdr_targets(width, height);
@@ -223,9 +226,9 @@ impl Renderer {
             .unwrap_or_else(|| camera.view_proj(aspect, ro));
         // where the tile light maps lie, relative to the render origin
         {
-            let (lx, ly, side) = self.lm_place.get();
+            let (lx, ly, side) = self.lights.lm_place.get();
             let v: [f32; 4] = [(lx - ro.x) as f32, (ly - ro.y) as f32, side as f32, if side > 0.0 { 1.0 } else { 0.0 }];
-            self.queue.write_buffer(&self.lm_uniform, 0, bytemuck::cast_slice(&v));
+            self.queue.write_buffer(&self.lights.lm_uniform, 0, bytemuck::cast_slice(&v));
         }
         {
             let v = &lighting.vanilla_sky;
@@ -233,7 +236,7 @@ impl Renderer {
                 cloud: [v.cloud_height, v.cloud_size, v.cloud_offset[0], v.cloud_offset[1]],
                 haze: [v.fog_range, v.visibility, if v.overcast { 1.0 } else { 0.0 }, ro.z as f32],
             };
-            self.queue.write_buffer(&self.vanilla_sky_buf, 0, bytemuck::bytes_of(&u));
+            self.queue.write_buffer(&self.sky.vanilla_sky_buf, 0, bytemuck::bytes_of(&u));
         }
         let cu = CameraUniform {
             post: [
@@ -361,7 +364,7 @@ impl Renderer {
                 Some((_, _, bb)) if lighting.inside.is_some() => [bb[3], bb[4], bb[5], 1.0],
                 _ => [0.0; 4],
             },
-            cookies: self.cookies.fields(),
+            cookies: self.lights.cookies.fields(),
         };
         self.queue
             .write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(&cu));
@@ -374,9 +377,9 @@ impl Renderer {
         // unless it comes before the window's first frame)
         if enhanced && lead_view {
             let ground = lighting.fog_base.or(lighting.inside.map(|v| v.0.z)).map(|z| (z - scene.render_origin.z) as f32);
-            self.view_lamps = Some(view_lamp_light(&scene.lights, scene.render_origin, cam_rel, camera, aspect, ground));
+            self.tone.view_lamps = Some(view_lamp_light(&scene.lights, scene.render_origin, cam_rel, camera, aspect, ground));
             if f.env.debug_view_lamps {
-                log::info!("view lamps: {:.6}", self.view_lamps.unwrap_or(0.0));
+                log::info!("view lamps: {:.6}", self.tone.view_lamps.unwrap_or(0.0));
             }
         }
         // the night sky's glow from the lamps round the camera (the window's view leads), in
@@ -385,16 +388,16 @@ impl Renderer {
             let raw = lamp_sky_glow(scene, cam_rel);
             let target = raw.clamp(0.03, 1.5);
             let step = (target.ln() * 10.0).round() / 10.0;
-            let changed = self.city_glow.is_none_or(|g| (g.ln() - step).abs() > 0.15);
+            let changed = self.sky.city_glow.is_none_or(|g| (g.ln() - step).abs() > 0.15);
             if changed {
-                self.city_glow = Some(step.exp());
+                self.sky.city_glow = Some(step.exp());
             }
             if f.env.debug_sky && changed {
                 log::info!("sky glow from the lamps: {raw:.3} (taken {:.3})", step.exp());
             }
         }
         let probe_redraw = enhanced
-            && (lead_view || self.sky_state.is_none())
+            && (lead_view || self.sky.sky_state.is_none())
             && self.prepare_enhanced(lighting, cam_rel, ro, f.dt);
         (vp_mat, cu, probe_redraw)
     }

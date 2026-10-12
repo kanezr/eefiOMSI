@@ -234,7 +234,7 @@ a second, carried in the session's own messages - a game without the plugin igno
 
 ### On-screen panels
 
-`omsi.ui` puts panels of the plugin's own on the screen, in the game's look: Roboto, the
+`omsi.ui` puts panels of the plugin's own on the screen, in the game's look: Inter, the
 game's icons, dark rounded cards with a shadow, as large as the rest of the interface (the
 interface size setting and the window's height scale them). A plugin describes a panel as a
 table once and sets it again when its content changes - every half second, say, not every

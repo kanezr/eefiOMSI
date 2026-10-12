@@ -186,7 +186,7 @@ impl Offscreen<'_> {
             }
         }
         {
-            let e = DRIVE_EXTREMES.lock();
+            let e = &self.drive_extremes;
             log::info!("drive extremes: pitch {:.1} (at ({:.1}, {:.1}, {:.1}), {:.1} s) bank {:.1}, origin {:+.2}..{:+.2} m over the ground", e.0, e.4 .0.x, e.4 .0.y, e.4 .0.z, e.4 .1, e.1, e.3, e.2);
         }
         if let Some(list) = omsi_cfg::flags::OMSI_DEBUG_VARS.var() {

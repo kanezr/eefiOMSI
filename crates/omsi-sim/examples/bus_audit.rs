@@ -36,6 +36,7 @@ fn original_root() -> Option<PathBuf> {
 }
 
 fn main() {
+    omsi_sim::image_decode::install(decode_picture);
     log::set_logger(&Collect).unwrap();
     log::set_max_level(if omsi_cfg::flags::OMSI_DEBUG_IBIS.live_os().is_some() { log::LevelFilter::Info } else { log::LevelFilter::Warn });
     let a: Vec<String> = std::env::args().collect();
@@ -245,4 +246,11 @@ fn ibis_probe(v: &mut omsi_sim::VehicleInstance, bus: &std::path::Path) -> Strin
         Some(Err(e)) => format!("FAILED line {line} destination {}: {}", term.code, e),
         None => "unfinished".into(),
     }
+}
+
+/// The game's picture decoder for the simulation (as omsi-app registers it at start).
+fn decode_picture(path: &std::path::Path) -> Result<omsi_sim::image_decode::DecodedImage, String> {
+    omsi_texture::decode_file(path)
+        .map(|i| omsi_sim::image_decode::DecodedImage { width: i.width, height: i.height, rgba: i.rgba, has_alpha: i.has_alpha })
+        .map_err(|e| e.to_string())
 }

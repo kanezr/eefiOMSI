@@ -75,7 +75,9 @@ impl SkyBase {
                 front_face: wgpu::FrontFace::Ccw,
                 ..Default::default()
             },
-            depth_stencil: Some(depth_test(wgpu::CompareFunction::Always)),
+            // (the dome lies on the far plane: over a cleared depth it covers everything,
+            // over laid depth only what is still empty)
+            depth_stencil: Some(depth_test(wgpu::CompareFunction::GreaterEqual)),
             multisample: wgpu::MultisampleState {
                 count: msaa,
                 mask: !0,

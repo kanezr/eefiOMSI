@@ -132,7 +132,7 @@ impl PeopleSim {
             avatars: HashMap::new(),
             avatar_cmds: HashMap::new(),
             avatar_hidden: HashMap::new(),
-            last_buses: Vec::new(),
+            last_buses: Arc::new(Vec::new()),
             avatar_only: false,
             driver_away: false,
             stop_targets: None,
@@ -144,6 +144,7 @@ impl PeopleSim {
             pedestrians: 14,
             max_people: people_limit,
             stroll_timer: 0.0,
+            defer_populate: false,
             exact_fare: true,
             boarding: "auto".into(),
             stand_chance: 0.05,
@@ -168,6 +169,8 @@ impl PeopleSim {
             mirror_wait: HashMap::new(),
             comfort: RideComfort::default(),
             handed: Vec::new(),
+            scratch: Default::default(),
+            stage_stats: Default::default(),
         }
     }
 

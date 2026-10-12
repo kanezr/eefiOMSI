@@ -6,7 +6,6 @@ impl App {
     /// The AI traffic: what it needs to know, the timetable's departures, its step, its
     /// sound and its pictures.
     pub(super) fn frame_traffic(&mut self, dt: f32) {
-        let __t = Instant::now();
         // (with a triple screen, all of its three panels are in sight)
         let sight = self.camera.as_ref().zip(self.gfx.surface.as_ref())
             .and_then(|(c, s)| self.sight_extent(c, (s.config.width, s.config.height)));
@@ -43,32 +42,40 @@ impl App {
                 self.player.as_ref(),
                 &r.options,
             );
+            // The population every 2 s and the timetable's departures on their own clock
+            // (every 2 s, every 0.1 s while a backlog of departures waits), never both in
+            // one frame: each is a heavy frame of its own. (Together on one clock, a backlog
+            // ran the whole population ten times a second; the people's own look-round
+            // keeps off these frames too, `traffic_heavy_frame`.)
             self.session.populate_t -= dt;
+            let first = self.session.first_populate;
+            let mut heavy = false;
             if self.session.populate_t <= 0.0 && !self.paused {
-                // come back quickly while there is a backlog of departures to put out
-                self.session.populate_t = if self
-                    .session.schedule
-                    .as_ref()
-                    .map(|s| s.pending() > 0)
-                    .unwrap_or(false)
-                {
-                    0.1
-                } else {
-                    2.0
-                };
+                self.session.populate_t = 2.0;
+                heavy = true;
                 let __t5 = Instant::now();
                 let view = self.camera.as_ref().map(|c| c.forward().as_dvec3());
                 t.populate_seen(&mut self.gfx.sim_view.traffic, w, r, scene, center, view);
                 *self.perf.profile.entry("traffic.populate").or_default() +=
                     __t5.elapsed().as_secs_f64();
-                steps::set_keep_clear(t, self.player.as_ref(), &self.net.remotes);
-                if let Some(s) = self.session.schedule.as_mut() {
+            }
+            if let Some(s) = self.session.schedule.as_mut() {
+                s.tick_t -= dt;
+                // (the first look goes with the first population: the trips under way are put
+                // out at the start)
+                if (first || (s.tick_t <= 0.0 && !heavy)) && !self.paused {
+                    s.tick_t = if s.pending() > 0 { 0.1 } else { 2.0 };
+                    heavy = true;
+                    steps::set_keep_clear(t, self.player.as_ref(), &self.net.remotes);
                     let __t6 = Instant::now();
-                    steps::schedule_tick(s, w, t, &mut self.gfx.sim_view.traffic, r, scene, self.session.first_populate);
+                    steps::schedule_tick(s, w, t, &mut self.gfx.sim_view.traffic, r, scene, first);
                     *self.perf.profile.entry("traffic.schedule").or_default() +=
                         __t6.elapsed().as_secs_f64();
                 }
+            }
+            if heavy {
                 self.session.first_populate = false;
+                self.session.traffic_heavy_frame = true;
             }
             // the AI's lights (and a bus's saloon lamps, which its scripts switch with
             // them): by the time of day, and by day in fog, rain, snow or under a
@@ -80,12 +87,13 @@ impl App {
             steps::set_ai_daylight(t, daylight, gloomy);
             let __t2 = Instant::now();
             let rail = self.player.as_ref().and_then(|p| p.rail.as_ref()).map(|r| (r.lane, r.along));
-            steps::traffic_tick(t, &mut self.gfx.sim_view.traffic, w, dt, self.paused, self.player.as_ref(), &self.net.remotes, &self.session.placed, rail);
+            let signals = steps::traffic_tick(t, &mut self.gfx.sim_view.traffic, w, dt, self.paused, self.player.as_ref(), &self.net.remotes, &self.session.placed, rail);
+            *self.perf.profile.entry("traffic.tick.signals").or_default() += signals;
             *self.perf.profile.entry("traffic.tick").or_default() +=
                 __t2.elapsed().as_secs_f64();
             for (k, v) in ["traffic.tick.lanes", "traffic.tick.plan", "traffic.tick.ai"]
                 .into_iter()
-                .zip(t.tick_split)
+                .zip(t.frame_split)
             {
                 *self.perf.profile.entry(k).or_default() += v;
             }
@@ -120,6 +128,5 @@ impl App {
             *self.perf.profile.entry("traffic.sync").or_default() +=
                 __t4.elapsed().as_secs_f64();
         }
-        *self.perf.profile.entry("traffic").or_default() += __t.elapsed().as_secs_f64();
     }
 }

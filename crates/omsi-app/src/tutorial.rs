@@ -104,7 +104,7 @@ mod tests {
     fn german_html_entities() {
         let (title, text) = super::page_text("<h2>Fahrg&auml;ste</h2><p>Men&uuml; &amp; T&#252;ren &ndash; gr&ouml;&szlig;er</p>");
         assert_eq!(title, "Fahrgäste");
-        assert_eq!(text, "Menü & Türen – größer");
+        assert_eq!(text, "Menü & Türen - größer");
         let (_, text) = super::page_text("<h2>x</h2><p>unter 0&deg;C, the AI &#8203;&#8203;vehicles &unknown; R&D</p>");
         assert_eq!(text, "unter 0°C, the AI vehicles &unknown; R&D");
     }

@@ -17,6 +17,7 @@ impl VehicleInstance {
         // (the mesh props, dirt overlays and lights were resolved against the old model:
         // a model.cfg read again with other slots or lights kept the old ones)
         self.props_plan = PropsPlan::default();
+        self.program_ids = std::sync::OnceLock::new();
     }
 
     /// The `.bus` file read again (`def`, as `Vehicle::load` gives it): its cameras, mirrors,

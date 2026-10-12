@@ -147,7 +147,7 @@ pub struct Prepared {
 fn encode_levels(mut rgba: Vec<u8>, mut w: u32, mut h: u32, format: PixelFormat, punch: bool, out: &mut Vec<Vec<u8>>) {
     let full = mip_count(w, h);
     for _ in 1..full {
-        let (next, nw, nh) = bc::downsample(&rgba, w, h);
+        let (next, nw, nh) = bc::downsample_alpha_weighted(&rgba, w, h);
         let (blocks, _, _) = bc::encode(&next, nw, nh, format.bc(punch));
         out.push(blocks);
         rgba = next;
@@ -345,7 +345,7 @@ pub fn halved_for_now(t: TextureData) -> TextureData {
     if t.format != PixelFormat::Rgba8 || t.levels.len() != 1 || t.width < 256 || t.height < 256 {
         return t;
     }
-    let (rgba, w, h) = bc::downsample(&t.levels[0], t.width, t.height);
+    let (rgba, w, h) = bc::downsample_alpha_weighted(&t.levels[0], t.width, t.height);
     TextureData { width: w, height: h, levels: vec![rgba], ..t }
 }
 

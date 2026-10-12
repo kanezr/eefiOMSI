@@ -132,10 +132,13 @@ struct VsOut {
 @vertex
 fn vs_main(@location(0) pos: vec3<f32>) -> VsOut {
     var out: VsOut;
-    // the dome rides with the camera; pushed to the far plane (0 with reversed Z)
+    // the dome rides with the camera; pushed onto the far plane (0 with reversed Z), the
+    // depth the pass starts from: its depth test (equal or nearer than that) keeps it to the
+    // pixels nothing was drawn into, when it is drawn after the scenery's depth was laid
+    // (main_pass.rs `encode_sky`)
     let wp = camera.cam_pos.xyz + pos * 4000.0;
     var clip = camera.view_proj * vec4<f32>(wp, 1.0);
-    clip.z = clip.w * 0.000001;
+    clip.z = 0.0;
     out.clip = clip;
     out.dir = pos;
     return out;

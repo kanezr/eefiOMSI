@@ -54,6 +54,8 @@ public class OmsiActivity extends NativeActivity {
         }
         immersive();
         askForStorage();
+        // the launcher page over the window (the desktop launcher's, see LauncherBridge)
+        LauncherBridge.attach(this);
         // started by the package installer after an update: nothing more to do
         Intent i = getIntent();
         if (i != null && ACTION_INSTALLED.equals(i.getAction())) {

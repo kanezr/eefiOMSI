@@ -7,7 +7,7 @@ impl App {
     /// to do), `OMSI_WATCH_VARS`, and the people's counts for the personnel file.
     pub(super) fn frame_integrations(&mut self, event_loop: &ActiveEventLoop, dt: f32) {
         // Discord's status: the map, the bus, the line (every few seconds)
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             self.integrations.discord_t -= dt;
             if self.integrations.discord_t <= 0.0 {

@@ -65,14 +65,17 @@ pub struct Season {
 }
 
 impl Season {
-    /// Texture subfolder of a season kind: 1 spring, 2 autumn, 3 winter, 4 winter with snow,
-    /// 5 dry summer (`SummerDry`, the editor's "Summer (dry)": Omsi.exe 0x7f93a6).
+    /// Texture subfolder of a season kind: 1 spring, 2 autumn, 3 and 4 winter, 5 dry summer
+    /// (`SummerDry`, the editor's "Summer (dry)": Omsi.exe 0x7f93a6). Kind 4, "winter with
+    /// snow", takes the `Winter` pictures as 3 does: Omsi.exe gives a texture its
+    /// `WinterSnowMap` only while the weather has snow (0x7f910c: seasons 3 and 4 alike take
+    /// `WinterMap`, else `FallMap`) - a map whose winter is kind 4 showed snowy roads under a
+    /// clear sky (#2131).
     pub fn folder(kind: i32) -> Option<&'static str> {
         match kind {
             1 => Some("spring"),
             2 => Some("fall"),
-            3 => Some("Winter"),
-            4 => Some("WinterSnow"),
+            3 | 4 => Some("Winter"),
             5 => Some("SummerDry"),
             _ => None,
         }
@@ -260,6 +263,15 @@ impl GlobalCfg {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both winter kinds take the winter pictures; the snowy ones come with the weather (#2131).
+    #[test]
+    fn winter_kinds_take_the_winter_folder() {
+        assert_eq!(Season::folder(3), Some("Winter"));
+        assert_eq!(Season::folder(4), Some("Winter"));
+        assert_eq!(Season::folder(5), Some("SummerDry"));
+        assert_eq!(Season::folder(0), None);
+    }
 
     /// A tile listed twice counts in the numbering the map's files use (an entry point on
     /// the tile after the repeat names index 2, which is tile (5, 5)).

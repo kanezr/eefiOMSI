@@ -48,7 +48,6 @@ impl App {
     /// The lights (the lamps' cones, the light maps, every light that shines), the rain and
     /// the snow, the cabin air, the tyres' spray and the sounds of the street.
     pub(super) fn frame_lights(&mut self, dt: f32, daylight: omsi_sim::Daylight) {
-        let __t = Instant::now();
         // the lamps' cones in fog and falling rain or snow, and new light pictures
         if let Some(wt) = &self.session.weather {
             lights::set_cone_strength(wt.fog.0, precip_of(wt).1, daylight.night);
@@ -141,12 +140,9 @@ impl App {
                     // time is read in the background and the line spoken as soon as it is
                     // there (read here, in the frame, it stalled the picture); one still not
                     // read after two seconds is let go.
-                    thread_local! {
-                        static WAITING: std::cell::RefCell<Vec<(omsi_sim::people::VoiceLine, Instant)>> =
-                            const { std::cell::RefCell::new(Vec::new()) };
-                    }
                     let said = self.session.humans.as_mut().map(|h| h.take_voice_lines()).unwrap_or_default();
-                    WAITING.with_borrow_mut(|waiting| {
+                    {
+                        let waiting = &mut self.sound.voices_waiting;
                         waiting.extend(said.into_iter().map(|line| (line, Instant::now())));
                         waiting.retain(|(line, since)| {
                             if !a.clips_ready(std::slice::from_ref(&line.path)) {
@@ -169,7 +165,7 @@ impl App {
                             }
                             false
                         });
-                    });
+                    }
                     let inside = self.cam.in_cab;
                     let __tm = Instant::now();
                     // openOMSI's ambience; with its recordings the street's rain is its own
@@ -225,12 +221,10 @@ impl App {
                 }
             }
         }
-        *self.perf.profile.entry("lights+rain").or_default() += __t.elapsed().as_secs_f64();
     }
 
     /// The departure boards, the map's route arrows and the scenery's scripts.
     pub(super) fn frame_scripted(&mut self, dt: f32, daylight: omsi_sim::Daylight) {
-        let __t = Instant::now();
         if let (Some(w), Some(r), Some(scene), Some(cam)) = (
             self.world.as_ref(),
             self.renderer.as_ref(),
@@ -255,6 +249,7 @@ impl App {
             *self.perf.profile.entry("scripted.boards").or_default() += __tb.elapsed().as_secs_f64();
             // the map's own route arrows, with OMSI 2's route arrows
             w.show_help_arrows(r, scene, self.settings.nav_arrows);
+            let mut times = omsi_scene::ScriptedTimes::default();
             w.update_scripted(
                 r,
                 scene,
@@ -264,8 +259,20 @@ impl App {
                 &phase,
                 self.sound.audio.as_ref(),
                 self.cam.in_cab,
+                &mut times,
             );
+            if omsi_cfg::flags::OMSI_PROFILE.is_set() {
+                for (k, v) in [
+                    ("scripted.lock", times.lock),
+                    ("scripted.inputs", times.inputs),
+                    ("scripted.scripts", times.scripts),
+                    ("scripted.apply", times.apply),
+                    ("scripted.textures", times.textures),
+                    ("scripted.lamps", times.lamps),
+                ] {
+                    *self.perf.profile.entry(k).or_default() += v;
+                }
+            }
         }
-        *self.perf.profile.entry("scripted").or_default() += __t.elapsed().as_secs_f64();
     }
 }

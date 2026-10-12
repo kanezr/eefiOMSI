@@ -2,6 +2,7 @@
 //! matrices), and what each of them draws.
 
 use super::*;
+use super::shadow::{lamp_item_hash, LampSigs};
 
 /// The shadow cascades of a frame (see `Renderer::plan_shadow_cache`).
 pub(crate) struct ShadowPlan {
@@ -36,6 +37,23 @@ pub(crate) fn cascade_matrix(sun: Vec3, cam_rel: Vec3, range: f32, texels: u32) 
     proj * view
 }
 
+/// A window frame's place in the cycle of the shadow cascades' redraws (the frames counted
+/// in `ShadowRes::shadow_near_cache`): the near cascade on even frames, the far one on
+/// every other odd frame, so that every frame draws one of them at most - with the sky
+/// cube's slice a frame (`SkySched`), the periodic passes spread evenly instead of piling
+/// up on one frame of four.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ShadowPhase(pub u32);
+
+impl ShadowPhase {
+    pub(crate) fn near_due(self) -> bool {
+        self.0 % 2 == 0
+    }
+    pub(crate) fn far_due(self) -> bool {
+        self.0 % 4 == 1
+    }
+}
+
 impl Renderer {
     /// The light matrices of the cascades, the near and far ones kept from an earlier
     /// frame while they still fit (and the second XR eye taking the first one's).
@@ -48,7 +66,7 @@ impl Renderer {
         let sun = if moon_shadows { lighting.moon_dir.normalize_or_zero() } else { lighting.sun_dir.normalize_or_zero() };
         let shadows = (f.with_overlays || projection.is_some()) && (lighting.casts_sun_shadows() || moon_shadows);
         let shared_xr_shadows = if second_eye && shadows {
-            self.xr_shadow_cache
+            self.shadows.xr_shadow_cache
                 .get()
                 .filter(|(origin, previous_sun, _, _, _)| *origin == scene.render_origin && *previous_sun == sun)
         } else {
@@ -61,11 +79,21 @@ impl Renderer {
         // for the next, with the light matrix it was drawn with; the close one - the bus
         // and everything within 30 m - every frame. Redrawn at once when the camera has
         // jumped, the sun has moved or the render origin has (its matrix is relative to it).
+        // Which frames is fixed by the frame's phase (see `ShadowPhase`), not by the
+        // cascades' ages: counted by age, a redraw out of turn moved the near cascade onto
+        // the far one's frames, and the two costliest shadow passes fell on one frame.
         let near_wanted = light_matrix(SHADOW_RANGE, self.options.shadow_size);
-        let (near_m, near_age, near_origin, near_sun) = self.shadow_near_cache.get();
-        let near_jumped = (near_m.project_point3(cam_rel) - near_wanted.project_point3(cam_rel)).length() > 0.03;
+        let (near_m, frames, near_origin, near_sun) = self.shadows.shadow_near_cache.get();
+        let phase = ShadowPhase(frames);
+        // (the cascade's box snaps to whole texels of its own map - 0.034 m a side at the top
+        // setting - so a still caster stays on the same texels while the camera moves; the
+        // wanted matrix is the unsnapped one, and this measures how far the camera has drifted
+        // from the last snap. A tenth of a metre - three texels, invisible - is enough that
+        // a drive along a street does not redraw this, the costliest shadow pass, a third of
+        // it the trees' leaf cards, on every small nudge)
+        let near_jumped = (near_m.project_point3(cam_rel) - near_wanted.project_point3(cam_rel)).length() > 0.1;
         let redraw_near = draw_shadows
-            && (near_age >= 1
+            && (phase.near_due()
                 || near_jumped
                 || near_m == Mat4::IDENTITY
                 || near_origin != scene.render_origin
@@ -76,25 +104,27 @@ impl Renderer {
         } else if !shadows {
             near_wanted
         } else if redraw_near {
-            self.shadow_near_cache.set((near_wanted, 0, scene.render_origin, sun));
+            self.shadows.shadow_near_cache.set((near_wanted, frames.wrapping_add(1), scene.render_origin, sun));
             near_wanted
         } else {
-            self.shadow_near_cache.set((near_m, near_age + 1, near_origin, near_sun));
+            self.shadows.shadow_near_cache.set((near_m, frames.wrapping_add(1), near_origin, near_sun));
             near_m
         };
         let light_view_proj_close = shared_xr_shadows
             .map(|(_, _, _, _, close)| close)
             .unwrap_or_else(|| light_matrix(SHADOW_RANGE_CLOSE, self.options.shadow_size.min(SHADOW_CLOSE_MAX)));
-        // The far cascade (700 m, metre-sized texels) is drawn every 4th frame, or at once
+        // The far cascade (700 m, metre-sized texels) is drawn every 4th frame (one of the
+        // frames that keep the near cascade, see `ShadowPhase`), or at once
         // when the camera has left the middle of the one drawn, the sun has moved or the
         // render origin has jumped (its matrix is relative to that). Drawn every frame it
         // was 0.6 ms of GPU time for a picture that hardly changes; a car in it is a few
         // texels, and a tile streamed in waits three frames at most for its shadow.
         let far_wanted = light_matrix(SHADOW_RANGE_FAR, self.options.shadow_size);
-        let (far_m, far_age, far_origin, far_sun) = self.shadow_far_cache.get();
+        let (far_m, far_age, far_origin, far_sun) = self.shadows.shadow_far_cache.get();
         let far_moved = (far_m.project_point3(cam_rel) - far_wanted.project_point3(cam_rel)).length() > 0.12;
         let redraw_far = draw_shadows
-            && (far_age >= 3
+            && (phase.far_due()
+                || far_age >= 3
                 || far_moved
                 || far_m == Mat4::IDENTITY
                 || far_origin != scene.render_origin
@@ -110,14 +140,14 @@ impl Renderer {
         } else if !shadows {
             far_wanted
         } else if redraw_far {
-            self.shadow_far_cache.set((far_wanted, 0, scene.render_origin, sun));
+            self.shadows.shadow_far_cache.set((far_wanted, 0, scene.render_origin, sun));
             far_wanted
         } else {
-            self.shadow_far_cache.set((far_m, far_age + 1, far_origin, far_sun));
+            self.shadows.shadow_far_cache.set((far_m, far_age + 1, far_origin, far_sun));
             far_m
         };
         if projection.is_some() && !second_eye && shadows {
-            self.xr_shadow_cache.set(Some((
+            self.shadows.xr_shadow_cache.set(Some((
                 scene.render_origin,
                 sun,
                 light_view_proj,
@@ -171,7 +201,10 @@ impl Renderer {
         let omsi_shadow_casters = self.options.omsi_shadow_casters;
         // (the lists are filled in place, block after block of the instances: a fresh list
         // per block was a few hundred small allocations a frame and every item copied twice)
-        let casters = |span: std::ops::Range<usize>, out: &mut [Vec<DrawItem>; SHADOW_LISTS], ranges: &mut Vec<(u8, u32, u32, usize, u32)>| {
+        // (what each street lamp's tile draws, summed up: the tile is kept while it stays the
+        // same, see `LampTiles`; bending foliage changes every frame)
+        let windy = f.lighting.windy_trees;
+        let casters = |span: std::ops::Range<usize>, out: &mut [Vec<DrawItem>; SHADOW_LISTS], ranges: &mut Vec<(u8, u32, u32, usize, u32)>, sig: &mut LampSigs| {
             for inst in &scene.instances[span] {
                 if !inst.visible || !inst.casts_shadow || (omsi_shadow_casters && !inst.omsi_caster) {
                     continue;
@@ -262,6 +295,11 @@ impl Renderer {
                             let kind = if kind == PIPE_KINDS { PIPE_OPAQUE } else { kind };
                             let (material, look) = depth_only_material(kind, mat_id, look);
                             out[3 + k].push(DrawItem { pipe: kind, mesh: inst.mesh as u32, range: ri, material, look, entry: inst.base + slot });
+                            let alpha = inst.slot_alpha.get(slot as usize).copied().unwrap_or(1.0);
+                            sig.add(k, lamp_item_hash(inst, m.pose, kind, ri, material, look, alpha));
+                            if windy && scene.materials[mat_id].uniform.sway[0] >= 0.5 {
+                                sig.volatile |= 1 << k;
+                            }
                         }
                     }
                 }
@@ -311,23 +349,31 @@ impl Renderer {
                 })
             };
             let mut found: [Vec<DrawItem>; SHADOW_LISTS] = std::array::from_fn(|_| Vec::new());
-            for part in run_parts(self.encoding_pool.as_ref(), parts, |p| {
+            let mut sigs = LampSigs::default();
+            for (part, sig) in run_parts(self.encoding_pool.as_ref(), parts, |p| {
                 let mut out: [Vec<DrawItem>; SHADOW_LISTS] = std::array::from_fn(|_| Vec::new());
+                let mut sig = LampSigs::default();
                 let mut ranges = Vec::new();
                 let end = ((p + 1) * chunk).min(n);
                 let mut b = p * chunk;
                 while b < end {
                     let next = (b + CULL_BLOCK).min(end);
                     if lit(b / CULL_BLOCK) {
-                        casters(b..next, &mut out, &mut ranges);
+                        casters(b..next, &mut out, &mut ranges, &mut sig);
                     }
                     b = next;
                 }
-                out
+                (out, sig)
             }) {
                 for (a, b) in found.iter_mut().zip(part) {
                     a.extend(b);
                 }
+                sigs.merge(&sig);
+            }
+            if !lamp_shadows.is_empty() {
+                let mut tiles = self.shadows.lamp_tiles.get();
+                tiles.frame = sigs;
+                self.shadows.lamp_tiles.set(tiles);
             }
             for cascade in 0..SHADOW_LISTS {
                 if cascade < 3 && !active[cascade] {
@@ -352,6 +398,19 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The near cascade every other frame, the far one every fourth, never together.
+    #[test]
+    fn cascades_take_turns() {
+        let (mut near, mut far) = (0, 0);
+        for n in 0..400 {
+            let p = ShadowPhase(n);
+            assert!(!(p.near_due() && p.far_due()), "frame {n}");
+            near += p.near_due() as u32;
+            far += p.far_due() as u32;
+        }
+        assert_eq!((near, far), (200, 100));
+    }
 
     /// A still point keeps its place among the map's texels while the camera moves by
     /// fractions of a texel and turns: the cascade moves by whole texels only.

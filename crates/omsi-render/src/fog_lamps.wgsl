@@ -42,8 +42,9 @@ struct Camera {
 struct FogLampParams {
     // clip space (reversed Z) back to the render-origin relative world
     inv_view_proj: mat4x4<f32>,
-    // xy the picture's size in pixels, z 1: the sun's glare is added, w the share of the
-    // weather's extinction that is mist and fog (not rain)
+    // xy the picture's size in pixels, z 1: the sun's glare is added (2: it is all that is
+    // added, the half-size result holds only the sun's row), w the share of the weather's
+    // extinction that is mist and fog (not rain)
     size: vec4<f32>,
 };
 @group(1) @binding(0) var<uniform> fp: FogLampParams;
@@ -253,8 +254,20 @@ fn sun_glare(dir: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs_fog_composite(in: FogVsOut) -> @location(0) vec4<f32> {
     let ray = pixel_ray(in.clip.xy);
-    let len = ray.w;
-    let hp = in.clip.xy * 0.5 - vec2<f32>(0.5);
+    var air_light = vec3<f32>(0.0);
+    if (fp.size.z < 1.5) {
+        air_light = gathered_air_light(in.clip.xy, ray.w);
+    }
+    // the eye's glare from the sun, on top of everything (fp.size.z: on)
+    var glare = vec3<f32>(0.0);
+    if (fp.size.z > 0.5) {
+        glare = sun_glare(ray.xyz) * enh.exposure.x;
+    }
+    return vec4<f32>(air_light + min(glare, vec3<f32>(4000.0)), 0.0);
+}
+
+fn gathered_air_light(at: vec2<f32>, len: f32) -> vec3<f32> {
+    let hp = at * 0.5 - vec2<f32>(0.5);
     let base = vec2<i32>(floor(hp));
     let f = hp - floor(hp);
     // (the last row is the sun's, see `fs_fog_lamps`)
@@ -281,15 +294,9 @@ fn fs_fog_composite(in: FogVsOut) -> @location(0) vec4<f32> {
             best = s.rgb * min(len / max(s.a, 0.1), 1.0);
         }
     }
-    var air_light = sum / max(wsum, 1e-6);
     if (wsum < 1e-4) {
-        air_light = best;
+        return best;
     }
-    // the eye's glare from the sun, on top of everything (fp.size.z: on)
-    var glare = vec3<f32>(0.0);
-    if (fp.size.z > 0.5) {
-        glare = sun_glare(ray.xyz) * enh.exposure.x;
-    }
-    return vec4<f32>(air_light + min(glare, vec3<f32>(4000.0)), 0.0);
+    return sum / max(wsum, 1e-6);
 }
 

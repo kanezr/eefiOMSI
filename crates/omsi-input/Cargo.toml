@@ -1,0 +1,40 @@
+[package]
+name = "omsi-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "openOMSI's input devices: game controllers and their mappings, force feedback, head tracking, key names"
+
+[features]
+# `describe::ControlNames::from_table` for the tests of crates that use the names
+test-support = []
+
+[dependencies]
+omsi-cfg = { path = "../omsi-cfg" }
+omsi-content = { path = "../omsi-content" }
+omsi-script = { path = "../omsi-script" }
+omsi-sim = { path = "../omsi-sim" }
+omsi-vehicle = { path = "../omsi-vehicle" }
+winit.workspace = true
+glam.workspace = true
+log.workspace = true
+gilrs = "0.11"
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+# Windows: the game controllers through DirectInput, as OMSI reads them (see `dinput`), and
+# TrackIR / FreeTrack (see `headtrack`)
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_Memory", "Win32_UI_WindowsAndMessaging"] }
+
+# macOS: the axes of wheels and pedals straight from their HID elements (see `mac_hid`), and
+# Xbox-type controllers through the GameController framework (see `mac_game_controller`):
+# Apple's own driver takes them over completely and leaves gilrs nothing to read
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", default-features = false, features = ["std"] }
+block2 = { version = "0.6", default-features = false, features = ["std"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFArray", "CFSet", "CFString", "CFDictionary", "CFNumber"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSEnumerator", "NSString"] }
+objc2-io-kit = { version = "0.3.2", default-features = false, features = ["std", "libc", "hid"] }
+objc2-game-controller = { version = "0.3.2", default-features = false, features = ["std", "GCController", "GCDevice", "GCExtendedGamepad", "GCPhysicalInputProfile", "GCControllerElement", "GCControllerButtonInput", "GCControllerDirectionPad", "GCControllerAxisInput", "GCProductCategories", "block2"] }

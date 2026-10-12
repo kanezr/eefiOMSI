@@ -3,9 +3,9 @@
 //!
 //! The simulation is omsi-sim's `ai_traffic` (`TrafficSim`, which knows nothing of the
 //! GPU); here it gets the loaded world's lanes and vehicle types, the population around
-//! the player, the cars' pictures (`crate::view_sync::traffic`) and their sounds (`audio`).
+//! the player, the cars' pictures (`crate::view_sync::traffic`) and their sounds
+//! (`crate::view_sync::traffic_audio`).
 
-mod audio;
 mod control;
 mod mirror;
 mod parked;
@@ -37,25 +37,30 @@ pub(crate) use omsi_sim::ai_traffic::model::{vehicle_bodies, AiCar, BusSetup, Pa
 pub(crate) use setup::warm_up;
 pub(crate) use omsi_sim::ai_traffic::viewer::Viewer;
 
-/// The traffic simulation with what the game makes of it: the cars' sounds. Everything of
+/// The traffic simulation with what the game makes of it: the cars' sounds (played by the
+/// view sync, `crate::view_sync::traffic_audio`). Everything of
 /// the simulation reads through it (`Deref` to `TrafficSim`). The cars' pictures are the
 /// view sync's (`TrafficView`, in `view_sync::SimView`): the traffic's own steps that put a
 /// car on the road or take it off take it, and make or let go the car's renders at once.
 pub struct Traffic {
     pub sim: TrafficSim,
     /// `[sound_ai]` set of each car near the listener, by car id (see `audio`).
-    sounds: HashMap<u64, omsi_audio::SoundSet>,
+    pub(crate) sounds: HashMap<u64, omsi_audio::SoundSet>,
     /// Sound sets of despawned cars, stopped at the next audio update.
-    orphan_sounds: Vec<omsi_audio::SoundSet>,
+    pub(crate) orphan_sounds: Vec<omsi_audio::SoundSet>,
     /// The bus the player rides in on foot, heard from inside: its whole `[sound]` set as
     /// the player's own bus is heard from its cab (#1286).
-    riding_sounds: Option<(u64, omsi_audio::SoundSet)>,
+    pub(crate) riding_sounds: Option<(u64, omsi_audio::SoundSet)>,
     /// `[sound_ai]` configurations by file.
-    sound_cfgs: HashMap<std::path::PathBuf, Option<Arc<omsi_vehicle::SoundCfg>>>,
+    pub(crate) sound_cfgs: HashMap<std::path::PathBuf, Option<Arc<omsi_vehicle::SoundCfg>>>,
     /// What each vehicle definition (by its file) is heard with, its paths resolved once:
     /// a car waiting for its clips looked them all up on the disk again every frame, and a
     /// car without a usable sound configuration did so as long as it was near.
-    sound_plans: HashMap<std::path::PathBuf, Option<Arc<audio::SoundPlan>>>,
+    pub(crate) sound_plans: HashMap<std::path::PathBuf, Option<Arc<crate::view_sync::traffic_audio::SoundPlan>>>,
+    /// The traffic light lamps updated in turns far off (see `view_sync::traffic`): the
+    /// frames counted, and the seconds each far lamp's script is owed, by script.
+    pub(crate) lamp_turn: u32,
+    pub(crate) lamp_owed: HashMap<usize, f32>,
 }
 
 impl std::ops::Deref for Traffic {
@@ -82,6 +87,8 @@ impl Traffic {
             riding_sounds: None,
             sound_cfgs: HashMap::new(),
             sound_plans: HashMap::new(),
+            lamp_turn: 0,
+            lamp_owed: HashMap::new(),
         }
     }
 

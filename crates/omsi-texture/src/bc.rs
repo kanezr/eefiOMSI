@@ -655,6 +655,17 @@ fn linear_to_srgb_table() -> &'static [u8; 4097] {
 /// The next mip level of an sRGB picture: a 2x2 box in linear light (what the GPU's
 /// filtered blit into an sRGB target gives), alpha averaged as it is.
 pub fn downsample(rgba: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+    downsample_filtered(rgba, w, h, false)
+}
+
+/// Colour mips use coverage-weighted RGB, like the GPU mip shader, so white RGB in
+/// clear texels cannot bleach the visible silhouette. With no covered texel, keep
+/// the plain RGB: opaque materials may use zero alpha only as a reflection mask.
+pub fn downsample_alpha_weighted(rgba: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+    downsample_filtered(rgba, w, h, true)
+}
+
+fn downsample_filtered(rgba: &[u8], w: u32, h: u32, weighted: bool) -> (Vec<u8>, u32, u32) {
     let (w, h) = (w as usize, h as usize);
     let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
     let lin = srgb_to_linear_table();
@@ -663,21 +674,26 @@ pub fn downsample(rgba: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
     let fill_row = |y: usize, dst: &mut [u8]| {
         for x in 0..nw {
             let mut c = [0.0f32; 3];
+            let mut covered = [0.0f32; 3];
             let mut a = 0u32;
             for dy in 0..2 {
                 let sy = (y * 2 + dy).min(h - 1);
                 for dx in 0..2 {
                     let sx = (x * 2 + dx).min(w - 1);
                     let o = (sy * w + sx) * 4;
-                    c[0] += lin[rgba[o] as usize];
-                    c[1] += lin[rgba[o + 1] as usize];
-                    c[2] += lin[rgba[o + 2] as usize];
-                    a += rgba[o + 3] as u32;
+                    let alpha = rgba[o + 3] as u32;
+                    for k in 0..3 {
+                        let v = lin[rgba[o + k] as usize];
+                        c[k] += v;
+                        if weighted { covered[k] += v * alpha as f32; }
+                    }
+                    a += alpha;
                 }
             }
             let d = &mut dst[x * 4..x * 4 + 4];
             for k in 0..3 {
-                d[k] = back[((c[k] * 0.25 * 4096.0 + 0.5) as usize).min(4096)];
+                let v = if weighted && a > 0 { covered[k] / a as f32 } else { c[k] * 0.25 };
+                d[k] = back[((v * 4096.0 + 0.5) as usize).min(4096)];
             }
             d[3] = ((a + 2) / 4) as u8;
         }

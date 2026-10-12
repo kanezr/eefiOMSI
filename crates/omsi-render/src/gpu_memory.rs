@@ -130,8 +130,8 @@ pub(super) fn texture_allowance_mb(info: &wgpu::AdapterInfo, vram: Option<u64>, 
     let discrete_allowance = |fallback| {
         vram.filter(|v| *v >= 512).map_or(fallback, |v| {
             if v <= 2560 { v * 35 / 100 }
-            else if v <= 6144 { (v / 2).min(1600) }
-            else { v * 3 / 10 }
+            else if v <= 6144 { (v * 2 / 3).min(2048) }
+            else { (v * 4 / 10).min(4096) }
         })
     };
     match info.device_type {
@@ -161,7 +161,7 @@ enum Picture {
 
 /// A small or shared graphics chip (the processor's graphics outside a Mac, a phone, a
 /// card of up to 2.5 GB, OpenGL whose memory nothing tells) is a weak one; a card of up
-/// to 4 GB a modest one. (The settings' "High" on such a machine ran out of memory or
+/// to 4 GB, and an iPhone's or an iPad's, a modest one. (The settings' "High" on such a machine ran out of memory or
 /// at a dozen frames a second.)
 fn picture(backend: wgpu::Backend, device_type: wgpu::DeviceType, vram: Option<u64>) -> Picture {
     let weak = (backend == wgpu::Backend::Gl && vram.is_none())
@@ -171,7 +171,7 @@ fn picture(backend: wgpu::Backend, device_type: wgpu::DeviceType, vram: Option<u
         || vram.is_some_and(|v| v <= 2560);
     if weak {
         Picture::Weak
-    } else if vram.is_some_and(|v| v <= 4200) {
+    } else if vram.is_some_and(|v| v <= 4200) || cfg!(target_os = "ios") {
         Picture::Modest
     } else {
         Picture::AsAsked

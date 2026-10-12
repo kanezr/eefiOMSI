@@ -282,7 +282,9 @@ impl AiBody {
             front_long,
             rear_long,
             max_steer,
-            steer_rate: if heavy { 25.0 } else { 40.0 },
+            // (a bus driver turns his wheel briskly too: at 25 deg/s the AI buses came into every
+            // junction turn late and ran over the kerb, half their turning time past the lane's edge)
+            steer_rate: if heavy { 40.0 } else { 45.0 },
             wheels,
             axle_count,
             mass,
@@ -430,7 +432,10 @@ impl AiBody {
         // the planner's position along the way leads; the body keeps up with it
         let along = (target - self.rear).dot(fwd) as f32;
         let v = if speed < 0.02 && along.abs() < 0.05 { 0.0 } else { (speed + 1.5 * along).clamp(0.0, speed + 3.0) };
-        let look = ((1.2 * self.wheelbase).max(3.5) + 0.6 * speed.min(20.0)) * self.look_scale.clamp(0.25, 2.0);
+        // (a long wheelbase looks less far ahead: 1.2 wheelbases and more, a bus aimed 8-10 m
+        // down its way and cut every junction turn over the kerb)
+        let (base, per_speed) = if self.wheelbase <= 3.0 { ((1.2 * self.wheelbase).max(3.5), 0.6) } else { (3.6 + 0.5 * (self.wheelbase - 3.0), 0.45) };
+        let look = (base + per_speed * speed.min(20.0)) * self.look_scale.clamp(0.25, 2.0);
         let g = way(self.rot_long + look).truncate() - self.rear;
         let alpha = (g.dot(right) as f32).atan2(g.dot(fwd) as f32).clamp(-FRAC_PI_2, FRAC_PI_2);
         let reach = (g.length() as f32).max(1.0);

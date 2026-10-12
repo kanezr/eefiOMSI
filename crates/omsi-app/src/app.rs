@@ -8,8 +8,9 @@ pub(crate) use groups::*;
 const SLOW_UPLOAD_MB_S: f64 = 300.0;
 
 /// The loading screen's colour (the sky of its blank camera, see `drive_start`): what the
-/// game's window shows before its renderer is there.
-const LOADING_BACKGROUND: wgpu::Color = wgpu::Color { r: 0.08, g: 0.10, b: 0.14, a: 1.0 };
+/// game's window shows before its renderer is there - the loading screen's own #121212 (in
+/// linear light), so the window does not show a blue-grey before it.
+const LOADING_BACKGROUND: wgpu::Color = wgpu::Color { r: 0.0060, g: 0.0060, b: 0.0060, a: 1.0 };
 
 /// The game window's start while its renderer is being built (see `App::create_window`).
 pub(crate) struct WindowStart {
@@ -52,7 +53,7 @@ pub(crate) struct App {
     pub(crate) world: Option<Arc<World>>,
     /// Where the camera looks from and to, per view (see `ViewState`).
     pub(crate) cam: ViewState,
-    /// Chat, mouse-over names and name tags (Roboto).
+    /// Chat, mouse-over names and name tags (Inter).
     pub(crate) ui: Option<ui::Ui>,
     /// Frame timing, profiling and the test hooks (see `PerfState`).
     pub(crate) perf: PerfState,
@@ -80,6 +81,8 @@ pub(crate) struct App {
     pub(crate) shell: crate::shell::Shell,
     /// The photo mode, while it is on.
     pub(crate) photo: Option<crate::photo::Photo>,
+    /// The photo mode's settings, kept from one photo to the next in the session.
+    pub(crate) photo_settings: Option<crate::photo::Settings>,
     /// The developer tools, while they are open (Ctrl+Shift+D).
     pub(crate) devtools: Option<Box<crate::devtools::DevTools>>,
 }
@@ -92,6 +95,7 @@ impl App {
     pub(crate) fn vr_active(&self) -> bool { false }
 
     pub(crate) fn resumed_impl(&mut self, event_loop: &ActiveEventLoop) {
+        crate::frame_stages::log_order();
         if let Some(window) = self.window.clone() {
             // back from the background (a phone): the window's surface is made again (on the
             // device whose renderer is still being built, while it is)
@@ -402,12 +406,14 @@ impl App {
             log::info!("weather cycle: starting with {:?}", self.args.weather);
             self.session.weather_cycle = Some(c);
         }
-        self.session.weather = Some(load_weather(&self.args));
+        let (weather, model) = load_weather_run(&self.args);
+        self.session.weather = Some(weather);
+        self.session.sky.model = model;
         // the roads start in the state this weather has already left them in, as they do
         // offscreen: a session begun in the rain used to open on a bone-dry street
         self.session.wetness = self.session.weather.as_ref().map(initial_wetness).unwrap_or(0.0);
         self.clock = start_clock(&self.args);
-        setup_sky(&self.args, &renderer, &mut scene, self.session.envir.as_ref(), self.session.weather.as_ref());
+        setup_sky(&self.args, &renderer, &mut scene, self.session.envir.as_ref(), self.session.weather.as_ref(), &mut self.session.sky.clouds);
         // the window streams the tiles around the camera unless a fixed area was asked for
         if !self.args.all && self.args.radius.is_none() {
             match opened.unwrap_or_else(|| open_world(&self.args)) {
@@ -615,6 +621,10 @@ impl App {
                     if self.args.schedule {
                         let mut sch =
                             schedule::Schedule::new(&self.args.root, &w, &start_clock(&self.args));
+                        // (the tours' buses drawn alike on every machine of a LAN game)
+                        if let Some(lan) = self.net.lan.as_ref() {
+                            sch.sim.vehicle_seed = omsi_script::mix_seed(lan::population_seed(lan) ^ 0x746f_7572_5f62_7573);
+                        }
                         sch.precache(
                             &w,
                             &renderer,
@@ -729,6 +739,13 @@ impl App {
             None => None,
         };
         let Some((done, total)) = progress else {
+            // (the loading screen, if it showed, runs its bar to the end and fades over the
+            // first pictures: `frame_ui`)
+            self.menus.loading.finish();
+            // (how long it took, for the next load of this map's bar)
+            if self.menus.loading.elapsed() > 0.0 {
+                crate::ui::LoadTimes::record(&self.args.map, self.menus.loading.elapsed());
+            }
             let w = self.world.clone().expect("world");
             log::info!(
                 "map ready after {:.2} s: {} tiles loaded",
@@ -760,16 +777,15 @@ impl App {
             scene.overlays.clear();
             let dpi = win.scale_factor() as f32;
             let scale = dpi * crate::ui::size_factor(s.config.height as f32, dpi, self.settings.ui_scale, self.settings.ui_scale_window);
-            ui.loading(
-                &renderer,
-                &mut scene,
-                s.config.width as f32,
-                s.config.height as f32,
-                scale,
-                name.trim(),
-                "",
-                done as f32 / total.max(1) as f32,
-            );
+            // (the bar eases towards the count: it came in unevenly and jumped to its end)
+            let dt = self.menus.loading.tick();
+            if self.menus.loading.expected <= 0.0 {
+                self.menus.loading.expected = crate::ui::LoadTimes::expected(&self.args.map).unwrap_or(crate::ui::LOADING_FIRST_GUESS);
+                log::info!("loading: {:.1} s expected for {}", self.menus.loading.expected, self.args.map);
+            }
+            self.menus.loading.step(done as f32 / total.max(1) as f32, dt);
+            self.menus.loading.title = name.trim().to_string();
+            ui.loading(&renderer, &mut scene, s.config.width as f32, s.config.height as f32, scale, name.trim(), self.menus.loading.shown(), self.menus.loading.clock(), self.menus.loading.tip());
             let acquired = s.acquire();
             // a swapchain that no longer fits the window (Vulkan says so after the switch
             // to full screen, without a resize event) is made again, as the game's own
@@ -803,6 +819,17 @@ impl App {
                     &blank,
                     &lighting,
                 );
+                // `shot <file>` of an input script, while the loading screen stands
+                if let Some((path, _)) = self.perf.shot.take() {
+                    let path = path.to_string_lossy().into_owned();
+                    match renderer.render_to_image(&mut scene, s.config.width, s.config.height, &blank, &lighting) {
+                        Ok(px) => match image::save_buffer(path.trim(), &px, s.config.width, s.config.height, image::ColorType::Rgba8) {
+                            Ok(()) => log::info!("input script: loading screen written to {}", path.trim()),
+                            Err(e) => log::warn!("input script: {} could not be written: {e}", path.trim()),
+                        },
+                        Err(e) => log::warn!("input script: the loading screen could not be rendered: {e}"),
+                    }
+                }
                 win.pre_present_notify();
                 s.present(&renderer.device, &renderer.queue, frame);
                 self.renderer = Some(renderer);
@@ -869,11 +896,11 @@ impl App {
         );
         // Uploads can temporarily exceed the texture budget before the next frame's
         // housekeeping pass. Recheck immediately after streaming so far textures are
-        // reduced before the renderer allocates more frame resources.
+        // reduced before the renderer allocates more frame resources (only when over it).
         if !changed {
             return;
         }
-        w.update_texture_budget(r, scene, &centers, true);
+        w.texture_budget_after_streaming(r, scene, &centers);
         if let Some(p) = self.player.as_mut() {
             // (OMSI's [no_collision]: no solid object stops the bus)
             p.vehicle.collision = self.settings.collision_objects.then(|| w.collision.lock().clone());

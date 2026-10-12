@@ -27,7 +27,7 @@ impl App {
         custom.normalize();
         // (the weather set by hand is the weather now: the physical model of the "natural"
         // weather stops, or its next step put its own back at once)
-        crate::weather_model::stop();
+        self.session.sky.model = None;
         self.session.metar_rx=None;
         self.session.metar_once=false;
         let spec=custom.encode();
@@ -40,7 +40,7 @@ impl App {
         self.session.weather=Some(to);
         if clouds_changed{
             if let (Some(r),Some(scene))=(self.renderer.as_ref(),self.scene.as_mut()){
-                crate::weather_setup::setup_sky(&self.args,r,scene,self.session.envir.as_ref(),self.session.weather.as_ref());
+                crate::weather_setup::setup_sky(&self.args,r,scene,self.session.envir.as_ref(),self.session.weather.as_ref(),&mut self.session.sky.clouds);
             }
         }
         self.follow_date();
@@ -86,7 +86,8 @@ impl App {
         self.session.metar_once = false;
         let from = self.session.weather.clone().unwrap_or_default();
         self.args.weather = file.clone();
-        let to = load_weather(&self.args);
+        let (to, model) = crate::weather_setup::load_weather_run(&self.args);
+        self.session.sky.model = model;
         let name = to.name.clone();
         self.session.weather_blend = Some(crate::weather_cycle::Blend::new(from, to, secs));
         if share {
@@ -110,18 +111,18 @@ impl App {
             }
             if clouds_changed {
                 if let (Some(r), Some(scene)) = (self.renderer.as_ref(), self.scene.as_mut()) {
-                    crate::weather_setup::setup_sky(&self.args, r, scene, self.session.envir.as_ref(), self.session.weather.as_ref());
+                    crate::weather_setup::setup_sky(&self.args, r, scene, self.session.envir.as_ref(), self.session.weather.as_ref(), &mut self.session.sky.clouds);
                 }
             }
         }
         // the physical model goes on with the clock (unless a change is coming in)
         if self.session.weather_blend.is_none() {
-            if let Some(w) = crate::weather_model::refresh(&self.clock) {
+            if let Some(w) = self.session.sky.model.as_mut().map(|m| m.refresh(&self.clock)) {
                 let kind_changed = self.session.weather.as_ref().is_none_or(|old| old.clouds.0 != w.clouds.0);
                 self.session.weather = Some(w);
                 if kind_changed {
                     if let (Some(r), Some(scene)) = (self.renderer.as_ref(), self.scene.as_mut()) {
-                        crate::weather_setup::setup_sky(&self.args, r, scene, self.session.envir.as_ref(), self.session.weather.as_ref());
+                        crate::weather_setup::setup_sky(&self.args, r, scene, self.session.envir.as_ref(), self.session.weather.as_ref(), &mut self.session.sky.clouds);
                     }
                 }
             }

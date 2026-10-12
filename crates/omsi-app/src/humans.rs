@@ -9,13 +9,11 @@ use crate::ambience;
 use crate::scene::World;
 use crate::traffic::Traffic;
 use glam::DVec3;
-use hashbrown::HashMap;
 use omsi_render::{Camera, Renderer, Scene};
 use omsi_sim::human::HumanType;
 use omsi_sim::people::pax::{StopPlan, TripPlan};
 use omsi_sim::people::{DutyTrip, PeopleSim};
 use omsi_sim::VehicleInstance;
-use parking_lot::MutexGuard;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -34,7 +32,6 @@ pub use omsi_sim::people::Person;
 pub use omsi_sim::people::VoiceLine;
 
 /// The map's traffic keeps left (its stops are on the left): see the doors of `Cabin`.
-pub(crate) use omsi_sim::people::LEFT_HAND;
 
 /// The people as the game drives them. Everything of the simulation reads through it
 /// (`Deref` to `PeopleSim`). Their pictures are the view sync's (`PeopleView`, in
@@ -63,55 +60,6 @@ pub struct Eye;
 impl Eye {
     pub fn of(cam: &Camera, aspect: f32) -> omsi_sim::people::Eye {
         omsi_sim::people::Eye::looking(cam.position, cam.forward().as_dvec3(), cam.fov_deg as f64, aspect)
-    }
-}
-
-/// What the people need of the loaded world (see `omsi_sim::people::World`).
-impl omsi_sim::people::World for World {
-    fn root(&self) -> &Path {
-        &self.root
-    }
-    fn map_dir(&self) -> &Path {
-        &self.map_dir
-    }
-    fn walk_height(&self, x: f64, y: f64) -> Option<f64> {
-        World::walk_height(self, x, y)
-    }
-    fn walk_height_near(&self, x: f64, y: f64, near: f64) -> Option<f64> {
-        World::walk_height_near(self, x, y, near)
-    }
-    fn has_ground(&self, x: f64, y: f64) -> bool {
-        World::has_ground(self, x, y)
-    }
-    fn stop_exit_weight(&self, id: i64) -> f32 {
-        World::stop_exit_weight(self, id)
-    }
-    fn stop_enter(&self, id: i64) -> (f32, f32) {
-        World::stop_enter(self, id)
-    }
-    fn stop_side(&self, id: i64) -> f32 {
-        World::stop_side(self, id)
-    }
-    fn stop_length(&self, id: i64) -> f32 {
-        World::stop_length(self, id)
-    }
-    fn bus_stops(&self) -> MutexGuard<'_, Vec<(i64, DVec3, f64, String)>> {
-        self.bus_stops.lock()
-    }
-    fn waiting_places(&self) -> MutexGuard<'_, Vec<(i64, DVec3, f64, f32)>> {
-        self.waiting_places.lock()
-    }
-    fn object_positions(&self) -> MutexGuard<'_, HashMap<i64, (DVec3, [f64; 3])>> {
-        self.object_positions.lock()
-    }
-    fn collision(&self) -> MutexGuard<'_, Arc<omsi_sim::collision::CollisionWorld>> {
-        self.collision.lock()
-    }
-    fn parked_boxes(&self) -> MutexGuard<'_, Arc<Vec<omsi_sim::collision::Obb>>> {
-        self.parked_boxes.lock()
-    }
-    fn tiles_generation(&self) -> u64 {
-        self.tiles_generation.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 

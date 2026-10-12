@@ -370,7 +370,7 @@ Not available: canvas, tables, lists (`ul`/`li`), forms and `input` fields, ifra
 * Layout is plain block flow with wrapped inline text.
 
 Not available: flexbox, grid, floats, `position`, borders, gradients, shadows, `opacity`,
-`overflow`, animations and transitions, custom fonts. Text is drawn in Roboto.
+`overflow`, animations and transitions, custom fonts. Text is drawn in Inter.
 
 Since there is no `overflow`, a box doesn't clip its content. If a text is too long for its
 box, shorten it yourself.

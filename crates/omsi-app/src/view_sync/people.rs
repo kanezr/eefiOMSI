@@ -20,11 +20,15 @@ use omsi_render::{AlphaMode, MaterialId, MeshId, Renderer, Scene};
 use omsi_sim::human::{skin, HumanType};
 use omsi_sim::people::{BodyOp, Person, Place, State};
 use omsi_sim::VehicleInstance;
-use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod animation;
+
+/// About how long one person's pose and skinning takes (s), and the work worth a helper
+/// of the pool (see `omsi_cfg::par`).
+const POSE_SECS: f64 = 25e-6;
+const POSE_PER_HELPER: f64 = 0.5e-3;
 
 /// The renderer's side of the people, kept apart from the simulation (`view_sync::SimView`):
 /// it starts afresh with every `Humans` (`PeopleView::new`, by `Humans::new`).
@@ -49,6 +53,8 @@ pub(crate) struct PeopleView {
     /// Frames synced, people posed and skinned, the time that took and the part of it spent
     /// uploading (ms), in total.
     pub(crate) pose_stats: (u32, usize, f64, f64),
+    /// Who is posed this frame, per person (kept from frame to frame).
+    due: Vec<bool>,
     /// `OMSI_TRACE_PAX=<csv>`: every person near the eye, every frame (see `sync`).
     pub(crate) trace: Option<std::io::BufWriter<std::fs::File>>,
     /// The tear-off ticket blocks of the player's bus (`money::TicketBlocks`).
@@ -66,6 +72,7 @@ impl PeopleView {
             enhanced_poses: animation::enabled(),
             last_sync: 0.0,
             pose_stats: (0, 0, 0.0, 0.0),
+            due: Vec::new(),
             trace: omsi_cfg::flags::OMSI_TRACE_PAX.var().and_then(|f| std::fs::File::create(f).ok()).map(|f| {
                 use std::io::Write;
                 let mut w = std::io::BufWriter::new(f);
@@ -279,7 +286,8 @@ impl Humans {
         let all = self.sim.time - view.last_sync > 0.12;
         let sdt = (self.sim.time - view.last_sync).clamp(0.0, 0.5) as f32;
         view.last_sync = self.sim.time;
-        let mut due: Vec<bool> = Vec::with_capacity(self.sim.people.len());
+        let mut due = std::mem::take(&mut view.due);
+        due.clear();
         for (k, p) in self.sim.people.iter_mut().enumerate() {
             p.since_posed = p.since_posed.saturating_add(1);
             let d = p.position + DVec3::Z * 0.9 - from;
@@ -347,21 +355,13 @@ impl Humans {
             *skin_bones = Some(bones);
             *pose_changed = true;
         };
-        // a handful is quicker on this thread than handed to the pool
-        if n_due >= 8 {
-            self.sim.people
-                .par_iter_mut()
-                .zip(due.par_iter())
-                .with_min_len(2)
-                .filter(|(_, go)| **go)
-                .for_each(|(p, _)| pose_one(p));
-        } else {
-            self.sim.people
-                .iter_mut()
-                .zip(&due)
-                .filter(|(_, go)| **go)
-                .for_each(|(p, _)| pose_one(p));
-        }
+        // Posed on this thread, with workers of the pool joining in only when there is work
+        // for them (`frame_each`): handed to the pool whole (a par_iter from this thread) the
+        // frame waited for its busy workers - Spandau, 9 people a frame: 2.4 ms against ~0.2
+        // ms posed here, and up to 39 ms in the frames where the workers were busy.
+        let mut due_people: Vec<&mut Person> = self.sim.people.iter_mut().zip(&due).filter(|(_, go)| **go).map(|(p, _)| p).collect();
+        let helpers = omsi_cfg::par::helpers_for(due_people.len() as f64 * POSE_SECS, POSE_PER_HELPER);
+        omsi_cfg::par::frame_each(&mut due_people, helpers, |p| pose_one(p));
         let upload = std::time::Instant::now();
         for (p, &go) in self.sim.people.iter_mut().zip(&due) {
             if go {
@@ -450,6 +450,7 @@ impl Humans {
                 }
             }
         }
+        view.due = due;
         view.pose_stats.0 += 1;
         view.pose_stats.1 += n_due;
         view.pose_stats.2 += started.elapsed().as_secs_f64() * 1000.0;

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openOMSI - Privacy</title>
+<meta name="description" content="What openOMSI does and does not do with your data.">
+<link rel="icon" type="image/svg+xml" href="../assets/icon.svg">
+<meta name="color-scheme" content="light dark">
+<style>
+  :root { --bg: #ffffff; --fg: #1f2227; --muted: #5d636c; --accent: #f78034; --line: #e3e5e8; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #16181c; --fg: #eceef1; --muted: #a2a8b1; --line: #2b2f35; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 32px; margin: 8px 0 4px; }
+  h2 { font-size: 20px; margin: 32px 0 8px; }
+  p, li { color: var(--fg); }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
+</style>
+</head>
+<body>
+<main>
+<p><a href="../">openOMSI</a></p>
+<h1>Privacy</h1>
+<p class="muted">Applies to openOMSI on every platform, including the iPhone, iPad and Mac apps. Last changed 12 October 2026.</p>
+
+<p>openOMSI has no accounts, no advertising, no analytics SDKs and no tracking. Your settings, saved games,
+screenshots and the OMSI 2 content you add stay on your device.</p>
+
+<h2>"Playing now" counter</h2>
+<p>While a drive runs, the game tells the project's counter service every few minutes that one more copy of
+openOMSI is being played, and says goodbye when the drive ends. It sends a random id made for that session alone
+(a new one every start, not stored on your device), the game's version and the kind of system (for example
+iOS). It sends no name, no device identifier and nothing about what you play. The service forgets an id 25 minutes
+after its last message and does not store IP addresses. The website shows the resulting count. You can switch this
+off in the launcher: Settings, General, "Count me on the website's 'playing now'".</p>
+
+<h2>Online features you choose to use</h2>
+<ul>
+  <li><b>Multiplayer:</b> when you host or join a session, the other players' games receive what the session needs:
+  the driver name you chose, your vehicle, its position and your network address. Sessions are run by players, not by
+  the project; finding a session may go through a public message relay (ntfy.sh) and Cloudflare tunnels.</li>
+  <li><b>Real weather and internet radio:</b> if you turn them on, the game fetches weather reports
+  (aviationweather.gov) and radio streams directly from those services. They see an ordinary request from your
+  network address.</li>
+  <li><b>Downloads:</b> mods, translation models or other files you choose to download come from the sites they are
+  hosted on (for example GitHub or Hugging Face).</li>
+</ul>
+
+<h2>Children</h2>
+<p>openOMSI does not knowingly collect personal information from anyone, children included.</p>
+
+<h2>Contact</h2>
+<p>Questions about privacy: open an issue at
+<a href="https://github.com/openOMSI-org/openOMSI/issues">github.com/openOMSI-org/openOMSI/issues</a>
+or ask on <a href="https://discord.gg/VG2EKVafYG">Discord</a>.</p>
+
+<hr>
+<p class="muted">openOMSI is an independent project and is not affiliated with MR Software or Aerosoft.</p>
+</main>
+</body>
+</html>

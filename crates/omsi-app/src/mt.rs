@@ -43,6 +43,8 @@ fn state() -> &'static (Mutex<Mt>, Condvar) {
     S.get_or_init(|| (Mutex::new(Mt::default()), Condvar::new()))
 }
 
+// (process-wide like the one translation worker thread and its model files: the setting
+// switches it, the launcher and every session share it)
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static WORKER: std::sync::Once = std::sync::Once::new();
 /// What the translation is doing, for the launcher's settings page.

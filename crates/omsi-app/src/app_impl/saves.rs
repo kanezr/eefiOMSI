@@ -80,7 +80,39 @@ impl App {
     /// `laststn.osn` in the map's folder (the content folder's copy: the original is never
     /// written), as OMSI keeps it: the launcher offers to continue it. Not
     /// in a tutorial, a LAN session or without a bus of one's own.
+    /// [`App::save_last_situation`] every five minutes of play: the situation is put together
+    /// now, the files (the situation, the script textures as PNG) are written on a thread of
+    /// their own - on the frame's thread they made a hitch every five minutes.
+    pub(crate) fn autosave_last_situation(&mut self) {
+        if self.menus.tutorial.is_some() || self.net.lan.is_some() || self.player.is_none() {
+            return;
+        }
+        let (Some(w), Some(cam)) = (self.world.as_ref(), self.camera.as_ref()) else { return };
+        let Some(dir) = std::path::Path::new(&self.args.map.replace('\\', "/")).parent().map(|d| d.to_path_buf()) else { return };
+        let Some(base) = crate::startup::content_dir() else { return };
+        let dir = base.join(dir);
+        let out = dir.join("laststn.osn");
+        let sit = build_situation(&self.args, w, &self.clock, self.args.weather.as_deref(), self.player.as_ref(), &self.session.placed, cam, self.session.duty.as_ref(), "Last situation");
+        let textures: Vec<(Vec<u8>, u32, u32)> = self.player.as_ref().map(|p| p.vehicle.host.script_textures.iter().map(|st| (st.rgba.clone(), st.width, st.height)).collect()).unwrap_or_default();
+        let spawned = std::thread::Builder::new().name("autosave".into()).spawn(move || {
+            let _one = SAVING.lock();
+            let _ = std::fs::create_dir_all(&dir);
+            match sit.save(&out) {
+                Ok(()) => {
+                    crate::situation::write_script_textures(&out, &textures);
+                    log::info!("saved the last situation {}", out.display());
+                }
+                Err(e) => log::warn!("saving {}: {e}", out.display()),
+            }
+        });
+        if let Err(e) = spawned {
+            log::warn!("autosave: no thread to write it on: {e}");
+        }
+    }
+
     pub(crate) fn save_last_situation(&mut self) -> Option<std::path::PathBuf> {
+        // (not while an autosave still writes the same files)
+        let _one = SAVING.lock();
         if self.menus.tutorial.is_some() || self.net.lan.is_some() || self.player.is_none() {
             return None;
         }
@@ -161,7 +193,7 @@ impl App {
                     crate::situation::save_script_textures(&out, &p.vehicle);
                 }
                 log::info!("saved situation {} ({} vehicles)", out.display(), sit.vehicles.len());
-                self.service_msg = Some(("Situation saved (quicksave)".into(), 3.0));
+                self.service_msg = Some(("Situation saved (quicksave): the launcher continues from it".into(), 4.0));
             }
             Err(e) => {
                 log::warn!("saving {}: {e}", out.display());
@@ -235,3 +267,7 @@ fn save_or_fallback(sit: &omsi_content::situation::Situation, out: &Path, rel: &
     sit.save(&alt)?;
     Ok(alt)
 }
+
+/// Held while the last situation is written: an autosave on its thread and a save on the
+/// frame's thread never write the same files at once.
+static SAVING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());

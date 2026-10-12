@@ -39,6 +39,11 @@ impl PeopleSim {
                 }
             }
         }
+        if omsi_cfg::flags::OMSI_PROFILE.is_set() {
+            for &(name, t) in &self.tick_stages {
+                self.stage_stats.add(name, t);
+            }
+        }
         self.tick_stats.0 += 1;
         self.tick_stats.1 += ms;
         self.tick_stats.2 = self.tick_stats.2.max(ms);
@@ -100,9 +105,10 @@ impl PeopleSim {
             }
         }
         stage!("pedestrian network");
+        let defer = std::mem::take(&mut self.defer_populate);
         if let Some(n) = net {
             self.stroll_timer -= dt;
-            if self.stroll_timer <= 0.0 {
+            if self.stroll_timer <= 0.0 && !defer {
                 self.stroll_timer = 1.0;
                 let c = self.center;
                 self.populate_with(world, Some(n), c);
@@ -138,13 +144,14 @@ impl PeopleSim {
             }
             self.bus_motion = motion;
         }
-        let buses = buses;
+        let buses = Arc::new(buses);
         self.last_buses = buses.clone();
+        let buses: &[BusNow] = &buses;
         let bus_ix: HashMap<BusId, usize> = buses.iter().enumerate().map(|(i, b)| (b.id, i)).collect();
         // the stops: which buses stand at them (sub_61f93c), who waits there (sub_61bf94)
-        let at_stops = self.register_buses(&buses, dt);
+        let at_stops = self.register_buses(buses, dt);
         self.claim_waiting();
-        self.ride_comfort(dt, bus, &buses, &bus_ix, world);
+        self.ride_comfort(dt, bus, buses, &bus_ix, world);
         if !self.avatar_only {
             self.stops_tick(dt, world);
         }
@@ -152,12 +159,15 @@ impl PeopleSim {
         // the passengers (sub_6ffc7c)
         let mut taken_ticket = false;
         let mut remove: Vec<usize> = Vec::new();
-        self.pax_frame(dt, world, &buses, &bus_ix, &at_stops, bus, &mut taken_ticket, &mut remove);
+        self.pax_frame(dt, world, buses, &bus_ix, &at_stops, bus, &mut taken_ticket, &mut remove);
         stage!("passengers");
         // the pedestrians: a crowd on the pavements (the cars around every player: the people
         // around the other LAN players wait for them at the kerb too)
-        let mut cars: Vec<(DVec2, DVec2, f64)> = Vec::new();
-        let mut blocks: Vec<Block> = Vec::new();
+        // (the lists of this part are kept from frame to frame, see `scratch`)
+        let mut cars = std::mem::take(&mut self.scratch.cars);
+        cars.clear();
+        let mut blocks = std::mem::take(&mut self.scratch.blocks);
+        blocks.clear();
         if let Some(t) = traffic {
             for c in &t.cars {
                 if self.far_from_players(c.vehicle.position, 320.0) {
@@ -192,22 +202,37 @@ impl PeopleSim {
             }
             blocks.extend(pb.blocks());
         }
-        let mut wants: Vec<Want> = Vec::with_capacity(self.people.len());
+        // (the vehicles by where they are: a look for a vehicle at a point goes through the
+        // ones of its cell, not all of them)
+        self.scratch.blocks = blocks;
+        self.scratch.file_blocks();
+        let mut wants = std::mem::take(&mut self.scratch.wants);
+        wants.clear();
         for i in 0..self.people.len() {
             self.people[i].t_state += dt;
             let w = if self.people[i].puppet.is_some() || matches!(self.people[i].state, State::Pax(_)) {
                 Want::stand(None, Activity::Stand)
             } else if self.people[i].remote {
-                self.mirror_want(i, &buses)
+                self.mirror_want(i, buses)
             } else {
                 self.decide(i, dt, world, net, traffic, &cars, &mut remove)
             };
             wants.push(w);
         }
+        self.scratch.cars = cars;
+        // (who goes at the end of the frame, as a mask: nobody is added to `remove` from here)
+        let mut gone = std::mem::take(&mut self.scratch.gone);
+        gone.clear();
+        gone.resize(self.people.len(), false);
+        for &r in &remove {
+            if let Some(g) = gone.get_mut(r) {
+                *g = true;
+            }
+        }
         // a standing vehicle in the way: wait, then go round it
         for i in 0..self.people.len() {
             let p = &self.people[i];
-            if remove.contains(&i) || p.puppet.is_some() || p.remote || !matches!(p.state, State::Strolling(_)) {
+            if gone[i] || p.puppet.is_some() || p.remote || !matches!(p.state, State::Strolling(_)) {
                 continue;
             }
             let want = wants[i].vel;
@@ -217,12 +242,15 @@ impl PeopleSim {
                 continue;
             }
             let ahead = p.position.truncate() + want / speed * 0.9;
-            let in_way = blocks.iter().any(|b| {
+            let blocks = &self.scratch.blocks;
+            let stands_in_way = |b: &Block| {
                 b.vel.length() < 0.5 && b.near(ahead, BODY_OUTSIDE + 0.15) && {
                     let (q, inside) = b.closest(ahead);
                     inside || (ahead - q).length() < BODY_OUTSIDE + 0.15
                 }
-            });
+            };
+            let in_way = self.scratch.blocks_at(ahead).iter().any(|&k| stands_in_way(&blocks[k as usize]));
+            debug_assert_eq!(in_way, blocks.iter().any(stands_in_way), "the vehicle grid missed one in the way");
             if !in_way {
                 self.people[i].car_wait = 0.0;
                 continue;
@@ -236,10 +264,12 @@ impl PeopleSim {
             }
         }
         // the crowd of the pavements (passengers outside stand in it as they are)
-        let mut walkers: Vec<Walker> = Vec::with_capacity(self.people.len());
-        let mut who: Vec<usize> = Vec::with_capacity(self.people.len());
+        let mut walkers = std::mem::take(&mut self.scratch.walkers);
+        walkers.clear();
+        let mut who = std::mem::take(&mut self.scratch.who);
+        who.clear();
         for (i, p) in self.people.iter().enumerate() {
-            if remove.contains(&i) || p.puppet.is_some() || p.remote || p.place != Place::Ground {
+            if gone[i] || p.puppet.is_some() || p.remote || p.place != Place::Ground {
                 continue;
             }
             let fixed = matches!(p.state, State::Pax(_));
@@ -257,26 +287,38 @@ impl PeopleSim {
             });
             who.push(i);
         }
-        let near_blocks: Vec<Block> = blocks.into_iter().filter(|b| walkers.iter().any(|w| b.near(w.pos, 25.0))).collect();
-        let mut g = walkers.clone();
-        crowd::step(&mut g, &near_blocks, &CrowdParams::default(), dt as f64);
-        let mut ground: Vec<(usize, Walker)> = g.into_iter().enumerate().collect();
+        self.scratch.gone = gone;
+        // the vehicles within 25 m of somebody of the crowd, in their order
+        let mut near_blocks = std::mem::take(&mut self.scratch.near_blocks);
+        self.scratch.blocks_near_crowd(&walkers, &mut near_blocks);
+        crowd::step(&mut walkers, &near_blocks, &CrowdParams::default(), dt as f64);
+        self.scratch.near_blocks = near_blocks;
+        let mut ground = std::mem::take(&mut self.scratch.ground);
+        ground.clear();
+        ground.extend(walkers.iter().copied().enumerate());
+        self.scratch.walkers = walkers;
         self.keep_out_of_walls(world, &who, &mut ground);
-        let mut moved = vec![false; self.people.len()];
-        for (k, w) in ground {
+        let mut moved = std::mem::take(&mut self.scratch.moved);
+        moved.clear();
+        moved.resize(self.people.len(), false);
+        for &(k, w) in &ground {
             let i = who[k];
             if matches!(self.people[i].state, State::Pax(_)) {
                 continue;
             }
             moved[i] = true;
-            self.apply(i, &w, &wants[i], dt, world, net, &buses, &bus_ix);
+            self.apply(i, &w, &wants[i], dt, world, net, buses, &bus_ix);
         }
+        self.scratch.ground = ground;
+        self.scratch.who = who;
         for i in 0..self.people.len() {
             if !moved[i] && !matches!(self.people[i].state, State::Pax(_)) {
-                self.carry(i, dt, &buses, &bus_ix, wants[i].face);
+                self.carry(i, dt, buses, &bus_ix, wants[i].face);
             }
         }
-        self.animate(dt, world, &buses, &bus_ix);
+        self.scratch.moved = moved;
+        self.scratch.wants = wants;
+        self.animate(dt, world, buses, &bus_ix);
         remove.sort_unstable();
         remove.dedup();
         for i in remove.into_iter().rev() {

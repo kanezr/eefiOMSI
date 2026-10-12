@@ -91,14 +91,14 @@ impl Renderer {
         // their thresholds while the head turned)
         let main_view = with_overlays || f.xr_view;
         let mut drawn_before = if main_view {
-            std::mem::take(&mut *self.cull_drawn.borrow_mut())
+            std::mem::take(&mut *self.history.cull_drawn.borrow_mut())
         } else {
             Vec::new()
         };
         let was_drawn = |i: usize| drawn_before.get(i / 64).is_some_and(|w| w & (1u64 << (i % 64)) != 0);
         let (mut sizes_before, mut sizes_now) = if main_view {
-            let sizes_before = std::mem::take(&mut *self.object_sizes.borrow_mut());
-            let mut sizes_now = std::mem::take(&mut *self.object_sizes_scratch.borrow_mut());
+            let sizes_before = std::mem::take(&mut *self.history.object_sizes.borrow_mut());
+            let mut sizes_now = std::mem::take(&mut *self.history.object_sizes_scratch.borrow_mut());
             sizes_now.clear();
             (sizes_before, sizes_now)
         } else {
@@ -245,9 +245,9 @@ impl Renderer {
         }
         if main_view {
             sizes_now.extend(found);
-            *self.object_sizes.borrow_mut() = sizes_now;
+            *self.history.object_sizes.borrow_mut() = sizes_now;
             sizes_before.clear();
-            *self.object_sizes_scratch.borrow_mut() = sizes_before;
+            *self.history.object_sizes_scratch.borrow_mut() = sizes_before;
         }
         if main_view {
             drawn_before.resize(scene.instances.len().div_ceil(64), 0);
@@ -255,7 +255,7 @@ impl Renderer {
             for &(i, _, _) in &visible {
                 drawn_before[i / 64] |= 1u64 << (i % 64);
             }
-            *self.cull_drawn.borrow_mut() = drawn_before;
+            *self.history.cull_drawn.borrow_mut() = drawn_before;
         }
         self.debug_flicker(scene, f, &fr, &visible);
         clock.stage(self, "cull", "mirror.cull");
@@ -311,7 +311,7 @@ impl Renderer {
         let camera = f.camera;
         if f.with_overlays && f.env.debug_flicker {
             let drawn: std::collections::HashSet<usize> = visible.iter().map(|v| v.0).collect();
-            let mut prev = self.flicker.borrow_mut();
+            let mut prev = self.history.flicker.borrow_mut();
             let mut now: HashMap<usize, bool> = HashMap::new();
             for (i, inst) in scene.instances.iter().enumerate() {
                 let m = &scene.meshes[inst.mesh];

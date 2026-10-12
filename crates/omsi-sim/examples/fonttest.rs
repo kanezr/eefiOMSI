@@ -1,4 +1,5 @@
 fn main() {
+    omsi_sim::image_decode::install(decode_picture);
     let root = std::path::PathBuf::from(std::env::args().nth(1).unwrap());
     let name = std::env::args().nth(2).unwrap();
     let text = std::env::args().nth(3).unwrap_or("EIN".into());
@@ -34,4 +35,11 @@ fn main() {
         let row: String = (0..w).step_by((w / 100).max(1) as usize).map(|x| if img[((y * w + x) * 4 + 3) as usize] > 0 { '#' } else { '.' }).collect();
         println!("{y:3} {row}");
     }
+}
+
+/// The game's picture decoder for the simulation (as omsi-app registers it at start).
+fn decode_picture(path: &std::path::Path) -> Result<omsi_sim::image_decode::DecodedImage, String> {
+    omsi_texture::decode_file(path)
+        .map(|i| omsi_sim::image_decode::DecodedImage { width: i.width, height: i.height, rgba: i.rgba, has_alpha: i.has_alpha })
+        .map_err(|e| e.to_string())
 }

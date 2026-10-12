@@ -12,7 +12,9 @@ impl App {
             // (the key made only when the view changed: `swap_view_look` does nothing else)
             if !crate::input_script::look_key_is(&self.cam.look_view, &self.view, Some(p.cam_choice)) {
                 let key = crate::input_script::look_key_of(&self.view, Some(p.cam_choice));
+                let left = self.cam.look_view.clone();
                 crate::input_script::swap_view_look(&mut self.cam.look, &mut self.cam.view_looks, &mut self.cam.look_view, &key);
+                crate::app_impl::swap_cam_zoom(&mut self.cam.view_zoom, &mut self.cam.cam_zooms, &left, &key, &self.view);
             }
             if let Some(cam) = self.camera.as_ref() {
                 let cam = *cam;

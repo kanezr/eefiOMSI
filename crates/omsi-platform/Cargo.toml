@@ -1,0 +1,21 @@
+[package]
+name = "omsi-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "openOMSI's platform services: updates, Discord's and the project's presence, the version stamp"
+
+[dependencies]
+omsi-cfg = { path = "../omsi-cfg" }
+# (its data folder and settings.cfg reader)
+omsi-launcher-core = { path = "../omsi-launcher-core" }
+anyhow.workspace = true
+log.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+sha2.workspace = true
+zip.workspace = true
+
+# Discord's IPC pipe on Windows (see `discord`)
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }

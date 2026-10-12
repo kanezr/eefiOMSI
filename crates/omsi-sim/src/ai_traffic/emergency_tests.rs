@@ -609,8 +609,9 @@ fn a_car_on_a_ring_drives_on() {
 
 #[test]
 fn the_speed_bonus_holds_on_an_active_drive_only_and_within_the_vehicle() {
-    assert!((bonus_limit(50.0, 200.0) - 65.0).abs() < 1e-3);
-    assert!((bonus_limit(100.0, 200.0) - 120.0).abs() < 1e-3);
+    // (1.5 times the limit, at most 30 km/h over it, never past the vehicle's own top speed)
+    assert!((bonus_limit(50.0, 200.0) - 75.0).abs() < 1e-3);
+    assert!((bonus_limit(100.0, 200.0) - 130.0).abs() < 1e-3);
     assert!((bonus_limit(50.0, 58.0) - 58.0).abs() < 1e-3);
     let f = Fixture::new();
     let mut road = street(DVec3::ZERO, 0.0, 3000.0);
@@ -628,7 +629,7 @@ fn the_speed_bonus_holds_on_an_active_drive_only_and_within_the_vehicle() {
         get(&t, e).state.speed * 3.6
     };
     let fast = run(true, 200.0);
-    assert!((fast - 65.0).abs() < 1.5, "on a drive at {fast:.1} km/h");
+    assert!((fast - 75.0).abs() < 1.5, "on a drive at {fast:.1} km/h");
     let capped = run(true, 58.0);
     assert!(capped < 58.5 && capped > 56.0, "its top speed at {capped:.1} km/h");
     let plain = run(false, 200.0);

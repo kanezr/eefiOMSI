@@ -62,8 +62,8 @@ impl App {
                 if !tiles.is_empty() {
                     log::info!("map editor: ground of tiles {tiles:?} at {at:?}");
                     world.forget_staged(&tiles);
-                    if let (Some(st), Some(r), Some(scene)) = (self.gfx.streamer.as_mut(), self.renderer.as_ref(), self.scene.as_mut()) {
-                        st.reload(r, scene, Some(&tiles), self.sound.audio.as_ref());
+                    if let Some(st) = self.gfx.streamer.as_mut() {
+                        st.reload(Some(&tiles));
                     }
                 }
                 msg

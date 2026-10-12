@@ -17,7 +17,7 @@ there.
   with C++* and the Windows SDK. CMake is needed to build the OpenXR dependency;
   it must be on `PATH`. Vulkan or DirectX 12 is used for drawing.
 * **Linux** (Debian/Ubuntu names):
-  `sudo apt install build-essential pkg-config libasound2-dev libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libssl-dev`.
+  `sudo apt install build-essential pkg-config libasound2-dev libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libssl-dev libwebkit2gtk-4.1-dev` (WebKitGTK for the desktop launcher).
   Vulkan drivers (Mesa, NVIDIA) are needed to play.
 * **Android**: the `aarch64-linux-android` Rust target, JDK 17, and an Android SDK with
   platform 34 or newer, build-tools and the NDK. `scripts/build-android.sh` looks for them

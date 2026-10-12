@@ -93,8 +93,17 @@ pub(crate) fn traffic_inputs(
         );
     }
     t.weekday = clock.weekday();
-    t.walkers = humans.map(|h| h.strollers()).unwrap_or_default();
-    t.people = humans.map(|h| h.on_foot()).unwrap_or_default();
+    // (into the lists of the last frame: two new ones every frame otherwise)
+    match humans {
+        Some(h) => {
+            h.strollers_into(&mut t.walkers);
+            h.on_foot_into(&mut t.people);
+        }
+        None => {
+            t.walkers.clear();
+            t.people.clear();
+        }
+    }
     // the player's obstacle boxes follow the streamed tiles; without a player the world's
     // own are asked
     t.occluders = player.and_then(|p| p.vehicle.collision.clone());

@@ -37,9 +37,44 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
     sorted[((p * sorted.len() as f64).ceil() as usize).saturating_sub(1).min(sorted.len() - 1)]
 }
 
-/// The frames after the warm-up: their number, time, rate, percentiles and slow frames.
+/// How even the frames were, in the order they came: the mean change from one frame to the
+/// next, the spread, the frames over twice the median, and the lowest and the highest frame
+/// count of the whole seconds (what the fps counter shows, one window after the other: a
+/// counter that jumps between 60 and 150 while nothing moves is uneven frames, which the
+/// average and even the percentiles hide).
+fn evenness(ms: &[f64], median: f64) -> Value {
+    if ms.is_empty() {
+        return json!({ "jitter_ms": 0.0, "stdev_ms": 0.0, "frames_over_2x_median": 0, "slowest_second_fps": 0, "fastest_second_fps": 0 });
+    }
+    let n = ms.len() as f64;
+    let jitter = ms.windows(2).map(|w| (w[1] - w[0]).abs()).sum::<f64>() / (n - 1.0).max(1.0);
+    let mean = ms.iter().sum::<f64>() / n;
+    let stdev = (ms.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / n).sqrt();
+    let spikes = ms.iter().filter(|&&t| t > 2.0 * median).count();
+    // (whole seconds only: the last, partial one would read low; a hair under 1000 ms counts,
+    // f32 frame times of 10 ms summed a hundred times are not quite 1000)
+    let (mut seconds, mut acc, mut count) = (Vec::new(), 0.0, 0u32);
+    for &t in ms {
+        acc += t;
+        count += 1;
+        if acc >= 1000.0 - 1e-3 {
+            seconds.push(count);
+            acc = 0.0;
+            count = 0;
+        }
+    }
+    json!({
+        "jitter_ms": jitter, "stdev_ms": stdev, "frames_over_2x_median": spikes,
+        "slowest_second_fps": seconds.iter().min().copied().unwrap_or(0),
+        "fastest_second_fps": seconds.iter().max().copied().unwrap_or(0),
+    })
+}
+
+/// The frames after the warm-up: their number, time, rate, percentiles, slow frames and how
+/// even they were.
 pub(crate) fn frame_summary(frame_times: &[f32]) -> Value {
-    let mut ms: Vec<f64> = frame_times.iter().map(|&t| t as f64 * 1000.0).collect();
+    let in_order: Vec<f64> = frame_times.iter().map(|&t| t as f64 * 1000.0).collect();
+    let mut ms = in_order.clone();
     ms.sort_by(f64::total_cmp);
     let seconds = ms.iter().sum::<f64>() / 1000.0;
     let over = |limit: f64| ms.iter().filter(|&&t| t > limit).count();
@@ -51,16 +86,21 @@ pub(crate) fn frame_summary(frame_times: &[f32]) -> Value {
         "frames_over_16_7_ms": over(16.7), "frames_over_33_3_ms": over(33.3),
         "frames_over_50_ms": over(50.0), "frames_over_100_ms": over(100.0),
         "frame_limit_reached": frame_times.len() >= MAX_FRAMES,
+        "evenness": evenness(&in_order, percentile(&ms, 0.5)),
     })
 }
 
 /// The log line of [`frame_summary`].
 pub(crate) fn log_line(s: &Value) -> String {
     let f = |k: &str| s[k].as_f64().unwrap_or(0.0);
+    let e = |k: &str| s["evenness"][k].as_f64().unwrap_or(0.0);
     format!(
         "profile: since 15 s {} frames, {:.1} fps, frame time p50 {:.1} / p95 {:.1} / p99 {:.1} / worst {:.1} ms, frames over 16.7 / 33.3 / 50 / 100 ms: {} / {} / {} / {}",
         f("frames"), f("average_fps"), f("p50_ms"), f("p95_ms"), f("p99_ms"), f("worst_frame_ms"),
         f("frames_over_16_7_ms"), f("frames_over_33_3_ms"), f("frames_over_50_ms"), f("frames_over_100_ms")
+    ) + &format!(
+        "; evenness: frame-to-frame change {:.2} ms, spread {:.2} ms, frames over twice the median {}, seconds counted {} to {} fps",
+        e("jitter_ms"), e("stdev_ms"), e("frames_over_2x_median"), e("slowest_second_fps"), e("fastest_second_fps")
     )
 }
 
@@ -152,5 +192,19 @@ mod tests {
         // (the frame rate is the frames over their time, not an average of rates)
         assert!((ms("average_fps") - 20.0).abs() < 1e-3);
         assert_eq!(frame_summary(&[])["average_fps"], 0.0);
+    }
+
+    #[test]
+    fn evenness_tells_a_sawtooth_from_an_even_frame() {
+        // (the same average, 10 ms: one even, one a heavy frame every fifth)
+        let even = frame_summary(&[0.010; 500]);
+        let saw: Vec<f32> = (0..500).map(|i| if i % 5 == 0 { 0.030 } else { 0.005 }).collect();
+        let saw = frame_summary(&saw);
+        let e = |s: &Value, k: &str| s["evenness"][k].as_f64().unwrap();
+        assert!(e(&even, "jitter_ms") < 1e-6 && e(&even, "stdev_ms") < 1e-6);
+        assert_eq!(e(&even, "frames_over_2x_median"), 0.0);
+        assert!((e(&saw, "jitter_ms") - 10.0).abs() < 0.1, "{}", e(&saw, "jitter_ms"));
+        assert_eq!(e(&saw, "frames_over_2x_median"), 100.0);
+        assert_eq!((e(&even, "slowest_second_fps"), e(&even, "fastest_second_fps")), (100.0, 100.0));
     }
 }

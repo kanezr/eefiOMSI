@@ -13,13 +13,19 @@ pub(crate) fn script_texture_dir(osn: &Path) -> PathBuf {
 
 /// Write the player's bus's script textures beside the situation `osn` was saved to.
 pub(crate) fn save_script_textures(osn: &Path, vehicle: &omsi_sim::VehicleInstance) {
+    let all: Vec<(&[u8], u32, u32)> = vehicle.host.script_textures.iter().map(|st| (&st.rgba[..], st.width, st.height)).collect();
+    write_script_textures(osn, &all);
+}
+
+/// [`save_script_textures`] from the textures' pixels (rgba, width, height), in their order.
+pub(crate) fn write_script_textures<P: AsRef<[u8]>>(osn: &Path, textures: &[(P, u32, u32)]) {
     let dir = script_texture_dir(osn);
     let _ = std::fs::remove_dir_all(&dir);
-    if vehicle.host.script_textures.is_empty() || std::fs::create_dir_all(&dir).is_err() {
+    if textures.is_empty() || std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    for (i, st) in vehicle.host.script_textures.iter().enumerate() {
-        if let Err(e) = image::save_buffer(dir.join(format!("{i}.png")), &st.rgba, st.width, st.height, image::ColorType::Rgba8) {
+    for (i, (rgba, width, height)) in textures.iter().enumerate() {
+        if let Err(e) = image::save_buffer(dir.join(format!("{i}.png")), rgba.as_ref(), *width, *height, image::ColorType::Rgba8) {
             log::warn!("saving script texture {i} beside {}: {e}", osn.display());
         }
     }

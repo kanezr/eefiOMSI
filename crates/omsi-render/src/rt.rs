@@ -794,7 +794,7 @@ impl Renderer {
                     layout: &rt.avg_layout,
                     entries: &[
                         wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&scene.textures[t].view) },
-                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.lin_sampler) },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.tone.lin_sampler) },
                         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &rt.tex_avg, offset: 0, size: wgpu::BufferSize::new(16) }) },
                     ],
                 })
@@ -818,7 +818,7 @@ impl Renderer {
     pub(super) fn encode_ray_tracing(&mut self, encoder: &mut wgpu::CommandEncoder, scene: &Scene, queries: Option<&wgpu::QuerySet>, timed: &mut Vec<&'static str>) {
         self.encode_texture_means(encoder, scene);
         let Some(rt) = self.rt.as_mut() else { return };
-        let Some(depth) = self.ao.as_ref().map(|a| &a.depth_view) else { return };
+        let Some(depth) = self.targets.ao.as_ref().map(|a| &a.depth_view) else { return };
         let Some(t) = rt.targets.as_ref() else { return };
         if !rt.to_build.is_empty() || !rt.tlas_built {
             let entries: Vec<wgpu::BlasBuildEntry> = rt
@@ -863,7 +863,7 @@ impl Renderer {
                     wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(inp) },
                     wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(raw) },
                     wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(out) },
-                    wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(&self.lin_sampler) },
+                    wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(&self.tone.lin_sampler) },
                 ],
             })
         };
@@ -894,7 +894,7 @@ impl Renderer {
     /// The ray-traced reflections of the window's picture, added to `HdrTargets::view` after
     /// the main pass (and before the rain on the glass, which looks through it).
     pub(super) fn encode_rt_reflections(&mut self, encoder: &mut wgpu::CommandEncoder, w: u32, h: u32, queries: Option<&wgpu::QuerySet>, timed: &mut Vec<&'static str>) {
-        let (Some(rt), Some(hdr), Some(ao), Some(probe)) = (self.rt.as_mut(), self.hdr_targets.get(&(w, h)), self.ao.as_ref(), self.probe.as_ref()) else { return };
+        let (Some(rt), Some(hdr), Some(ao), Some(probe)) = (self.rt.as_mut(), self.targets.hdr_targets.get(&(w, h)), self.targets.ao.as_ref(), self.tone.probe.as_ref()) else { return };
         let Some(gbuf) = hdr.gbuf.as_ref() else { return };
         let half = (w.div_ceil(refl_div()), h.div_ceil(refl_div()));
         if rt.refl.as_ref().is_none_or(|r| r.0 != half) {
@@ -929,10 +929,10 @@ impl Renderer {
                     wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&gbuf[0].1) },
                     wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&gbuf[1].1) },
                     wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(out) },
-                    wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(&self.lin_sampler) },
+                    wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(&self.tone.lin_sampler) },
                     wgpu::BindGroupEntry { binding: 9, resource: wgpu::BindingResource::TextureView(scene) },
                     wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::TextureView(&probe.view) },
-                    wgpu::BindGroupEntry { binding: 11, resource: self.enh_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 11, resource: self.tone.enh_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 12, resource: wgpu::BindingResource::TextureView(h12) },
                 ],
             })

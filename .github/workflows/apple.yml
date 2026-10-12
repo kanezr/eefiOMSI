@@ -1,0 +1,100 @@
+# openOMSI for iPhone, iPad and Mac as Apple's stores take it (scripts/build-apple.sh):
+# the .ipa for the App Store (TestFlight first), the Mac app signed with the Developer ID and
+# notarised, and the Mac App Store package. Started by hand until the App Store listing is
+# ready; pull requests only build for the Simulator and unsigned for the Mac.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   APPLE_TEAM_ID                  the Apple Developer team (10 characters)
+#   ASC_KEY_ID, ASC_ISSUER_ID      an App Store Connect API key (Users and Access → Integrations),
+#   ASC_KEY_P8_BASE64              role App Manager, and its .p8 file in base64
+# With the key, xcodebuild makes the certificates and profiles itself (automatic signing).
+name: Apple
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: Upload the iPhone/iPad build to TestFlight and the Mac App Store build to App Store Connect
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - 'apple/**'
+      - 'crates/omsi-app/src/ios.rs'
+      - 'crates/omsi-app/src/apple.rs'
+      - 'crates/omsi-app/src/apple_bridge.rs'
+      - 'scripts/build-apple.sh'
+      - '.github/workflows/apple.yml'
+
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: macos-26
+    env:
+      OPENOMSI_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      OPENOMSI_ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      OPENOMSI_ASC_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+      OPENOMSI_MAC_ARCHS: arm64 x86_64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim, aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: apple
+      - name: Tools
+        run: |
+          brew install xcodegen
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+      - name: App Store Connect key
+        if: ${{ github.event_name != 'pull_request' && env.OPENOMSI_ASC_KEY_ID != '' }}
+        env:
+          KEY: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          echo "$KEY" | base64 --decode > "$RUNNER_TEMP/asc/AuthKey.p8"
+          echo "OPENOMSI_ASC_KEY=$RUNNER_TEMP/asc/AuthKey.p8" >> "$GITHUB_ENV"
+      - name: iOS Simulator build (a check)
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          scripts/build-apple.sh rust ios-sim
+          scripts/build-apple.sh project
+          xcodebuild -project apple/openOMSI.xcodeproj -scheme openOMSI-iOS -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' OPENOMSI_RUST_TARGET="$PWD/target" OPENOMSI_SKIP_RUST=1 CODE_SIGNING_ALLOWED=NO build
+      - name: iPhone and iPad (.ipa)
+        if: ${{ github.event_name != 'pull_request' }}
+        run: scripts/build-apple.sh ipa
+      - name: Mac (Developer ID, notarised)
+        run: scripts/build-apple.sh mac
+      - name: Mac App Store
+        if: ${{ github.event_name != 'pull_request' }}
+        run: scripts/build-apple.sh mac-store
+      - name: Upload to App Store Connect
+        if: ${{ inputs.upload }}
+        run: |
+          xcrun altool --upload-app -f dist/apple/openOMSI.ipa -t ios --apiKey "$OPENOMSI_ASC_KEY_ID" --apiIssuer "$OPENOMSI_ASC_ISSUER" --p8-file-path "$OPENOMSI_ASC_KEY"
+          xcrun altool --upload-app -f dist/apple/store/openOMSI.pkg -t macos --apiKey "$OPENOMSI_ASC_KEY_ID" --apiIssuer "$OPENOMSI_ASC_ISSUER" --p8-file-path "$OPENOMSI_ASC_KEY"
+      - name: Package
+        run: |
+          mkdir -p out
+          v="$(sh scripts/version.sh)"
+          [ -f dist/apple/openOMSI.ipa ] && cp dist/apple/openOMSI.ipa "out/openOMSI-$v-ios.ipa" || true
+          ditto -c -k --keepParent dist/apple/openOMSI.app "out/openOMSI-$v-macos-universal.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          retention-days: 14
+          name: apple
+          path: out/*

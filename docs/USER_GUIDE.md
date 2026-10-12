@@ -97,6 +97,28 @@ goes on). `OMSI_NO_UPDATE=1` switches the checks off; `OMSI_UPDATE_URL` points t
 release description (GitHub's format; `file://` works, for testing - the game then looks after
 3 s).
 
+**When a version does not start.** openOMSI heals a start that breaks on its own, before
+anything that could break has run: when it is started (a double click, the launcher) it first
+starts a small watcher without a window. If the launcher crashes, ends on an error or has not
+drawn its first frames after two minutes (it is then ended), the watcher steps in - when that
+version never started on this computer, or failed twice in a row:
+
+1. a newer release, when there is one, is downloaded and installed (its program must start
+   before it replaces anything) and openOMSI starts again;
+2. else the version the last update replaced - kept beside it until the new version has
+   started well once - is put back, and openOMSI starts again;
+3. else openOMSI starts once more in **safe mode** (the basic render pipelines, no plugins);
+4. else a message says what to do (download the latest release, where the log is).
+
+Each step is told in a message box. A version that failed is never installed again on this
+computer, only a newer one. The project can also list a released version as broken
+(`release/health.json`); such a version goes back to the one before, or on to a fixed one, at
+the next start even when it starts well. A crash in the middle of a drive is not a broken
+start: nothing is changed then. The guard keeps its own record in `~/.openomsi/guard/`
+(`guard.log`, `starts.json`, `bad-versions`). `OMSI_NO_GUARD=1` switches it off. On Android
+the next start after one that never reached the launcher looks for an update at once (the
+system's installer asks); going back is the system's business there.
+
 **Playing now.** While a session runs the game tells the project's counter (a Cloudflare
 Worker, `services/presence/`) every ten minutes that it is being played, and says goodbye
 when it ends; the website and the README show how many play right now. What goes out is a
@@ -213,7 +235,7 @@ The launcher is the game's own window (`crates/omsi-app/src/launcher`): `omsi` s
 without arguments (or with `--launcher`) opens it. It is drawn with wgpu - no web engine -
 flat and dark (neutral greys, one amber accent), every control custom (sliders, switches,
 dropdowns, a calendar, a time picker, text fields, segmented buttons), Material Symbols
-icons and Roboto (`crates/omsi-ui`). The Drive page shows the chosen bus in a card, as a
+icons and Inter (`crates/omsi-ui`). The Drive page shows the chosen bus in a card, as a
 picture **drawn by the game's renderer** - its model, paint, materials, reflections and
 shadows exactly as in the game, under the light of the chosen time and weather - drawn
 again only when something changes; drag on it to turn the bus, scroll to zoom. Its pages:
@@ -768,7 +790,11 @@ A new panel has the shape of the mirror's glass in the model. The layout is kept
 `~/.openomsi/mirror_hud.cfg`. The setting `mirror_hud` (0 off, 1 the right mirror, 2 the left,
 3 both) gives a bus with no layout of its own its first panels. The panels need the mirrors
 themselves to be drawn (`mirror_size` not 0); they are redrawn at the rate `mirror_refresh`
-sets, also when the glass is not in the view.
+sets, also when the glass is not in the view. With **Mirror panels every frame** (Settings →
+Graphics, `mirror_hud_every_frame=1`) the mirrors the panels show are drawn every frame instead,
+as ETS2 draws its screen mirrors, whatever `mirror_refresh` says (even with no real-time
+reflections); the other mirrors take their turns without them. It costs one mirror picture a
+frame for each mirror on the panels (none in VR, where the panels are not drawn).
 
 ## Debug and test switches
 

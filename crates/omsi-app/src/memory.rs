@@ -4,7 +4,7 @@ use super::*;
 
 /// Bytes of memory the machine has.
 pub(crate) fn physical_memory() -> Option<u64> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
         extern "C" {
             fn sysctlbyname(
@@ -45,7 +45,7 @@ pub(crate) fn physical_memory() -> Option<u64> {
         unsafe { GlobalMemoryStatusEx(&mut m) }.ok()?;
         (m.ullTotalPhys > 0).then_some(m.ullTotalPhys)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android", windows)))]
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "linux", target_os = "android", windows)))]
     {
         None
     }

@@ -65,6 +65,57 @@ identical or within their allowance, every run.
 Worth comparing too: the end of the logs (`drove ... in 12 s, now ... km/h`, `traffic: ...`)
 of `grundorf_drive_traffic`; they carry no wall-clock figures.
 
+## Audio traces
+
+The golden pictures say nothing about what is heard. `scripts/audio-trace.sh` runs offscreen
+drives with one `openomsi` binary, each writing an audio trace (`OMSI_AUDIO_TRACE=<file>`)
+and the sound mixed from it (`OMSI_RECORD`), and compares two such sets:
+
+```sh
+scripts/audio-trace.sh render  /path/to/before/openomsi /tmp/audio/before
+scripts/audio-trace.sh render  /path/to/after/openomsi  /tmp/audio/after
+scripts/audio-trace.sh compare /tmp/audio/before /tmp/audio/after
+```
+
+The trace is written in omsi-audio's `AudioEngine`, where every sound of the game arrives:
+each voice started (its file, gain, pitch, loop, place to the centimetre, range, filter),
+each change of its parameters, each stop and end, the listener once a step, the radio's
+effects. Whatever moved around above the mixer, a trace taken there means the same in both
+builds. An offscreen recording steps the mixer with the simulation, so its trace does not
+depend on how fast the pictures are drawn.
+
+| Scene | What it plays |
+|---|---|
+| `grundorf_drive_traffic` | golden.sh's drive: the SD202 started by its switches and driven off from the cab, AI traffic |
+| `grundorf_rain_outside` | the same drive heard from outside, at night in the rain: the street's rain, the bus's outside sounds |
+| `spandau_ambience` | Spandau at 08:00 with traffic, the timetable's buses and passengers, the ambience's one-shots forty times as often (`OMSI_AMBIENCE_DENSITY=40`) |
+
+`compare` names voices by what they play and the step they started in, and sorts the lines
+of a step: some sounds are started from hash maps (the ambience's layers, a sound set's
+entries), whose order changes from run to run of one binary, and with it the voices'
+numbers and the place in its clip a loop starts from (drawn in start order). What is left
+is the same from run to run; `compare` exits 1 when it is not, with the first step that
+differs and the files started more or less often. The mixes are compared too, but only
+reported: the order the voices are summed in moves their samples by one unit (of 32767).
+
+The ambience's recordings are read from `$OMSI_AMBIENCE_DIR`, else `~/.openomsi/ambience`;
+without them the ambience is silent in both runs alike.
+
+What an offscreen run does not play - the scenery's sound objects, the bus radio, the
+passengers' voices - comes from `scripts/audio-trace.sh window <binary> <dir>`: whole
+sessions in a window that is never shown (`OMSI_HIDDEN_WINDOW`, `OMSI_MUTE`), the radio
+tuned to a station nobody answers (its voice and volume are traced, not the music). Their
+frames follow the wall clock, so these traces are compared only as which sounds were played
+at all; take two runs of each binary to see what moves anyway. One thing that does: a
+timetable bus due beside the player at the start is put there only while the map is still
+loading, so whether it is heard depends on how fast the start-up went.
+
+Measured on 2026-10-11, main 0.2.30 (a8668bf7) against refactor/stages c51b3626, both with
+the trace: the three offscreen scenes asked the mixer for the same sounds (37, 43 and 156
+voices, every parameter change of every step), the mixes within one unit; the two window
+sessions played the same sounds (the scenery's cock and blackbird, the radio, traffic,
+ambience slots, the bus), as two runs of one binary do.
+
 ## Frame time
 
 A change meant to make the game faster is measured on the window's own frame, without a
@@ -99,3 +150,15 @@ grows more than 5 % past its size in `scripts/size-budget.txt`, or a new one pas
 another file of its crate keeps its allowance. After a split, `scripts/size-budget.sh
 --update` lowers the recorded sizes; it never raises them. `--list` shows every file with
 its longest function.
+
+## Crate layers
+
+`scripts/arch-guard.sh` (run by the pull request checks) keeps the crates in their layers:
+the file formats at the bottom, then the simulation, the presentation (renderer, audio, UI),
+the app's subsystems, and `omsi-app` on top as the glue. `scripts/arch-rules.txt` lists what
+must not depend on what (`forbid omsi-sim omsi-render`: the simulation never knows how it is
+drawn) and the edges that still break a rule and are to be removed (`allow ...`); once such an
+edge is gone, the check asks for its `allow` line to be deleted, so it cannot come back.
+The same file caps the lines of Rust in `crates/omsi-app` (`app-lines`, plus 2 %): a new
+subsystem gets a crate of its own instead of growing the app. `--update` lowers the cap after
+code has moved out; `--graph` prints the dependency graph.

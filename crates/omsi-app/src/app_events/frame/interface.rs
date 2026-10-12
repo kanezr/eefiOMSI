@@ -36,7 +36,7 @@ impl App {
         let (notes, tooltip) = self.frame_notes(dt, mirror_help);
         let __t = Instant::now();
         // (the frame's overlays start empty; the notes are the interface's, in
-        // Roboto - OMSI's bitmap font HUD is the start menu's and the offscreen
+        // Inter - OMSI's bitmap font HUD is the start menu's and the offscreen
         // pictures' only)
         if let Some(scene) = self.scene.as_mut() {
             scene.overlays.clear();
@@ -68,39 +68,43 @@ impl App {
             }
         }
         self.frame_ui_draw(dt, hud, vr_active, plugin_focus, &notes, tooltip, menu_lines, menu_tabs);
+        // the loading screen fading over the first pictures, over all of the interface
+        self.frame_loading_fade();
         // the pause menu, drawn with the launcher's toolkit over all of it
         self.frame_shell(dt);
         *self.perf.profile.entry("hud").or_default() += __t.elapsed().as_secs_f64();
         vr_nav_display
     }
 
-    /// The notes over the picture (why the bus is not moving, the editors' keys, the trip's
-    /// end, the messages, the LAN and the passengers) and the tooltip of the switch under
-    /// the cursor.
+    /// What the game tells the driver (why the bus is not moving, the trip's end, the
+    /// messages, the LAN and the passengers), turned into notifications when it starts
+    /// (`ui::NoteWatch`); the editors' keys, for the top left corner while one is on; and
+    /// the tooltip of the switch under the cursor.
     fn frame_notes(&mut self, dt: f32, mirror_help: Vec<String>) -> (Vec<String>, Option<String>) {
-        // No block of text over the picture (the clock, the bus, the trip and the
-        // key reminder were the old HUD in OMSI's bitmap font; the navigator shows
-        // the trip, the launcher the keys): only what the driver has to act on,
-        // in the interface font, top left.
-        let mut lines: Vec<String> = Vec::new();
+        use crate::ui::{note_key, NoticeKind};
+        // (key, text, kind): the key names the condition, whose text may carry a value
+        let mut said: Vec<(String, String, NoticeKind)> = Vec::new();
+        let mut say = |key: String, text: String, kind: NoticeKind| said.push((key, text, kind));
         // why the bus is not moving, whenever the throttle is pressed and nothing
         // happens: the things a driver checks first
         if let Some(p) = self.player.as_ref() {
-            lines.extend(standing_reasons(&p.vehicle, &|a| crate::diagnostics::rebound_key(&p.bindings, a)));
+            for t in standing_reasons(&p.vehicle, &|a| crate::diagnostics::rebound_key(&p.bindings, a)) {
+                say(note_key(&t), t, NoticeKind::Action);
+            }
         }
         // what is under the cursor, in the player's language (the scripts only
         // know internal, mostly German names)
         let names = describe::names(&self.args.root, &self.settings.language);
         // next to the cursor (`ui`), when the setting asks for it
         let tooltip = self.menus.hover.as_ref().map(|h| names.control(h));
-        // the object editor's keys, while it is on (one quiet line)
-        // the mirror editor's keys and the panel under the cursor, while it is on
-        lines.extend(mirror_help);
+        // the editors' keys while one is on: help to look up, not news - they stay in the
+        // corner as long as the editor does
+        let mut lines: Vec<String> = mirror_help;
         if self.menus.editor.is_some() {
             lines.push("Object editor: click picks | drag moves | wheel turns (Shift lifts) | Del | C copy | V variant | Backspace undo | Ctrl+S save | Esc".into());
         }
         if let Some(d) = self.session.duty.as_ref().filter(|d| d.trip_done()) {
-            lines.push(match d.trips.get(d.trip_index + 1) {
+            let text = match d.trips.get(d.trip_index + 1) {
                 Some(next) => format!(
                     "End of the trip. Next: {} to {}, from {} at {} (it starts by itself a minute before)",
                     if next.line.trim().is_empty() { "service trip".to_string() } else { format!("line {}", next.line) },
@@ -109,45 +113,75 @@ impl App {
                     crate::schedule::hhmm(next.departure)
                 ),
                 None => "End of the duty: the tour's last trip is done".into(),
-            });
+            };
+            say(format!("trip end {}", d.trip_index), text, NoticeKind::Success);
         }
+        // the game's messages (a setting saved, a key to press, the bus not loaded): one
+        // card each, while the message stands
         if let Some((msg, left)) = self.service_msg.as_mut() {
             *left -= dt;
             if *left > 0.0 {
-                lines.push(msg.clone());
+                let kind = message_kind(msg);
+                say(format!("message {msg}"), msg.clone(), kind);
             }
         }
         self.service_msg = self.service_msg.take().filter(|(_, l)| *l > 0.0);
+        if let Some(lan) = self.net.lan.as_ref() {
+            for t in lan::hud_lines(lan, &self.net.remotes, self.player.as_ref()).into_iter().chain(self.sound.voice.as_ref().and_then(|v| v.hud_line())) {
+                say(t.clone(), t, NoticeKind::Info);
+            }
+        }
+        if let Some(h) = self.session.humans.as_ref() {
+            if let Some(hint) = h.hint() {
+                say(hint.clone(), hint, NoticeKind::Action);
+            } else if let Some((name, value)) = &h.request {
+                let t = format!("Passenger wants: {name}  {value:.2}");
+                say(t.clone(), t, NoticeKind::Action);
+            }
+            if let Some((paid, value)) = h.paid {
+                let t = format!("paid: {paid:.2}  (change {:.2})", (paid - value).max(0.0));
+                say(t.clone(), t, NoticeKind::Info);
+            }
+            if let Some(owed) = h.change_due {
+                let t = format!("Change due: {owed:.2}");
+                say(t.clone(), t, NoticeKind::Action);
+            }
+        }
+        // (the cursor no longer works the cab: how to have it back)
+        if crate::plugin_ui::focused(&self.integrations.plugins) {
+            say("plugin focus".into(), crate::plugin_ui::FOCUS_NOTE.into(), NoticeKind::Action);
+        }
+        // (switched off, `Settings::notes`: the game keeps its hints to itself; the
+        // server's, the plugins' and the update check's notifications still come)
+        if !self.settings.notes {
+            said.clear();
+        }
+        self.menus.note_watch.frame(dt, &said, &mut self.menus.notices);
         self.integrations.update_watch.tick(&mut self.menus.notices);
         for n in self.menus.notices.iter_mut() {
             n.left -= dt;
         }
         self.menus.notices.retain(|n| n.left > 0.0);
-        if let Some(lan) = self.net.lan.as_ref() {
-            lines.extend(lan::hud_lines(lan, &self.net.remotes, self.player.as_ref()));
-            lines.extend(self.sound.voice.as_ref().and_then(|v| v.hud_line()));
-        }
-        if let Some(h) = self.session.humans.as_ref() {
-            if let Some(hint) = h.hint() {
-                lines.push(hint);
-            } else if let Some((name, value)) = &h.request {
-                lines.push(format!("Passenger wants: {name}  {value:.2}"));
-            }
-            if let Some((paid, value)) = h.paid {
-                lines.push(format!(
-                    "paid: {paid:.2}  (change {:.2})",
-                    (paid - value).max(0.0)
-                ));
-            }
-            if let Some(owed) = h.change_due {
-                lines.push(format!("Change due: {owed:.2}"));
-            }
-        }
-        // (the cursor no longer works the cab: how to have it back)
-        if crate::plugin_ui::focused(&self.integrations.plugins) {
-            lines.push(crate::plugin_ui::FOCUS_NOTE.into());
-        }
         (lines, tooltip)
+    }
+
+    /// The loading screen after the world is there: its bar runs to the end, then it fades
+    /// over the session's first pictures (`ui::Loading`).
+    fn frame_loading_fade(&mut self) {
+        if self.menus.loading.over_session().is_none() {
+            return;
+        }
+        // (by its own clock: the frame's time is held short for the simulation, and the
+        // session's first frames are slow)
+        let dt = self.menus.loading.tick();
+        self.menus.loading.step(1.0, dt);
+        let Some(opacity) = self.menus.loading.over_session() else { return };
+        let (Some(r), Some(scene), Some(ui), Some(s)) = (self.renderer.as_ref(), self.scene.as_mut(), self.ui.as_mut(), self.gfx.surface.as_ref()) else { return };
+        let dpi = self.window.as_ref().map(|w| w.scale_factor() as f32).unwrap_or(1.0);
+        let scale = dpi * ui::size_factor(s.config.height as f32, dpi, self.settings.ui_scale, self.settings.ui_scale_window);
+        let title = std::mem::take(&mut self.menus.loading.title);
+        ui.loading_screen(r, scene, s.config.width as f32, s.config.height as f32, scale, &title, self.menus.loading.shown(), opacity, self.menus.loading.clock(), self.menus.loading.tip());
+        self.menus.loading.title = title;
     }
 
     /// The navigator and OMSI 2's dynamic route arrows.
@@ -160,10 +194,14 @@ impl App {
         vr_nav_display: Option<crate::vr_navigator::Display>,
     ) {
         let (Some(r), Some(scene)) = (self.renderer.as_ref(), self.scene.as_mut()) else { return };
-        if let (Some(nav), Some(p), Some(_)) = (
+        // (on foot with no bus of one's own the navigator and the city map go on as well:
+        // a walker who had deleted the bus could not open the map, #2118)
+        let p = self.player.as_ref();
+        let walking = self.session.on_foot.is_some();
+        if let (Some(nav), Some(_), true) = (
             self.menus.navigator.as_mut(),
-            self.player.as_ref(),
             self.gfx.surface.as_ref(),
+            p.is_some() || walking,
         ) {
             let old_enabled = nav.enabled;
             let old_opacity = nav.opacity;
@@ -202,26 +240,33 @@ impl App {
                 }
                 _ => nav.clear_route(),
             }
-            let (outside_temp, inside_temp) = vehicle_temperatures(p);
+            let (outside_temp, inside_temp) = match p {
+                Some(p) => vehicle_temperatures(p),
+                None => {
+                    let t = omsi_sim::host::ambient_weather().map_or(15.0, |w| w.0);
+                    (t, t)
+                }
+            };
             // (on foot the map follows the walker, not the bus left standing)
-            let (at, heading) = match self.session.on_foot.as_ref() {
-                Some(f) => (f.pos, f.heading),
-                None => (p.vehicle.position, p.vehicle.heading),
+            let (at, heading) = match (self.session.on_foot.as_ref(), p) {
+                (Some(f), _) => (f.pos, f.heading),
+                (None, Some(p)) => (p.vehicle.position, p.vehicle.heading),
+                (None, None) => return,
             };
             let frame = navigator::NavFrame {
                 traffic: self.session.traffic.as_ref(),
                 players: self.net.lan.as_ref().map(|l| crate::lan::nav_players(&self.net.remotes, l.my_id)).unwrap_or_default(),
                 bus: at,
                 heading,
-                speed_kmh: p.vehicle.physics.velocity_kmh(),
+                speed_kmh: p.map_or(0.0, |p| p.vehicle.physics.velocity_kmh()),
                 outside_temp,
                 inside_temp,
                 line,
                 terminus,
                 stops,
-                delay: self.session.duty.as_ref().map(|_| p.vehicle.host.tt_delay as f64),
+                delay: self.session.duty.as_ref().zip(p).map(|(_, p)| p.vehicle.host.tt_delay as f64),
                 passengers: self.session.humans.as_ref().map(|h| h.riding()),
-                stop_requested: navigator::stop_requested(&p.vehicle),
+                stop_requested: p.is_some_and(|p| navigator::stop_requested(&p.vehicle)),
                 time: self.clock.time,
                 weekday: self.clock.weekday(),
                 language: &self.settings.language,
@@ -242,6 +287,7 @@ impl App {
                 },
                 dt,
                 info_rect: self.ui.as_ref().and_then(|u| u.info_rect).filter(|_| !vr_active),
+                touch_gap: self.input.touch.top_gap.filter(|_| self.input.touch.enabled && !vr_active).map(|[l, r, b]| [l - hud[0], r - hud[0], b]),
             };
             let __tn = Instant::now();
             nav.frame_at(r, scene, &frame, hud[0]);
@@ -402,10 +448,13 @@ impl App {
                     #[cfg(windows)] { self.xr.vr.is_some() }
                     #[cfg(not(windows))] { false }
                 },
-                tooltip: tooltip.filter(|_| self.settings.tooltips && !self.input.dragging && !covered && self.menus.game_menu.is_none()),
-                // (switched off: none, `Settings::notes`; nor over the city map,
-                // whose header they covered once they stood on the timetable's line)
-                notes: if self.settings.notes && !map_open && self.menus.game_menu.is_none() { notes } else { &[] },
+                // (with the fingers: only while one holds a switch - the cursor stays where the
+                // last finger was, and a switch there kept its name up in a corner)
+                tooltip: tooltip.filter(|_| self.settings.tooltips && !self.input.dragging && !covered && self.menus.game_menu.is_none() && (!self.input.touch.enabled || self.input.touch.on_switch())),
+                tooltip_above: self.input.touch.enabled,
+                // (the editors' keys; not over the city map, whose header they covered
+                // once they stood on the timetable's line)
+                notes: if !map_open && self.menus.game_menu.is_none() { notes } else { &[] },
                 fps: self.settings.show_fps.then_some(self.perf.fps),
                 paused: self.paused,
                 menu: match chooser_sel {
@@ -436,5 +485,38 @@ impl App {
             };
             ui.draw_at(r, scene, &frame, dt, hud[0]);
         }
+    }
+}
+
+/// The kind of card a message of the game's is (`App::service_msg`): what went wrong is an
+/// alert, a key to press is to do, a slow driver a warning, a change made is done, the
+/// rest information.
+fn message_kind(msg: &str) -> crate::ui::NoticeKind {
+    use crate::ui::NoticeKind;
+    let m = msg.to_ascii_lowercase();
+    if ["could not", "was not", "were not", "not saved", "no duty", "failed", "error", "cannot"].iter().any(|w| m.contains(w)) {
+        NoticeKind::Alert
+    } else if m.contains("slow") || m.contains("only the host") || m.contains("the host sets") {
+        NoticeKind::Warn
+    } else if m.starts_with("press ") || m.contains(". press ") || m.starts_with("on foot") {
+        NoticeKind::Action
+    } else if m.contains("saved") || m.contains("applied") || m.contains("reloaded") {
+        NoticeKind::Success
+    } else {
+        NoticeKind::Info
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_message_is_told_by_what_it_says() {
+        use crate::ui::NoticeKind::*;
+        assert_eq!(super::message_kind("Key binding was not saved: disk full"), Alert);
+        assert_eq!(super::message_kind("No duty: no such tour"), Alert);
+        assert_eq!(super::message_kind("Graphics driver is slow (40 MB/s): the game will stutter."), Warn);
+        assert_eq!(super::message_kind("Press a key for this action (Delete clears it, Esc cancels)"), Action);
+        assert_eq!(super::message_kind("Controller configuration saved and applied"), Success);
+        assert_eq!(super::message_kind("Fleet number 2412"), Info);
     }
 }

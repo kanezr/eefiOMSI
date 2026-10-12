@@ -10,32 +10,37 @@ use super::*;
 
 /// One step of the traffic (s).
 pub const SIM_DT: f32 = 0.02;
-/// At most this many steps in one frame: after a long stall (a hitch, a breakpoint) the
-/// traffic does not try to make up for all of it at once, which made the next frame as long
-/// again.
+/// At most this many steps of time are kept to be made up: after a long stall (a hitch, a
+/// breakpoint) the traffic does not try to make up for all of it, the rest is dropped.
 pub const MAX_SIM_STEPS: u32 = 8;
+/// At most this many steps in one frame; what is left of `MAX_SIM_STEPS` is made up in the
+/// next frames. Eight steps at once after a hitch made the frame after it a hitch of its
+/// own; four keep the traffic on time at any frame rate above 12.5 a second (below that it
+/// runs that much slower, as it did below 6.25 before).
+pub const STEPS_PER_FRAME: u32 = 4;
 /// A part that moved further than this between two steps was put somewhere (placed, taken
 /// over, recovered): it is drawn where it is, not swept there.
 const JUMP: f64 = 10.0;
 
 /// Add a frame of `frame_dt` seconds to `accum` and take out the whole steps of `dt` it
-/// holds: how many to run now. At most `max_steps`, the time beyond them dropped. The steps
+/// holds: how many to run now, at most `per_frame`. Steps beyond those wait in `accum` for
+/// the next frames, up to `max_steps` of them; the time beyond that is dropped. The steps
 /// depend only on the time that went by, not on how it was split into frames (as long as
-/// no frame needs more than `max_steps`).
-pub fn advance_fixed_clock(accum: &mut f64, frame_dt: f32, dt: f32, max_steps: u32) -> u32 {
+/// no frame needs more than `per_frame`, or the frames after it make up for it).
+pub fn advance_fixed_clock(accum: &mut f64, frame_dt: f32, dt: f32, per_frame: u32, max_steps: u32) -> u32 {
     if !(frame_dt > 0.0) || !(dt > 0.0) {
         return 0;
     }
     let dt = dt as f64;
     *accum += frame_dt as f64;
     // (a hair under a whole step counts as one: 0.02 s summed fifty times is not quite 1 s)
-    let n = ((*accum + 1e-9) / dt).floor().max(0.0) as u64;
-    let n = n.min(max_steps as u64);
-    *accum = (*accum - n as f64 * dt).max(0.0);
-    if *accum >= dt {
+    let held = ((*accum + 1e-9) / dt).floor().max(0.0) as u64;
+    if held > max_steps as u64 {
         // more than `max_steps` behind: the rest of the debt is dropped, its fraction kept
-        *accum %= dt;
+        *accum = max_steps as f64 * dt + (*accum - held as f64 * dt).max(0.0);
     }
+    let n = held.min(max_steps as u64).min(per_frame as u64);
+    *accum = (*accum - n as f64 * dt).max(0.0);
     n as u32
 }
 
@@ -49,75 +54,105 @@ impl TrafficSim {
     pub fn advance(&mut self, frame_dt: f32, player: Option<PlayerBox>) -> u32 {
         if self.mirror {
             self.tick(frame_dt, player);
+            self.frame_split = self.tick_split;
             self.frame_alpha = 1.0;
             return 1;
         }
-        let steps = advance_fixed_clock(&mut self.sim_accum, frame_dt, SIM_DT, MAX_SIM_STEPS);
-        for _ in 0..steps {
-            self.remember_poses();
+        let steps = advance_fixed_clock(&mut self.sim_accum, frame_dt, SIM_DT, STEPS_PER_FRAME, MAX_SIM_STEPS);
+        let mut split = [0.0; 3];
+        for k in 0..steps {
+            // (the picture goes between the last two steps only)
+            if k + 1 == steps {
+                self.remember_poses();
+            }
             self.tick(SIM_DT, player);
+            for (a, b) in split.iter_mut().zip(self.tick_split) {
+                *a += b;
+            }
         }
+        self.frame_split = split;
         self.frame_alpha = ((self.sim_accum / SIM_DT as f64) as f32).clamp(0.0, 1.0);
         steps
     }
 
     /// Every car's parts as they stand before a step, to draw them between it and the next.
+    /// (Into one flat list kept from step to step: a list per car made and freed fifty
+    /// times a second, for every car, was allocator traffic for nothing.)
     fn remember_poses(&mut self) {
-        let mut before = std::mem::take(&mut self.pose_before);
-        before.clear();
+        let p = &mut self.poses;
+        p.before.clear();
+        p.before_at.clear();
         for c in &self.cars {
-            let mut parts = Vec::with_capacity(1 + c.vehicle.trailers.len());
-            parts.push((c.vehicle.position, c.vehicle.heading, c.vehicle.pitch, c.vehicle.bank));
-            parts.extend(c.vehicle.trailers.iter().map(|t| (t.position, t.heading, t.pitch, t.bank)));
-            before.insert(c.id, parts);
+            let v = &c.vehicle;
+            p.before_at.insert(c.id, (p.before.len() as u32, 1 + v.trailers.len() as u32));
+            p.before.push((v.position, v.heading, v.pitch, v.bank));
+            p.before.extend(v.trailers.iter().map(|t| (t.position, t.heading, t.pitch, t.bank)));
         }
-        self.pose_before = before;
     }
 
     /// Put every car where the picture of this frame shows it, between the last two steps,
-    /// and return where they really stand, for `show_actual` to put them back after drawing.
+    /// keeping where they really stand for `show_actual` to put them back after drawing.
     /// Nothing moves when the frame falls on a step.
-    pub fn show_between(&mut self) -> Vec<(usize, Vec<PartPose>)> {
+    pub fn show_between(&mut self) {
         let a = self.frame_alpha;
-        let mut actual = Vec::new();
+        let p = &mut self.poses;
+        p.shown.clear();
+        p.actual.clear();
         if a >= 1.0 || self.mirror {
-            return actual;
+            return;
         }
         for (i, c) in self.cars.iter_mut().enumerate() {
-            let Some(before) = self.pose_before.get(&c.id) else { continue };
-            if before.len() != 1 + c.vehicle.trailers.len() {
+            let Some(&(at, n)) = p.before_at.get(&c.id) else { continue };
+            if n as usize != 1 + c.vehicle.trailers.len() {
                 continue;
             }
-            let now = (c.vehicle.position, c.vehicle.heading, c.vehicle.pitch, c.vehicle.bank);
+            let before = &p.before[at as usize..(at + n) as usize];
+            let v = &mut c.vehicle;
+            let now = (v.position, v.heading, v.pitch, v.bank);
             if (now.0 - before[0].0).length() > JUMP {
                 continue;
             }
-            let mut saved = Vec::with_capacity(before.len());
-            saved.push(now);
-            let shown = between(before[0], now, a);
-            (c.vehicle.position, c.vehicle.heading, c.vehicle.pitch, c.vehicle.bank) = shown;
-            for (t, b) in c.vehicle.trailers.iter_mut().zip(&before[1..]) {
+            p.shown.push((i, p.actual.len() as u32));
+            p.actual.push(now);
+            (v.position, v.heading, v.pitch, v.bank) = between(before[0], now, a);
+            for (t, b) in v.trailers.iter_mut().zip(&before[1..]) {
                 let now = (t.position, t.heading, t.pitch, t.bank);
-                saved.push(now);
+                p.actual.push(now);
                 (t.position, t.heading, t.pitch, t.bank) = between(*b, now, a);
             }
-            actual.push((i, saved));
         }
-        actual
     }
 
     /// Back where they really stand after the picture was drawn (see `show_between`).
-    pub fn show_actual(&mut self, actual: Vec<(usize, Vec<PartPose>)>) {
-        for (i, saved) in actual {
+    pub fn show_actual(&mut self) {
+        let p = &mut self.poses;
+        for &(i, at) in &p.shown {
             let Some(c) = self.cars.get_mut(i) else { continue };
-            if let Some(&p) = saved.first() {
-                (c.vehicle.position, c.vehicle.heading, c.vehicle.pitch, c.vehicle.bank) = p;
+            let v = &mut c.vehicle;
+            let saved = &p.actual[at as usize..];
+            if let Some(&q) = saved.first() {
+                (v.position, v.heading, v.pitch, v.bank) = q;
             }
-            for (t, &p) in c.vehicle.trailers.iter_mut().zip(saved.iter().skip(1)) {
-                (t.position, t.heading, t.pitch, t.bank) = p;
+            for (t, &q) in v.trailers.iter_mut().zip(saved.iter().skip(1)) {
+                (t.position, t.heading, t.pitch, t.bank) = q;
             }
         }
+        p.shown.clear();
+        p.actual.clear();
     }
+}
+
+/// The cars' poses kept for drawing between two steps (see `TrafficSim::advance`), in flat
+/// lists reused from step to step and frame to frame.
+#[derive(Default)]
+pub struct StepPoses {
+    /// Every car's parts as they stood before the last step ...
+    pub before: Vec<PartPose>,
+    /// ... where each car's begin in `before` and how many there are, by id.
+    pub before_at: HashMap<u64, (u32, u32)>,
+    /// The cars `show_between` moved (index) and where their real poses begin in `actual`.
+    shown: Vec<(usize, u32)>,
+    actual: Vec<PartPose>,
 }
 
 /// `a` of the way from `from` to `to`, the angles the short way round.
@@ -139,30 +174,44 @@ mod tests {
     /// a second.
     #[test]
     fn the_steps_depend_on_the_time_not_the_frame_rate() {
-        for fps in [15.0f32, 30.0, 60.0, 144.0] {
+        for fps in [12.5f32, 15.0, 30.0, 60.0, 144.0, 240.0] {
             let mut accum = 0.0;
             let frames = (10.0 * fps).round() as u32;
             let steps: u32 = (0..frames)
-                .map(|_| advance_fixed_clock(&mut accum, 1.0 / fps, SIM_DT, MAX_SIM_STEPS))
+                .map(|_| advance_fixed_clock(&mut accum, 1.0 / fps, SIM_DT, STEPS_PER_FRAME, MAX_SIM_STEPS))
                 .sum();
             assert_eq!(steps, 500, "{fps} fps");
         }
     }
 
     #[test]
-    fn a_long_stall_runs_at_most_the_cap_and_drops_the_rest() {
+    fn a_frame_runs_at_most_four_steps_and_the_next_ones_make_up_for_it() {
         let mut accum = 0.0;
-        assert_eq!(advance_fixed_clock(&mut accum, 1.0, SIM_DT, MAX_SIM_STEPS), MAX_SIM_STEPS);
-        assert!(accum < SIM_DT as f64);
+        // a hitch of 0.14 s: seven steps, four now and three in the next frame
+        assert_eq!(advance_fixed_clock(&mut accum, 0.14, SIM_DT, STEPS_PER_FRAME, MAX_SIM_STEPS), 4);
+        assert_eq!(advance_fixed_clock(&mut accum, 0.005, SIM_DT, STEPS_PER_FRAME, MAX_SIM_STEPS), 3);
+        assert_eq!(advance_fixed_clock(&mut accum, 0.005, SIM_DT, STEPS_PER_FRAME, MAX_SIM_STEPS), 0);
+    }
+
+    #[test]
+    fn a_long_stall_keeps_at_most_the_cap_and_drops_the_rest() {
+        let mut accum = 0.0;
+        let mut steps = advance_fixed_clock(&mut accum, 1.0, SIM_DT, STEPS_PER_FRAME, MAX_SIM_STEPS);
+        assert_eq!(steps, STEPS_PER_FRAME);
+        assert!(accum < MAX_SIM_STEPS as f64 * SIM_DT as f64);
+        for _ in 0..10 {
+            steps += advance_fixed_clock(&mut accum, 1e-4, SIM_DT, STEPS_PER_FRAME, MAX_SIM_STEPS);
+        }
+        assert_eq!(steps, MAX_SIM_STEPS);
         // and the next frame is ordinary again
-        assert_eq!(advance_fixed_clock(&mut accum, 0.021, SIM_DT, MAX_SIM_STEPS), 1);
+        assert_eq!(advance_fixed_clock(&mut accum, 0.021, SIM_DT, STEPS_PER_FRAME, MAX_SIM_STEPS), 1);
     }
 
     #[test]
     fn nothing_runs_for_no_time() {
         let mut accum = 0.0;
-        assert_eq!(advance_fixed_clock(&mut accum, 0.0, SIM_DT, MAX_SIM_STEPS), 0);
-        assert_eq!(advance_fixed_clock(&mut accum, f32::NAN, SIM_DT, MAX_SIM_STEPS), 0);
+        assert_eq!(advance_fixed_clock(&mut accum, 0.0, SIM_DT, STEPS_PER_FRAME, MAX_SIM_STEPS), 0);
+        assert_eq!(advance_fixed_clock(&mut accum, f32::NAN, SIM_DT, STEPS_PER_FRAME, MAX_SIM_STEPS), 0);
         assert_eq!(accum, 0.0);
     }
 
