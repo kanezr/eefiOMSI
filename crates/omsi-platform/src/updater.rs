@@ -245,6 +245,8 @@ pub fn newer(candidate: &str, current: &str) -> bool {
 
 /// The release file for this platform, as `release.yml` names it.
 pub fn asset_name(version: &str) -> Option<String> {
+    // Strip any `-eefi` suffix from version for the filename (the tag has it, the zip doesn't)
+    let version = version.strip_suffix("-eefi").unwrap_or(version);
     let suffix = if cfg!(target_os = "android") {
         "android-arm64.apk"
     } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
@@ -262,7 +264,7 @@ pub fn asset_name(version: &str) -> Option<String> {
     } else {
         return None;
     };
-    Some(format!("openOMSI-{version}-{suffix}"))
+    Some(format!("eefiOMSI-{version}-{suffix}"))
 }
 
 // --- the release ----------------------------------------------------------------------------
@@ -983,9 +985,9 @@ mod tests {
     fn the_platform_file_of_a_github_release() {
         let name = asset_name("0.1.9").unwrap();
         let v = serde_json::json!({
-            "tag_name": "v0.1.9", "html_url": "https://github.com/openOMSI-org/openOMSI/releases/tag/v0.1.9", "body": "notes",
+            "tag_name": "v0.1.9", "html_url": "https://github.com/kanezr/eefiOMSI/releases/tag/v0.1.9", "body": "notes",
             "assets": [
-                {"name": "openOMSI-0.1.9-server-linux-x64.zip", "browser_download_url": "https://x/server", "size": 5},
+                {"name": "eefiOMSI-0.1.9-server-linux-x64.zip", "browser_download_url": "https://x/server", "size": 5},
                 {"name": name, "browser_download_url": "https://x/mine", "size": 42, "digest": "sha256:ABCDEF"}
             ]
         });

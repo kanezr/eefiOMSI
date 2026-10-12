@@ -333,6 +333,15 @@ fn graphics_tab(ui: &mut Ui, s: &mut Value, dirty: &mut f32, cols: [Rect; 2]) ->
     if !traced {
         toggle_setting(ui, s, dirty, c.row(), "Reflection maps (paint, chrome, glass)", "reflections");
     }
+    toggle_setting(ui, s, dirty, c.row(), "Tree shadows (near)", "tree_shadows");
+    sel_setting(ui, s, dirty, "s-maxtex", c.row(), "Max texture size", "max_texture_size", &[("0", "Device limit"), ("1024", "1024"), ("2048", "2048"), ("4096", "4096"), ("8192", "8192")]);
+    let mut lod = get(s, "lod_bias").as_f64().unwrap_or(0.0) as f32;
+    if ui.slider("s-lod-bias", c.row(), &mut lod, -4.0, 4.0, 0.1, "Texture LOD bias", &|v| {
+        if v.abs() < 0.05 { "Neutral".to_string() } else if v > 0.0 { format!("+{v:.1} (blurrier)") } else { format!("{v:.1} (sharper)") }
+    }) {
+        s["lod_bias"] = json!((lod * 10.0).round() / 10.0);
+        *dirty = 0.3;
+    }
     toggle_setting(ui, s, dirty, c.row(), "Clouds", "clouds");
     // (the enhanced graphics' volumetric clouds marched in fewer steps: see
     // `Lighting::low_clouds`; the vanilla ones are a texture whatever this says)

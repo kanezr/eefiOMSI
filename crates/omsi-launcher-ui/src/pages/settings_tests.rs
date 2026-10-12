@@ -6,7 +6,7 @@ use omsi_platform::updater::Status;
 fn by_tab() -> Vec<Vec<&'static str>> {
     let mut graphics = vec![
         "s-gp-sel", "s-gp-load", "s-gp-del", "s-gp-name", "s-gp-save",
-        "s-preset", "s-graphics", "s-msaa", "s-scale", "s-af", "s-shadow", "set-ssao", "set-shadows", "s-casters", "set-detail_textures", "s-night", "s-led", "s-led-mip", "set-shadow_blobs", "set-reflections", "set-clouds", "s-cloud-quality", "s-rain-quality", "set-windy_trees",
+        "s-preset", "s-graphics", "s-msaa", "s-scale", "s-af", "s-shadow", "set-ssao", "set-shadows", "s-casters", "set-detail_textures", "s-night", "s-led", "s-led-mip", "set-shadow_blobs", "set-reflections", "set-tree_shadows", "s-maxtex", "s-lod-bias", "set-clouds", "s-cloud-quality", "s-rain-quality", "set-windy_trees",
         "set-fullscreen", "s-res", "set-vsync", "s-fps", "s-view", "s-maxobj", "s-minobj", "s-mirror", "s-mirror-refresh", "set-mirror_hud_every_frame", "s-texmem", "set-texture_compression", "set-gpu_texture_compression",
     ];
     if !cfg!(target_os = "macos") {
