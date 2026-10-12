@@ -101,6 +101,9 @@ const graphics = {
         // (the `[isshadow]` blob under a vehicle is drawn in every mode, the vanilla one included)
         { type: 'toggle', key: 'shadow_blobs', label: "OMSI's shadow meshes (under vehicles)" },
         { type: 'toggle', key: 'reflections', label: 'Reflection maps (paint, chrome, glass)', when: (s) => !traced(s) },
+        { type: 'toggle', key: 'tree_shadows', label: 'Tree shadows (near)', help: 'Alpha-tested trees and fences cast shadows in the near cascade. Off saves GPU time; their shadows are just card silhouettes' },
+        { type: 'select', key: 'max_texture_size', label: 'Max texture size', options: [['0', 'Device limit'], ['1024', '1024'], ['2048', '2048'], ['4096', '4096'], ['8192', '8192']] },
+        { type: 'slider', key: 'lod_bias', label: 'Texture LOD bias', min: -4, max: 4, step: 0.1, def: 0, format: (v) => (v === 0 ? 'Neutral' : (v > 0 ? `+${v.toFixed(1)} (blurrier)` : `${v.toFixed(1)} (sharper)`)), store: r1 },
         { type: 'toggle', key: 'clouds', label: 'Clouds' },
         // (only the enhanced modes march volumetric clouds; the vanilla ones are a texture)
         { type: 'select', key: 'cloud_quality', label: 'Cloud quality', options: [['high', 'High'], ['low', 'Low']], when: (s) => (mode(s) === 'enhanced' || mode(s) === 'enhanced_plus') && s.clouds !== false },
@@ -411,4 +414,5 @@ export const SETTINGS_TABS = [graphics, driving, camera, sound, gameplay, genera
 export const GRAPHICS_PROFILE_KEYS = [
   'graphics', 'msaa', 'render_scale', 'anisotropy', 'shadow_size', 'ssao', 'shadows', 'shadow_casters', 'detail_textures', 'led_glow', 'led_mips', 'reflections', 'clouds', 'cloud_quality', 'rain_quality', 'windy_trees',
   'vsync', 'max_fps', 'view_distance', 'max_obj_dist', 'min_obj_size', 'mirror_size', 'mirror_refresh', 'mirror_hud_every_frame', 'texture_memory', 'texture_compression',
+  'tree_shadows', 'max_texture_size', 'lod_bias',
 ];

@@ -22,6 +22,7 @@ export async function boot() {
   // (a server joined in an earlier session is not joined again by itself)
   if (choice.lan_mode === 'join') choice.lan_mode = 'off';
   if (choice.version < 2) Object.assign(choice, { entry: -1, version: 2 });
+  Object.assign(choice, clockPatch(choice, b.settings));
   set({ boot: b, settings: b.settings, config: b.config, choice, favourites: b.favourites || [], ready: true, page: b.root ? 'drive' : 'setup' });
   applyTheme();
   if (b.root) {
@@ -100,6 +101,30 @@ export const curLine = () => S.lines.list?.find((l) => l.name === S.choice?.line
 export const curTour = () => curLine()?.tours.find((x) => x.number === S.choice?.tour);
 export const realTime = () => !!S.settings?.use_real_time;
 export const realDate = () => !!S.settings?.use_real_date;
+
+/** The time and date the duty takes from the computer's clock, as `duty_args` gives them to
+ * the game (the year stays the duty's unless the real year is on). */
+function clockPatch(c, st) {
+  const now = new Date();
+  const patch = {};
+  if (st?.use_real_time) {
+    const m = now.getHours() * 60 + now.getMinutes();
+    if (c.time !== m) patch.time = m;
+  }
+  if (st?.use_real_date) {
+    const year = st.use_real_year ? now.getFullYear() : parseInt(c.date, 10) || now.getFullYear();
+    const d = `${String(year).padStart(4, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    if (c.date !== d) patch.date = d;
+  }
+  return patch;
+}
+
+/** Keep the duty shown on the computer's clock while the settings ask for it. */
+export function followClock() {
+  if (!S.choice) return;
+  const patch = clockPatch(S.choice, S.settings);
+  if (Object.keys(patch).length) choose(patch);
+}
 
 let saveTimer = 0;
 /** Change the duty (and keep it on disk a moment later). */
@@ -268,6 +293,7 @@ export async function pollNow() {
 function startPolling() {
   pollNow();
   setInterval(() => {
+    followClock();
     // (faster while something happens)
     const busy = S.poll.jobs.some((j) => !['done', 'failed', 'cancelled'].includes(j.state));
     if (busy || Date.now() % 4000 < 1000) pollNow();

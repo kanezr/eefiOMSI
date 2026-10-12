@@ -39,6 +39,8 @@ struct Camera {
     // angles across and up; z: its first record in the light buffer), see enhanced.wgsl
     // `cookie_light`
     cookies: array<vec4<f32>, 8>,
+    // Texture LOD bias: positive = blurrier mips (faster, less bandwidth), negative = sharper.
+    lod_bias: f32,
 };
 
 // 1 when the point lies inside the player's vehicle (its [boundingbox], shrunk a little so

@@ -659,6 +659,37 @@ fn shaders_validate_and_match_the_uniforms() {
                 }
                 continue;
             }
+            if *ty_name == "Camera" && *name == "sky" {
+                // Sky owns the prefix up to and including `cookies` (the light cookie fields).
+                // It does not read the lod_bias or padding at the end.
+                if let Some((h, _)) = module
+                    .types
+                    .iter()
+                    .find(|(_, t)| t.name.as_deref() == Some(*ty_name))
+                {
+                    assert_eq!(
+                        layouter[h].size as usize,
+                        std::mem::size_of::<CameraUniform>() - 16, // minus lod_bias + _pad
+                        "sky: Camera prefix"
+                    );
+                }
+                continue;
+            }
+            if *ty_name == "Camera" && (*name == "fog lamps" || *name == "snow") {
+                // Fog lamps and snow own the same prefix as sky (up to cookies).
+                if let Some((h, _)) = module
+                    .types
+                    .iter()
+                    .find(|(_, t)| t.name.as_deref() == Some(*ty_name))
+                {
+                    assert_eq!(
+                        layouter[h].size as usize,
+                        std::mem::size_of::<CameraUniform>() - 16,
+                        "{name}: Camera prefix"
+                    );
+                }
+                continue;
+            }
             if let Some((h, _)) = module
                 .types
                 .iter()

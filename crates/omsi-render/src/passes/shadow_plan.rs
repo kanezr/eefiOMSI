@@ -199,6 +199,7 @@ impl Renderer {
             .unwrap_or(3.0);
         // (a copy: the casters are gathered on the worker pool, the renderer is not shared)
         let omsi_shadow_casters = self.options.omsi_shadow_casters;
+        let tree_shadows = self.options.tree_shadows;
         // (the lists are filled in place, block after block of the instances: a fresh list
         // per block was a few hundred small allocations a frame and every item copied twice)
         // (what each street lamp's tile draws, summed up: the tile is kept while it stays the
@@ -319,6 +320,11 @@ impl Renderer {
                         } else {
                             kind
                         };
+                        // Skip alpha-tested materials (trees, fences) in the near cascade when tree_shadows is off.
+                        // The near cascade is the costliest shadow pass; trees' leaf cards are just card silhouettes.
+                        if cascade == 0 && kind == PIPE_ALPHA_TEST && !tree_shadows {
+                            continue;
+                        }
                         // (after the remap: a traced-opaque one is drawn as the opaque it is)
                         let (material, look) = depth_only_material(kind, mat_id, look);
                         out[cascade].push(DrawItem {

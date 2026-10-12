@@ -700,14 +700,18 @@ impl Renderer {
         for (k, c) in st.sh.iter().enumerate() {
             sh[k] = c.extend(0.0).to_array();
         }
-        // the probe is drawn every half second (`PROBE_EVERY`), and for a new sky on the frame
+// the probe is drawn every half second (`PROBE_EVERY`), and for a new sky on the frame
         // after it is taken in (its table upload and the probe's six faces and blurrier
         // levels were one frame's work); it holds the sky divided by the table scale it was
         // drawn with, which the uniform passes on, so a frame on the old one is right
+        // Adaptive: if the camera hasn't moved much since last probe, skip redraw (sky changes
+        // over minutes; a bus at a stop for 30 s doesn't need 60 probe redraws).
         let instant = self.instant_exposure;
         let (redraw, probe_scale) = match self.tone.probe.as_mut() {
             Some(p) => {
-                let redraw = instant || sky_new || p.sched.probe_since >= PROBE_EVERY;
+                let cam_w = ro + cam_rel.as_dvec3();
+                let moved = p.cube_eye.map_or(true, |e| (cam_w - e).truncate().length() > 2.0);
+                let redraw = instant || sky_new || (moved && p.sched.probe_since >= PROBE_EVERY);
                 if redraw {
                     p.sched.probe_since = 0.0;
                     p.scale = st.lut_scale;

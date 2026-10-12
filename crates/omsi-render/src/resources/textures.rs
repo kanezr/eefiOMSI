@@ -367,7 +367,8 @@ impl Renderer {
         img: &omsi_texture::Image,
         mipmaps: bool,
     ) -> TextureId {
-        let fitted = fit_image(img, self.device.limits().max_texture_dimension_2d);
+        let max = if self.options.max_texture_size > 0 { self.options.max_texture_size } else { self.device.limits().max_texture_dimension_2d };
+        let fitted = fit_image(img, max);
         let img = fitted.as_ref().unwrap_or(img);
         let t = if mipmaps && img.width > 1 && img.height > 1 {
             self.upload_texture_gpu_mips(img)
@@ -380,13 +381,17 @@ impl Renderer {
 
     /// Unconverted RGBA channels for dynamic masks and other data rather than colour.
     pub fn add_data_texture(&self, scene: &mut Scene, img: &omsi_texture::Image) -> TextureId {
+        let max = if self.options.max_texture_size > 0 { self.options.max_texture_size } else { self.device.limits().max_texture_dimension_2d };
+        let fitted = fit_image(img, max);
+        let img = fitted.as_ref().unwrap_or(img);
         let texture = upload_texture_format(&self.device, &self.queue, img, false, wgpu::TextureFormat::Rgba8Unorm);
         scene.textures.push(texture);
         scene.textures.len() - 1
     }
 
     pub fn add_blank_texture(&self, scene: &mut Scene, width: u32, height: u32) -> TextureId {
-        let (width, height) = fit_size(width.max(1), height.max(1), self.device.limits().max_texture_dimension_2d);
+        let max = if self.options.max_texture_size > 0 { self.options.max_texture_size } else { self.device.limits().max_texture_dimension_2d };
+        let (width, height) = fit_size(width.max(1), height.max(1), max);
         // A newly allocated GPU texture has undefined contents. Script displays may be
         // sampled before their first `STUnlock`, so initialise them as transparent rather
         // than briefly showing arbitrary solid pixels on new or AI vehicles.

@@ -256,6 +256,17 @@ pub struct RenderOptions {
     /// Off, the sun shadow map is all the shading under a vehicle, and the blob (which
     /// OMSI draws whatever the depth) cannot be seen at all.
     pub shadow_blobs: bool,
+    /// Alpha-tested materials (trees, fences, vegetation) cast shadows in the near cascade.
+    /// Off, they are skipped there - the near cascade is the costliest shadow pass and a
+    /// third of it is trees' leaf cards; their shadows are just card silhouettes.
+    pub tree_shadows: bool,
+    /// Maximum texture dimension (0 = device limit). Textures larger than this are
+    /// automatically downsampled on load. Lower values save VRAM and bandwidth on cards
+    /// with less memory, at the cost of texture detail on close objects.
+    pub max_texture_size: u32,
+    /// LOD bias for mipmapping: positive values force blurrier mip levels (faster, less
+    /// VRAM bandwidth), negative values force sharper ones. 0 = neutral.
+    pub lod_bias: f32,
     /// The materials' reflection maps (`[matl_envmap]`: the shine of paint, chrome and
     /// glass). Off, nothing mirrors the sky photo - some players find it too strong.
     pub reflections: bool,
@@ -290,6 +301,9 @@ impl Default for RenderOptions {
             max_obj_dist: 0.0,
             omsi_shadow_casters: false,
             shadow_blobs: true,
+            tree_shadows: true,
+            max_texture_size: 0,
+            lod_bias: 0.0,
             reflections: true,
             no_enhanced: false,
             preview_only: false,

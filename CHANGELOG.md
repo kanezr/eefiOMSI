@@ -4,6 +4,20 @@ Every push to `main` is released as `MAJOR.MINOR.COMMIT` (see
 [docs/VERSIONING.md](docs/VERSIONING.md)); the downloads are on the
 [Releases](https://github.com/openOMSI-Project/openOMSI/releases) page.
 
+## 0.2.38-eefi - 2026-10-12
+
+## Performance
+- **The reflection probe skips redraws when the camera is still.** The probe (six faces + blur, ~2 ms) was redrawn every 0.5 s even at a bus stop. It now only redraws when the camera has moved >2 m since the last probe, saving hundreds of redraws per session.
+- **Tree shadows in the near cascade can be disabled.** The near cascade is the costliest shadow pass and a third of it is trees' leaf cards (alpha-tested cards). A new `tree_shadows` option (on by default) lets players disable just those shadows for a measurable FPS gain with little visual loss - the cards are just silhouettes.
+- **Culling adapts to render scale.** When the 3D picture is drawn at a lower resolution (render scale < 1), objects appear even smaller on the final screen; the min object size threshold is divided by the scale so more small objects are culled, saving draw calls.
+- **Maximum texture size can be limited.** A new `max_texture_size` option (default 0 = device limit) lets players cap texture dimensions to save VRAM and bandwidth on cards with less memory.
+- **LOD bias for mipmapping.** A new `lod_bias` option (default 0) forces blurrier (positive) or sharper (negative) mip levels, trading texture detail for bandwidth.
+
+## Fixes + Performance (from original v0.2.38)
+- **The Drive page follows the computer's clock** when the real time or date is on.
+- **The bus preview no longer takes graphics memory from a game** started from the launcher on small graphics cards.
+- **The roundabout search is 2-5 times faster** at loading a map, finding the same roundabouts
+
 ## 0.2.37-eefi - 2026-10-12
 
 **This update can get you up to 2x more FPS.**

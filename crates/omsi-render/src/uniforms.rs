@@ -66,6 +66,10 @@ pub(crate) struct CameraUniform {
     /// Enhanced: the field each light cookie layer covers (`cookies::CookieAtlas::fields`).
     /// After the rest: the shaders that light nothing by a cookie leave it out.
     pub(crate) cookies: [[f32; 4]; COOKIE_LAYERS],
+    /// Texture LOD bias: positive = blurrier mips (faster, less bandwidth), negative = sharper.
+    pub(crate) lod_bias: f32,
+    /// Padding to match WGSL struct alignment (16 bytes).
+    pub(crate) _pad: [f32; 3],
 }
 
 /// The period the sky's cloud patterns repeat with (m): 5 x the cloud field (14 km), 8 x

@@ -69,45 +69,67 @@ fn is_ring(net: &Network, cycle: &[usize]) -> bool {
 /// order, `start` first), if any.
 fn shortest_loop(net: &Network, start: usize) -> Option<Vec<usize>> {
     // breadth first by length: (length so far, path)
-    let mut open: Vec<(f32, Vec<usize>)> = vec![(net.lanes[start].length(), vec![start])];
+    // breadth first by length: (length so far, path), a path being its last lane and parent in `nodes`
+    let mut nodes: Vec<(usize, usize)> = vec![(start, usize::MAX)];
+    let mut open: Vec<(f32, usize)> = vec![(net.lanes[start].length(), 0)];
+    let on_path = |nodes: &[(usize, usize)], mut k: usize, lane: usize| {
+        while k != usize::MAX {
+            if nodes[k].0 == lane {
+                return true;
+            }
+            k = nodes[k].1;
+        }
+        false
+    };
+    // (shortest first, then first in `open` as a scan picks: stale heap entries are skipped)
+    let mut heap = std::collections::BinaryHeap::new();
+    heap.push(std::cmp::Reverse((OrdLen(open[0].0), 0usize, 0usize)));
     let mut seen = 0usize;
-    let mut best: Option<(f32, Vec<usize>)> = None;
-    while let Some(k) = open
-        .iter()
-        .enumerate()
-        .min_by(|a, b| a.1 .0.total_cmp(&b.1 .0))
-        .map(|(k, _)| k)
-    {
-        let (len, path) = open.swap_remove(k);
-        if best.as_ref().is_some_and(|b| b.0 <= len) {
+    let mut best: Option<(f32, usize)> = None;
+    while let Some(std::cmp::Reverse((_, k, id))) = heap.pop() {
+        if open.get(k).is_none_or(|o| o.1 != id) {
+            continue;
+        }
+        let (len, node) = open.swap_remove(k);
+        if let Some(&(l, moved)) = open.get(k) {
+            heap.push(std::cmp::Reverse((OrdLen(l), k, moved)));
+        }
+        if best.is_some_and(|b| b.0 <= len) {
             break;
         }
         seen += 1;
         if seen > SEARCH_MAX {
             break;
         }
-        let last = *path.last().unwrap();
+        let last = nodes[node].0;
         for &n in &net.lanes[last].next {
             let lane = &net.lanes[n];
             if lane.kind != LaneKind::Street {
                 continue;
             }
             if n == start {
-                if best.as_ref().is_none_or(|b| len < b.0) {
-                    best = Some((len, path.clone()));
+                if best.is_none_or(|b| len < b.0) {
+                    best = Some((len, node));
                 }
                 continue;
             }
             let l = len + lane.length();
-            if l > RING_MAX || path.contains(&n) {
+            if l > RING_MAX || on_path(&nodes, node, n) {
                 continue;
             }
-            let mut p = path.clone();
-            p.push(n);
-            open.push((l, p));
+            nodes.push((n, node));
+            open.push((l, nodes.len() - 1));
+            heap.push(std::cmp::Reverse((OrdLen(l), open.len() - 1, nodes.len() - 1)));
         }
     }
-    best.map(|b| b.1)
+    let (_, mut k) = best?;
+    let mut path = Vec::new();
+    while k != usize::MAX {
+        path.push(nodes[k].0);
+        k = nodes[k].1;
+    }
+    path.reverse();
+    Some(path)
 }
 
 /// Mark the ring lanes among the lanes from index `first` on (`Lane::ring`); returns how
@@ -137,6 +159,21 @@ pub fn find_rings(net: &mut Network, first: usize) -> usize {
         found += 1;
     }
     found
+}
+
+/// A length ordered as `f32::total_cmp` orders it.
+#[derive(PartialEq)]
+struct OrdLen(f32);
+impl Eq for OrdLen {}
+impl PartialOrd for OrdLen {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for OrdLen {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
 }
 
 #[cfg(test)]
@@ -204,4 +241,70 @@ mod tests {
         let net = network(lanes, false);
         assert!(net.lanes.iter().all(|l| !l.ring));
     }
+    /// The search as it was, a scan of the open paths for the shortest each time.
+    fn scan_loop(net: &Network, start: usize) -> Option<Vec<usize>> {
+        let mut open: Vec<(f32, Vec<usize>)> = vec![(net.lanes[start].length(), vec![start])];
+        let mut seen = 0usize;
+        let mut best: Option<(f32, Vec<usize>)> = None;
+        while let Some(k) = open.iter().enumerate().min_by(|a, b| a.1 .0.total_cmp(&b.1 .0)).map(|(k, _)| k) {
+            let (len, path) = open.swap_remove(k);
+            if best.as_ref().is_some_and(|b| b.0 <= len) {
+                break;
+            }
+            seen += 1;
+            if seen > SEARCH_MAX {
+                break;
+            }
+            for &n in &net.lanes[*path.last().unwrap()].next {
+                if n == start {
+                    if best.as_ref().is_none_or(|b| len < b.0) {
+                        best = Some((len, path.clone()));
+                    }
+                    continue;
+                }
+                let l = len + net.lanes[n].length();
+                if l > RING_MAX || path.contains(&n) {
+                    continue;
+                }
+                let mut p = path.clone();
+                p.push(n);
+                open.push((l, p));
+            }
+        }
+        best.map(|b| b.1)
+    }
+
+    #[test]
+    fn the_loop_search_finds_what_the_scan_found_in_a_grid_of_equal_lanes() {
+        // a 7 x 7 grid of 20 m streets both ways: loops of equal length everywhere, so the
+        // order the open paths are taken in decides which one is found
+        let (n, step) = (7i32, 20.0);
+        let mut lanes = Vec::new();
+        let mut ends: Vec<((i32, i32), (i32, i32))> = Vec::new();
+        for x in 0..n {
+            for y in 0..n {
+                for (dx, dy, h) in [(1, 0, 90.0), (-1, 0, 270.0), (0, 1, 0.0), (0, -1, 180.0)] {
+                    let (tx, ty) = (x + dx, y + dy);
+                    if tx < 0 || ty < 0 || tx >= n || ty >= n {
+                        continue;
+                    }
+                    let p = DVec3::new(x as f64 * step, y as f64 * step, 0.0);
+                    lanes.push(LaneBuilder::arc(p, h, step, 0.0, 0.0, LaneKind::Street, 3.0));
+                    ends.push(((x, y), (tx, ty)));
+                }
+            }
+        }
+        for i in 0..lanes.len() {
+            lanes[i].next = (0..ends.len()).filter(|&j| ends[j].0 == ends[i].1 && ends[j].1 != ends[i].0).collect();
+        }
+        let net = Network { lanes, ..Default::default() };
+        let mut found = 0;
+        for start in 0..net.lanes.len() {
+            let got = shortest_loop(&net, start);
+            assert_eq!(got, scan_loop(&net, start), "start {start}");
+            found += got.is_some() as usize;
+        }
+        assert_eq!(found, net.lanes.len(), "every lane of the grid is on a loop");
+    }
 }
+
