@@ -245,6 +245,8 @@ pub fn newer(candidate: &str, current: &str) -> bool {
 
 /// The release file for this platform, as `release.yml` names it.
 pub fn asset_name(version: &str) -> Option<String> {
+    // Strip any `-eefi` suffix from version for the filename (the tag has it, the zip doesn't)
+    let version = version.strip_suffix("-eefi").unwrap_or(version);
     let suffix = if cfg!(target_os = "android") {
         "android-arm64.apk"
     } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
