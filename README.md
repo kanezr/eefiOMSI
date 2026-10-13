@@ -8,8 +8,7 @@
 <p align="center">
   <a href="https://github.com/kanezr/eefiOMSI/releases/latest"><img alt="Version" src="https://img.shields.io/github/v/release/openOMSI-org/openOMSI?label=version&color=f47f30&style=for-the-badge"></a>
   <a href="https://github.com/kanezr/eefiOMSI/actions/workflows/release.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/openOMSI-org/openOMSI/release.yml?branch=main&style=for-the-badge&label=build"></a>
-  <a href="https://discord.gg/VG2EKVafYG"><img alt="Discord - Official openOMSI" src="https://img.shields.io/badge/discord-join%20us-5865F2?style=for-the-badge&logo=discord&logoColor=white"></a>
-  <a href="https://discord.gg/unmX7BXuB8"><img alt="Discord - eefiOMSI" src="https://img.shields.io/badge/discord-join%20us-5865F2?style=for-the-badge&logo=discord&logoColor=white"></a>
+  <a href="https://discord.gg/unmX7BXuB8"><img alt="Discord" src="https://img.shields.io/badge/discord-join%20us-5865F2?style=for-the-badge&logo=discord&logoColor=white"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/openOMSI-org/openOMSI?style=for-the-badge"></a>
 </p>
 
@@ -21,6 +20,9 @@
 **openOMSI** is a from-scratch recreation of the bus simulator **OMSI 2**, written in Rust:
 64-bit, multithreaded, with a modern renderer (Metal / Vulkan / DirectX 12 through wgpu),
 and fully compatible with the existing maps, buses, scenery and mods.
+
+**eefiOMSI discord server**: [eefiOMSI Discord](https://discord.gg/unmX7BXuB8)
+**Official openOMSI discord server**: [openOMSI Discord](https://discord.gg/VG2EKVafYG)
 
 > [!IMPORTANT]
 > **openOMSI needs an original copy of OMSI 2.** It contains no game content of its own: it
