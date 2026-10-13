@@ -1074,3 +1074,68 @@ fn riders_are_drawn_on_the_bus_where_it_is_drawn() {
     assert!((p - drawn.world(local)).length() < 1e-6, "the rider stands on the drawn floor: {p:?}");
     assert!((h - (faces + 1.0)).abs() < 1e-9, "and turns with it: {h}");
 }
+
+/// A map's `drivers.txt` names the figures that drive its buses: when the people are drawn
+/// from everybody installed (no `humans.txt`), those figures stay out of the passengers.
+#[test]
+fn the_maps_drivers_are_not_passengers() {
+    let root = std::env::temp_dir().join(format!("omsi-drivers-out-{}", std::process::id()));
+    for (dir, name) in [("Humans/A", "Man.hum"), ("Humans/B", "Woman.hum"), ("Humans/London", "Driver.hum")] {
+        let d = root.join(dir);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(name), "[model]\nmodel.cfg\n").unwrap();
+        std::fs::write(d.join("model.cfg"), "").unwrap();
+    }
+    let map = root.join("maps").join("Test");
+    std::fs::create_dir_all(&map).unwrap();
+    std::fs::write(map.join("drivers.txt"), "Humans\\London\\Driver.hum\n").unwrap();
+    let mut h = PeopleSim::new(Path::new("/nonexistent"), 10);
+    h.types = map_human_types(&root, &["Humans/A/Man.hum".into(), "Humans/B/Woman.hum".into(), "Humans/London/Driver.hum".into()]);
+    assert_eq!(h.types.len(), 3);
+    h.leave_out_drivers(&map);
+    std::fs::remove_dir_all(&root).ok();
+    let left: Vec<String> = h.types.iter().map(|t| t.def.path.file_name().unwrap().to_string_lossy().to_string()).collect();
+    assert_eq!(left, ["Man.hum", "Woman.hum"], "the driver is out, the others stay");
+}
+
+/// Off a bus where no pavement is, people walk a few steps out and to the side, each to a
+/// place of their own, and never back into the bus.
+#[test]
+fn people_off_a_bus_without_a_pavement_step_away_from_the_door() {
+    let door = DVec3::new(100.0, 50.0, 0.0);
+    let (out, along) = (DVec3::X, DVec3::Y);
+    let mut places = Vec::new();
+    for id in 1..40u32 {
+        let p = super::pax_task::away_point(door, out, along, id);
+        let d = p - door;
+        assert!((2.5..=5.0).contains(&d.x), "{id}: {d:?} out from the door");
+        assert!(d.y.abs() <= 7.0, "{id}: {d:?} along the bus");
+        assert_eq!(d.z, 0.0);
+        places.push((d.x * 10.0) as i64 * 1000 + (d.y * 10.0) as i64);
+    }
+    places.sort();
+    places.dedup();
+    assert!(places.len() > 30, "a busload spreads out: {} places of 39", places.len());
+}
+
+/// The destination the people take a bus to show: the depot row the IBIS was set to comes
+/// first, then the first row of the code it holds, and the display script's own row only
+/// when the IBIS was never set - the Kruger++ scripts keep a row there that is not the one
+/// shown, and a typed code past the list named nothing at all.
+#[test]
+fn the_terminus_shown_is_the_ibis_row_before_the_display_scripts_row() {
+    use crate::people::bus_view::shown_terminus_row;
+    use omsi_vehicle::hof::Terminus;
+    let t = |code: i32, name: &str| Terminus { code, texture_id: name.into(), ..Default::default() };
+    let termini = vec![t(300, "Novi Sad 300"), t(14, "Sajlovo"), t(14, "Sajlovo via Centar"), t(18, "Avijaticarsko naselje")];
+    // the IBIS set to row 3 by code 18: that row, whatever the script keeps
+    assert_eq!(shown_terminus_row(&termini, Some(18), Some(3), Some(0)), Some(3));
+    // the index does not belong to the code: the first row of the code
+    assert_eq!(shown_terminus_row(&termini, Some(14), Some(3), Some(0)), Some(1));
+    // a code the depot file has not got, no index: the script's row
+    assert_eq!(shown_terminus_row(&termini, Some(99), None, Some(2)), Some(2));
+    // an index past the list, no code: the script's row
+    assert_eq!(shown_terminus_row(&termini, None, Some(9), Some(1)), Some(1));
+    // the IBIS never set and no script row: nothing
+    assert_eq!(shown_terminus_row(&termini, None, None, None), None);
+}

@@ -72,6 +72,10 @@ pub enum State {
     /// Task 8 without a path (+0x2f0 = -1): somebody who got off where no pavement is
     /// stands where they are until the player is gone.
     Standing,
+    /// Somebody who got off where no pavement is, on the way to `to`: a few steps away
+    /// from the door and to the side, so the doorway stays free and no crowd stands at it
+    /// (Omsi.exe left them where they stepped down); there they stand (`Standing`).
+    Leaving { to: DVec3 },
     /// A passenger (see `humans_pax`).
     Pax(Box<Pax>),
 }
@@ -82,6 +86,7 @@ impl State {
             State::Strolling(_) => "WalkStreet",
             State::Idle => "Idle",
             State::Standing => "WalkStreet",
+            State::Leaving { .. } => "WalkStreet",
             State::Pax(p) => p.task.name(),
         }
     }

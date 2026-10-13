@@ -74,7 +74,7 @@ impl PeopleSim {
             .iter()
             .filter_map(|p| match &p.state {
                 State::Pax(x) => Some((x.inside, x.pos)),
-                State::Strolling(_) => Some((None, p.position)),
+                State::Strolling(_) | State::Leaving { .. } => Some((None, p.position)),
                 _ => None,
             })
             .collect();

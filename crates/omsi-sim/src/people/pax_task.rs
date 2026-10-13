@@ -602,8 +602,16 @@ impl PeopleSim {
             }
             return;
         }
-        // out of the bus: into the world, on along the pavement (task 8)
+        // out of the bus: into the world, on along the pavement (task 8) - or, with no
+        // pavement there, a few steps away from the door (`away_point`)
         let Some((w, h)) = self.pax_world(&p, buses, bus_ix) else { return };
+        let away = {
+            let l = p.pos.as_vec3();
+            let side = p.door.and_then(|d| bn.cabin.exits.get(d)).map(|e| e.side).unwrap_or(1.0);
+            let out = (bn.world(l + Vec3::X * side) - bn.world(l)).normalize_or_zero();
+            let along = (bn.world(l + Vec3::Y) - bn.world(l)).normalize_or_zero();
+            away_point(w, out, along, self.people[i].id)
+        };
         let stop = reg.next;
         let pp = self.pax_mut(i).unwrap();
         pp.inside = None;
@@ -612,7 +620,17 @@ impl PeopleSim {
         if debug_pax() {
             log::info!("t={:.1} pax {} gets off at stop {:?} by exit {:?}", self.time, self.people[i].label(), stop, p.door);
         }
-        self.walk_street(i, w, h, stop, world, remove);
+        self.walk_street_from_bus(i, w, h, stop, away, world, remove);
+    }
+
+    /// `walk_street` for somebody off a bus: where the stop has no pavement to go on
+    /// along, they walk to `away` first (`State::Leaving`) instead of standing in the door.
+    #[allow(clippy::too_many_arguments)]
+    pub fn walk_street_from_bus(&mut self, i: usize, at: DVec3, heading: f64, stop: Option<i64>, away: DVec3, world: &dyn World, remove: &mut Vec<usize>) {
+        self.walk_street(i, at, heading, stop, world, remove);
+        if matches!(self.people[i].state, State::Standing) {
+            self.people[i].state = State::Leaving { to: away };
+        }
     }
 
     /// sub_626818 / task 8: on as a pedestrian along the pavement from the stop - or gone
@@ -639,4 +657,13 @@ impl PeopleSim {
             _ => p.state = State::Standing,
         }
     }
+}
+
+/// Where somebody off a bus walks to where no pavement is: 2.5 to 5 m out from the door
+/// (`out`: away from the bus's side, unit) and up to 7 m to either side along the bus
+/// (`along`, unit), by the person's number, so that a busload spreads out instead of
+/// crowding the doorway.
+pub fn away_point(door: DVec3, out: DVec3, along: DVec3, id: u32) -> DVec3 {
+    let r = |k: u32| (id.wrapping_mul(2_654_435_761).wrapping_add(k.wrapping_mul(40_503)) % 1000) as f64 / 1000.0;
+    door + out * (2.5 + 2.5 * r(1)) + along * (14.0 * r(2) - 7.0)
 }

@@ -4,6 +4,15 @@ Every push to `main` is released as `MAJOR.MINOR.COMMIT` (see
 [docs/VERSIONING.md](docs/VERSIONING.md)); the downloads are on the
 [Releases](https://github.com/openOMSI-Project/openOMSI/releases) page.
 
+## 0.2.45.1-eefi - 2026-10-13
+
+## Fixes (from openOMSI pull requests)
+- **Street lamps' shadows no longer switch between lamps at night** after the mirrors are drawn (Enhanced).
+- **Passengers: the destination they read off a bus is the depot row the IBIS was set to**, not the display script's row.
+- **Smooth and filter force feedback output** (Road and engine feedback is less likely to turn into slow, artificial wheel shake at low frame rates. On Linux, force changes sent to the wheel are smoothed over 25 ms; this smoothing applies only to the evdev backend).
+- **People off a bus where the stop has no pavement step away from the door**, each to a place of their own, instead of crowding the doorway.
+- **The map's drivers (drivers.txt) stay out of the passenger pool** when the people are drawn from everybody installed.
+
 ## 0.2.45-eefi - 2026-10-13
 
 ### Launcher Upgrade

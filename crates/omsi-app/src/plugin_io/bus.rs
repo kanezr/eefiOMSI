@@ -250,6 +250,8 @@ fn person_state(p: &omsi_sim::people::Person) -> &'static str {
         State::Strolling(_) => "strolling",
         State::Idle => "idle",
         State::Standing => "standing",
+        // (stepping away from the bus it got off, to stand clear of the door)
+        State::Leaving { .. } => "stepping_off",
         State::Pax(x) => match x.task {
             Task::WaitingForBus => "waiting",
             Task::ToBus => "to_bus",
