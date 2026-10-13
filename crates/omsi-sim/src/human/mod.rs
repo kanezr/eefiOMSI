@@ -32,7 +32,9 @@ mod support;
 #[cfg(test)]
 mod contact_tests;
 
+pub mod avatar;
 mod bones;
+pub mod face;
 mod motion;
 mod rig;
 mod skin;
@@ -129,6 +131,11 @@ pub struct PoseInput<'a> {
     pub velocity: DVec2,
     /// While sitting: the seat point (`[passpos]`, the hip) in the model frame.
     pub seat: Option<Vec3>,
+    /// While sitting: where the pelvis itself goes (model frame), when the caller knows it
+    /// better than the seat point does - a passenger takes it from the original seated pose,
+    /// which sits on every kind of seat (a bench at a stop has no person standing in front
+    /// of its hip point, as `seat` takes for granted).
+    pub seat_pelvis: Option<Vec3>,
     /// Something to look at.
     pub look: Option<Vec3>,
     /// Where the right hand reaches (the cash desk).
@@ -160,6 +167,7 @@ impl Default for PoseInput<'_> {
             frame: 0,
             velocity: DVec2::ZERO,
             seat: None,
+            seat_pelvis: None,
             look: None,
             reach: None,
             grips: None,
@@ -256,6 +264,7 @@ pub struct Pose {
     /// 0 standing … 1 seated, and the seat.
     sit: f32,
     seat: Vec3,
+    seat_pelvis: Option<Vec3>,
     reach: f32,
     reach_at: Vec3,
     /// Both hands on a steering wheel: how far (0 … 1) and where.
@@ -284,12 +293,53 @@ pub struct Pose {
     body_floor: f32,
     /// Per-person style: arm hang, head tilt, stance width.
     style: [f32; 4],
+    /// How the person stands, waiting (see `Idle`): the way before and the way now, how far
+    /// the change between them has come (0 … 1) and how long the way now is kept.
+    /// The person's own pace: steps a little quicker and shorter, or slower and longer
+    /// (1 the type's own), so that no two walk alike.
+    pace: f32,
+    idle_from: Idle,
+    idle_to: Idle,
+    idle_mix: f32,
+    idle_t: f32,
     /// Steps taken to catch up with a foot left behind, and frames a foot had to be pulled
     /// in (for the tests).
     catch_ups: u32,
     shuffles: u32,
     /// A foot was put down in the last [`Pose::advance`] - one footstep sound.
     landed: bool,
+}
+
+/// Ways of standing while waiting, one a person keeps for a while and then changes: no two
+/// people at a stop stand alike, and nobody stands the same way all the time.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Idle {
+    /// The arms hanging.
+    Hang,
+    /// The hands clasped in front.
+    Clasped,
+    /// The hands behind the back.
+    Behind,
+    /// The arms crossed over the chest.
+    Crossed,
+    /// One hand on the hip.
+    HandOnHip,
+    /// Looking at a phone held in the right hand.
+    Phone,
+}
+
+impl Idle {
+    /// A way of standing for the random number `r` (0 … 1), as often as people stand so.
+    fn pick(r: f32) -> Idle {
+        match r {
+            r if r < 0.28 => Idle::Hang,
+            r if r < 0.44 => Idle::Clasped,
+            r if r < 0.54 => Idle::Behind,
+            r if r < 0.68 => Idle::Crossed,
+            r if r < 0.78 => Idle::HandOnHip,
+            _ => Idle::Phone,
+        }
+    }
 }
 
 /// Bone transforms and the joint positions they put the limbs at (model frame).

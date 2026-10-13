@@ -10,12 +10,21 @@
 //!
 //! Nothing here is an engine: a stage is a plain method of the window's `App` or of the
 //! offscreen run, and the list is the order they were always called in.
+//!
+//! What a window stage declares is checked: a stage handed a context of its groups
+//! (`app::stage_ctx!`, taken from `App::parts`) can touch nothing else, and its `reads` and
+//! `writes` are that context's; for a stage that still takes the whole `App`, the access
+//! test (`access_tests`) reads the crate's source and fails when the stage reaches a field
+//! of a group it does not declare.
 
-use std::collections::BTreeMap;
 use std::time::Instant;
+
+use crate::profile_keys::{ProfKey, ProfileTimes};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod access_tests;
 
 /// Where in the frame a stage belongs, roughly in the order of the frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -92,7 +101,7 @@ pub(crate) enum Carry {
 pub(crate) enum Profile {
     /// The runner times the whole stage under this key (stages may share one; a key never
     /// has a dot: those are a stage's own parts, `traffic.tick`).
-    Key(&'static str),
+    Key(ProfKey),
     /// The stage times its own parts under keys of its own (the picture: acquire, render,
     /// present, ...).
     Inner,
@@ -108,7 +117,10 @@ pub(crate) struct StageInfo {
     /// What the stage does, as the other list knows it too (the same role in the window and
     /// the offscreen run).
     pub(crate) role: Role,
+    /// The groups the stage reads (a stage handed a context: only reads; one that takes the
+    /// whole `App`: everything its code reaches but `writes`).
     pub(crate) reads: &'static [Group],
+    /// The groups the stage changes (and may read).
     pub(crate) writes: &'static [Group],
     pub(crate) takes: &'static [Carry],
     pub(crate) gives: &'static [Carry],
@@ -147,7 +159,7 @@ pub(crate) trait Stage: Copy + std::fmt::Debug + 'static {
 pub(crate) trait Host<S: Stage> {
     fn run_stage(&mut self, stage: S) -> anyhow::Result<Flow>;
     /// Where the stages' times go (`App::perf.profile`, the offscreen run's own).
-    fn profile(&mut self) -> &mut BTreeMap<&'static str, f64>;
+    fn profile(&mut self) -> &mut ProfileTimes;
 }
 
 /// The runner: `list`'s stages in their order, each timed under its profile key, until one
@@ -157,7 +169,7 @@ pub(crate) fn run<S: Stage, H: Host<S>>(host: &mut H, list: &[S]) -> anyhow::Res
         let t = Instant::now();
         let flow = host.run_stage(stage)?;
         if let Profile::Key(k) = stage.info().profile {
-            *host.profile().entry(k).or_default() += t.elapsed().as_secs_f64();
+            host.profile().add(k, t.elapsed().as_secs_f64());
         }
         if flow == Flow::Stop {
             return Ok(Flow::Stop);
@@ -172,7 +184,7 @@ pub(crate) fn describe<S: Stage>(title: &str, list: &[S]) -> String {
     for (k, s) in list.iter().enumerate() {
         let i = s.info();
         let profile = match i.profile {
-            Profile::Key(k) => k.to_string(),
+            Profile::Key(k) => k.name().to_string(),
             Profile::Inner => "(own parts)".into(),
             Profile::None => "-".into(),
         };

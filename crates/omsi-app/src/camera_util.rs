@@ -393,7 +393,7 @@ pub(crate) fn render_mirrors(
     let mut lighting = lighting.clone();
     // a mirror's small picture: nothing smaller than a few of its pixels, and nothing much
     // beyond what a mirror shows (the far distance below)
-    let px = crate::MIRROR_SIZE.load(std::sync::atomic::Ordering::Relaxed).max(64) as f32;
+    let px = world.settings.mirror_size().max(64) as f32;
     lighting.min_obj_size = lighting.min_obj_size.max((12.0 / px).clamp(0.03, 0.09));
     lighting.shadows = false;
     // Enhanced graphics draw the mirrors with the plain shading (see Renderer::render_inner),
@@ -403,7 +403,7 @@ pub(crate) fn render_mirrors(
     // (By the sun's darkness, Envir_Brightness's ramp from +6 to -6 degrees: `night` is
     // whole at sunset already, from +10 degrees on, and rain raises it by day, and the
     // mirrors were a fifth of the window's light through the whole dusk, #432.)
-    if lighting.enhanced && !omsi_cfg::flags::OMSI_MIRROR_ENHANCED.is_set() {
+    if lighting.enhanced && !omsi_cfg::flags::OMSI_MIRROR_ENHANCED.is_set() && !renderer.options.mirror_enhanced {
         let alt = lighting.sun_dir.z.clamp(-1.0, 1.0).asin().to_degrees();
         let dark = 1.0 - ((alt + 6.0) / 12.0).clamp(0.0, 1.0);
         let k = 1.0 - MIRROR_NIGHT_DIM * dark;

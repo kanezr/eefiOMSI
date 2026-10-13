@@ -1,23 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// The launcher drawn by the game (`openomsi --launcher`), in place of this one.
-enum CrossPlatform {
-    static func open() {
-        let game = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/openomsi")
-        guard FileManager.default.isExecutableFile(atPath: game.path) else { return }
-        let p = Process()
-        p.executableURL = game
-        p.arguments = ["--launcher"]
-        do {
-            try p.run()
-            NSApp.terminate(nil)
-        } catch {
-            NSLog("openOMSI: the cross-platform launcher did not start: \(error)")
-        }
-    }
-}
-
 /// What the Swift side asks of the system on a Mac.
 enum Platform {
     static let isPhone = false
@@ -39,10 +22,6 @@ enum Platform {
         panel.allowsMultipleSelection = false
         if !types.isEmpty { panel.allowedContentTypes = types.compactMap { .init(filenameExtension: $0) } }
         panel.begin { r in completion(r == .OK ? panel.url : nil) }
-    }
-
-    static func setCrossPlatform(_ on: Bool) {
-        if on { CrossPlatform.open() }
     }
 
     /// A mod chosen in the panel: read where it is (a sandboxed build reads it through the

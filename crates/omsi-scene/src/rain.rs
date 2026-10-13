@@ -7,23 +7,14 @@ use omsi_render::{Corona, Scene};
 
 const HALF_WIDTH: f32 = 16.0;
 
-/// The `rain_quality` setting in force: 2 high, 1 medium, 0 low (see [`set_quality`]); a
-/// setting, set again by every session start (`make_app`).
-static QUALITY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
-
-/// Take the `rain_quality` setting (`high`, `medium`, `low`).
-pub fn set_quality(q: &str) {
-    let v = match q {
+/// The rain's quality of a `rain_quality` setting (`high`, `medium`, `low`): 2 high, 1
+/// medium, 0 low.
+pub fn quality_of(q: &str) -> u8 {
+    match q {
         "low" => 0,
         "medium" => 1,
         _ => 2,
-    };
-    QUALITY.store(v, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The rain's quality: 2 high, 1 medium, 0 low.
-pub fn quality() -> u8 {
-    QUALITY.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 pub fn weather_wind(weather: &omsi_content::weather::Weather) -> Vec3 {
@@ -70,8 +61,8 @@ impl Rain {
         (self.rng >> 40) as f32 / (1u64 << 24) as f32
     }
 
-    /// `kind`: 0 none, 1 rain, 2 snow; `rate` 0..1.
-    pub fn set(&mut self, kind: i32, rate: f32) {
+    /// `kind`: 0 none, 1 rain, 2 snow; `rate` 0..1; `quality` the rain's (see [`quality_of`]).
+    pub fn set(&mut self, kind: i32, rate: f32, quality: u8) {
         self.kind = kind;
         self.rate = rate.clamp(0.0, 1.0);
         // (snow is drawn by the renderer itself, from the weather: render snow.wgsl,
@@ -80,7 +71,7 @@ impl Rain {
             0
         } else {
             // (fewer streaks at a lower rain quality: they are drawn as sprites each frame)
-            let share = [0.25, 0.5, 1.0][quality() as usize];
+            let share = [0.25, 0.5, 1.0][quality.min(2) as usize];
             ((400.0 + 2600.0 * self.rate) * share) as usize
         };
         while self.particles.len() < n {
@@ -291,7 +282,7 @@ mod tests {
     #[test]
     fn rain_stays_in_the_world_and_streaks_follow_relative_velocity() {
         let mut rain = Rain::new();
-        rain.set(1, 1.0);
+        rain.set(1, 1.0, 2);
         rain.particles = vec![Vec3::new(0.0, 0.0, 10.0)];
         rain.camera = Some(DVec3::ZERO);
         let camera = DVec3::new(0.0, 2.0, 0.0);
@@ -307,12 +298,12 @@ mod tests {
     #[test]
     fn dry_weather_has_no_particles_and_heavy_rain_keeps_the_budget() {
         let mut rain = Rain::new();
-        rain.set(1, 1.0);
+        rain.set(1, 1.0, 2);
         assert_eq!(rain.particles.len(), 3000);
-        rain.set(1, 0.0);
+        rain.set(1, 0.0, 2);
         assert!(rain.particles.is_empty());
-        rain.set(2, 1.0);
-        rain.set(0, 1.0);
+        rain.set(2, 1.0, 2);
+        rain.set(0, 1.0, 2);
         assert!(rain.particles.is_empty());
     }
 

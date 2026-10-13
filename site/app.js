@@ -1,8 +1,6 @@
 // openOMSI website: a small hash router that shows the overview, the download page and the
 // Markdown files of docs/ (copied next to this page by .github/workflows/pages.yml).
 const REPO = "openOMSI-org/openOMSI";
-// the "playing now" counter (services/presence/): the games running right now
-const PRESENCE = "https://openomsi.savvabestbrother.workers.dev";
 const DOCS = [
   { file: "USER_GUIDE", title: "User guide", icon: "sports_esports" },
   { file: "ANDROID", title: "Android & mobile", icon: "smartphone" },
@@ -81,35 +79,9 @@ function showTemplate(id) {
 
 async function home() {
   showTemplate("home");
-  playingNow();
   const rel = await latestRelease();
   const chip = document.querySelector("#version-chip span:last-child");
   if (chip) chip.textContent = rel.tag_name ? `Latest: ${rel.tag_name.replace(/^v/, "")}` : "No release yet";
-}
-
-// How many play openOMSI right now: the counter's count of these ten minutes (the README's
-// badge shows the same one), asked again as soon as the next ten minutes have begun while the
-// page shows it (the counter runs on Cloudflare's free plan: every request counts against its
-// daily limit, and the answer is cached until then anyway).
-let playingTimer = null;
-async function playingNow() {
-  clearTimeout(playingTimer);
-  const chip = document.getElementById("players-chip");
-  if (!chip) return;
-  let wait = 600000;
-  try {
-    const r = await fetch(`${PRESENCE}/players`);
-    const p = r.ok ? await r.json() : null;
-    if (p && typeof p.players === "number") {
-      chip.lastElementChild.textContent = `${p.players} playing now`;
-      chip.title = Object.entries(p.systems || {}).map(([os, n]) => `${os}: ${n}`).join(", ");
-      chip.hidden = false;
-      // (a little after the next count, the cache's clock and ours never quite agree)
-      const next = Date.parse(p.next);
-      if (!Number.isNaN(next)) wait = Math.min(600000, Math.max(20000, next - Date.now() + 20000));
-    }
-  } catch { /* (the counter is out of reach: the chip stays hidden) */ }
-  playingTimer = setTimeout(playingNow, wait);
 }
 
 async function download() {

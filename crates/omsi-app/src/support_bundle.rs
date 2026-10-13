@@ -287,13 +287,6 @@ fn filter_cached(value: &mut Value) {
     }
 }
 
-pub(crate) fn default_output() -> PathBuf {
-    let dir = omsi_launcher_lib::data_dir().join("diagnostics");
-    let _ = std::fs::create_dir_all(&dir);
-    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|t| t.as_secs()).unwrap_or(0);
-    dir.join(format!("openomsi-support-{stamp}.zip"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

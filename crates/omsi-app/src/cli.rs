@@ -224,6 +224,10 @@ pub(crate) struct Args {
     /// `duty_start::Preopened`).
     #[arg(skip)]
     pub(crate) preopened: crate::duty_start::Preopened,
+    /// The look the settings and arguments ask for (see `startup::SessionSettings`), worked out at the
+    /// session's start.
+    #[arg(skip)]
+    pub(crate) session_settings: crate::startup::SessionSettings,
     /// With a duty: start at the entry point nearest to its first stop by road (the
     /// launcher's "Automatic") instead of `--entry`.
     #[arg(long)]
@@ -263,9 +267,6 @@ pub(crate) struct Args {
     /// can trace rays).
     #[arg(long)]
     pub(crate) enhanced_plus: bool,
-    /// Open the launcher (the default when the program is started without arguments).
-    #[arg(long)]
-    pub(crate) launcher: bool,
     /// Skip the launcher and show the in-game start menu instead.
     #[arg(long)]
     pub(crate) menu: bool,
@@ -276,11 +277,7 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn parse_time(s: &str) -> f64 {
-    let mut it = s.split(':');
-    let h: f64 = it.next().and_then(|x| x.trim().parse().ok()).unwrap_or(9.0);
-    let m: f64 = it.next().and_then(|x| x.trim().parse().ok()).unwrap_or(0.0);
-    let sec: f64 = it.next().and_then(|x| x.trim().parse().ok()).unwrap_or(0.0);
-    h * 3600.0 + m * 60.0 + sec
+    omsi_sim::clock::parse_day_time(s)
 }
 
 pub(crate) fn parse_cam(s: &str) -> Result<Camera> {

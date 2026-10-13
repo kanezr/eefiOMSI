@@ -14,13 +14,14 @@ use std::collections::HashSet;
 use glam::{DVec3, Vec3};
 use omsi_render::Camera;
 use winit::keyboard::KeyCode;
+use crate::app_impl::ShiftClockCx;
 
 mod pad;
 mod panel;
 mod render;
 
 // (the lens and the darkroom are the omsi-photo crate)
-use omsi_photo::{develop, lens};
+use omsi_photo::{develop, exposure, lens};
 pub(crate) use develop::Grade;
 pub(crate) use omsi_photo::stretch;
 
@@ -37,6 +38,10 @@ pub(crate) enum Request {
     Clock(f64),
     /// The photo just saved shown in the file browser.
     Reveal(std::path::PathBuf),
+    /// Focus on what the picture shows at this point (shares of the window: x, y).
+    FocusAt(f32, f32),
+    /// Focus at the hyperfocal distance (everything from half of it to the horizon sharp).
+    Hyperfocal,
 }
 
 /// How far the camera may go from the bus: (metres, label).
@@ -62,6 +67,13 @@ pub(crate) const BLADES: [(u32, &str); 4] = [(0, "Round"), (5, "5 blades"), (6, 
 pub(crate) const QUALITY: [(u32, &str); 4] = [(16, "Draft (16 samples)"), (32, "Good (32 samples)"), (64, "High (64 samples)"), (128, "Best (128 samples)")];
 /// The saved photo's size, times the window's.
 pub(crate) const SIZES: [(f32, &str); 2] = [(1.0, "As the window"), (2.0, "Double (supersampled)")];
+/// The brightest aperture of the advanced mode's lens.
+pub(crate) const LENS_MAX: [f32; 5] = [1.2, 1.4, 1.8, 2.8, 4.0];
+/// Exposure bracketing: how many photos.
+pub(crate) const BRACKETS: [(u32, &str); 3] = [(1, "Off"), (3, "3 photos"), (5, "5 photos")];
+/// How the bus's motion is taken: frozen, panned with (the street blurs) or from a tripod
+/// (the bus blurs).
+pub(crate) const MOTIONS: [&str; 3] = ["Frozen", "Panning", "Tripod"];
 
 /// What the photo mode is set to (kept for the session).
 #[derive(Clone, Debug, PartialEq)]
@@ -84,11 +96,51 @@ pub(crate) struct Settings {
     pub quality: usize,
     pub grade: Grade,
     pub size: usize,
+    /// The spirit level over the picture.
+    pub level: bool,
+    /// The bus's motion from a tripod: the bus blurs, not the street.
+    pub tripod: bool,
+    /// The advanced mode's camera: the sensor, the exposure, the lens's brightest aperture,
+    /// the white balance (a preset, the custom kelvin), the picture profile, the lens as it
+    /// comes (uncorrected), tilt and shift, how bright burnt-out lights are in the bokeh.
+    pub sensor: usize,
+    pub exposure: exposure::Exposure,
+    pub lens_max: usize,
+    pub wb: usize,
+    pub kelvin: f32,
+    pub profile: usize,
+    pub lens_raw: bool,
+    pub tilt: [f32; 2],
+    /// Shift (mm on the sensor: right, up).
+    pub shift: [f32; 2],
+    pub highlights: f32,
+    pub noise: bool,
+    pub bracket: usize,
+    pub bracket_step: f32,
+    pub png16: bool,
+    pub zebra: bool,
+    pub peaking: bool,
+    pub histogram: bool,
 }
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { orbit: false, fov: lens::fov_for(35.0), roll: 0.0, speed: 1.0, range: 1, grid: 0, aspect: 0, dof: false, auto_focus: true, focus: 10.0, fstop: 4, blades: 0, motion: false, shutter: 2, quality: 1, grade: Grade::neutral(), size: 0 }
+        Settings {
+            orbit: false, fov: lens::fov_for(35.0), roll: 0.0, speed: 1.0, range: 1, grid: 0, aspect: 0, dof: false, auto_focus: true, focus: 10.0, fstop: 4, blades: 0, motion: false, shutter: 2, quality: 1, grade: Grade::neutral(), size: 0,
+            level: false, tripod: false, sensor: 0, exposure: exposure::Exposure::default(), lens_max: 1, wb: 0, kelvin: 5500.0, profile: 0, lens_raw: false, tilt: [0.0; 2], shift: [0.0; 2], highlights: 0.5, noise: true, bracket: 0, bracket_step: 1.0, png16: false, zebra: false, peaking: false, histogram: true,
+        }
+    }
+}
+
+impl Settings {
+    /// The sensor's height (mm): full frame in the simple mode.
+    pub(crate) fn sensor_h(&self, pro: bool) -> f32 {
+        if pro { exposure::SENSORS[self.sensor.min(exposure::SENSORS.len() - 1)].1 } else { 24.0 }
+    }
+
+    /// The real focal length (mm) of the lens on the sensor.
+    pub(crate) fn focal(&self, pro: bool) -> f32 {
+        lens::focal_on(self.fov, self.sensor_h(pro))
     }
 }
 
@@ -122,6 +174,18 @@ pub(crate) struct Photo {
     /// The file the note tells of (a click on it shows it in the file browser).
     pub saved: Option<std::path::PathBuf>,
     pad: pad::PadState,
+    /// The advanced mode's camera body (from the launcher's setting).
+    pub pro: bool,
+    /// The left button pressed over the picture (where, shares of the window) and how far
+    /// the view has turned since (degrees): let go without turning it is a click to focus.
+    pub press: Option<(f32, f32)>,
+    pub dragged: f32,
+    /// The light of the scene as the meter reads it (EV at ISO 100, the metering mode's
+    /// share included), and the exposure the camera takes with it.
+    pub scene_ev: f32,
+    pub metered: Option<exposure::Metered>,
+    /// Where the focus was set by a click (shares of the window), shown a while.
+    pub focus_mark: Option<(f32, f32, f32)>,
 }
 
 impl Photo {
@@ -152,11 +216,49 @@ impl Photo {
             note: None,
             saved: None,
             pad: pad::PadState::default(),
+            pro: false,
+            press: None,
+            dragged: 0.0,
+            scene_ev: 12.0,
+            metered: None,
+            focus_mark: None,
         }
+    }
+
+    /// The f-number the photo is taken at: the camera's (the advanced mode's, its automatic
+    /// modes deciding) or the ring's.
+    pub(crate) fn fstop(&self) -> f32 {
+        match (self.pro, self.metered) {
+            (true, Some(m)) => m.fstop,
+            _ => FSTOPS[self.settings.fstop.min(FSTOPS.len() - 1)],
+        }
+    }
+
+    /// The shutter time (s).
+    pub(crate) fn shutter_time(&self) -> f32 {
+        match (self.pro, self.metered) {
+            (true, Some(m)) => m.shutter,
+            _ => SHUTTERS[self.settings.shutter.min(SHUTTERS.len() - 1)].0,
+        }
+    }
+
+    /// The advanced mode's exposure for the light now.
+    pub(crate) fn meter_now(&mut self) {
+        if !self.pro {
+            self.metered = None;
+            return;
+        }
+        let s = &self.settings;
+        // (the full-frame equivalent: what the field of view is on a 24 mm high sensor)
+        let focal_eq = lens::focal_mm(s.fov);
+        let max = LENS_MAX[s.lens_max.min(LENS_MAX.len() - 1)];
+        let min = if max >= 2.8 { 32.0 } else { 22.0 };
+        self.metered = Some(exposure::meter(&s.exposure, self.scene_ev, (max, min), focal_eq));
     }
 
     /// The camera turned by (dx, dy) degrees (right, down).
     pub(crate) fn look(&mut self, dx: f32, dy: f32) {
+        self.dragged += dx.abs() + dy.abs();
         if self.settings.orbit {
             self.orbit.1 += dx;
             self.orbit.2 = (self.orbit.2 + dy).clamp(-10.0, 85.0);
@@ -179,7 +281,19 @@ impl Photo {
         }
         let to = (self.anchor + DVec3::new(0.0, 0.0, 1.6) - self.cam.position).as_vec3();
         let along = to.dot(self.cam.forward());
-        if along > 0.3 { along } else { self.settings.focus }
+        if along <= 0.3 {
+            return self.settings.focus;
+        }
+        // (the bus's surface where the camera sees its middle, from the shot's depth: its
+        // middle itself lay a couple of metres behind the side the camera looks at)
+        let tan = (self.cam.fov_deg.to_radians() * 0.5).tan();
+        let (w, h) = self.render.depth.as_ref().map(|d| (d.0 as f32, d.1 as f32)).unwrap_or((16.0, 9.0));
+        let (u, v) = (to.dot(self.cam.right()) / along / (tan * w / h), to.dot(self.cam.up()) / along / tan);
+        let surface = (u.abs() < 0.95 && v.abs() < 0.95).then(|| self.render.depth_at(0.5 + u * 0.5, 0.5 - v * 0.5)).flatten();
+        match surface {
+            Some(d) if d < along + 0.5 && d > along - 6.0 => d,
+            _ => along,
+        }
     }
 
     /// One frame of the camera: the keys and the pad held, smoothed, kept near the bus
@@ -275,7 +389,7 @@ impl Photo {
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::F12 => Some(Request::Take),
             KeyCode::KeyR => Some(Request::Level),
             KeyCode::Tab => {
-                let n = panel::TABS.len();
+                let n = panel::tabs(self.pro).len();
                 let back = self.keys.contains(&KeyCode::ShiftLeft) || self.keys.contains(&KeyCode::ShiftRight);
                 self.tab = if back { (self.tab + n - 1) % n } else { (self.tab + 1) % n };
                 None
@@ -289,6 +403,12 @@ impl Photo {
     /// The photo as last developed (w, h, RGBA).
     pub(crate) fn developed(&self) -> Option<(u32, u32, &[u8])> {
         self.render.developed.as_ref().map(|(w, h, px)| (*w, *h, px.as_slice()))
+    }
+
+    /// The photo as the window shows it (the live view's aids over it).
+    pub(crate) fn shown(&self) -> Option<(u32, u32, &[u8])> {
+        let (w, h, px) = self.developed()?;
+        Some((w, h, self.render.shown.as_deref().filter(|s| s.len() == px.len()).unwrap_or(px)))
     }
 }
 
@@ -316,7 +436,38 @@ fn test_settings(s: &mut Settings, text: &str) {
             "aspect" => s.aspect = (x as usize).min(ASPECTS.len() - 1),
             "grid" => s.grid = (x as usize).min(GRIDS.len() - 1),
             "quality" => s.quality = (x as usize).min(QUALITY.len() - 1),
-            "dist" | "around" | "up" | "kmh" => {}
+            // the advanced mode's
+            "mode" => s.exposure.mode = (x as usize).min(3),
+            "iso" => {
+                s.exposure.iso = exposure::nearest_iso(x);
+                s.exposure.auto_iso = false;
+            }
+            "t" => s.exposure.shutter = exposure::nearest_shutter(1.0 / x.max(1e-3)),
+            "f" => s.exposure.aperture = exposure::nearest_aperture(x),
+            "comp" => s.exposure.compensation = x,
+            "metering" => s.exposure.metering = (x as usize).min(2),
+            "sensor" => s.sensor = (x as usize).min(exposure::SENSORS.len() - 1),
+            "kelvin" => {
+                s.wb = exposure::WHITE_BALANCE.len() - 1;
+                s.kelvin = x;
+            }
+            "profile" => s.profile = (x as usize).min(exposure::PROFILES.len() - 1),
+            "raw" => s.lens_raw = x != 0.0,
+            "tilt" => s.tilt[0] = x,
+            "swing" => s.tilt[1] = x,
+            "shift" => s.shift[1] = x,
+            "shiftx" => s.shift[0] = x,
+            "tripod" => s.tripod = x != 0.0,
+            "highlights" => s.highlights = x,
+            "bracket" => s.bracket = (x as usize).min(BRACKETS.len() - 1),
+            "png16" => s.png16 = x != 0.0,
+            "zebra" => s.zebra = x != 0.0,
+            "peaking" => s.peaking = x != 0.0,
+            "border" => s.grade.border = develop::Border::ALL[(x as usize).min(develop::Border::ALL.len() - 1)],
+            "clarity" => s.grade.clarity = x,
+            "noise" => s.noise = x != 0.0,
+            "pro" => {}
+            "dist" | "around" | "up" | "kmh" | "tab" => {}
             _ => log::warn!("OMSI_PHOTO: no setting {k}"),
         }
     }
@@ -348,6 +499,12 @@ impl crate::App {
             test_settings(&mut settings, t);
         }
         let mut ph = Photo::new(cam, anchor, velocity, self.paused, settings);
+        ph.pro = self.settings.photo_mode == "advanced";
+        if let Some(t) = omsi_cfg::flags::OMSI_PHOTO.var() {
+            if t.split(',').any(|p| p.trim() == "pro=1") {
+                ph.pro = true;
+            }
+        }
         // (a camera inside the bus starts as it is; the field of view is the photo mode's)
         ph.cam.pitch = cam.pitch;
         // (a test's orbit: OMSI_PHOTO dist, around, up)
@@ -358,6 +515,8 @@ impl crate::App {
                 "dist" => ph.orbit.0 = x,
                 "around" => ph.orbit.1 = x,
                 "up" => ph.orbit.2 = x,
+                // (the panel's page open, for a test's picture of it)
+                "tab" => ph.tab = x as usize,
                 // (a moving bus for a rolling shot without driving one)
                 "kmh" => {
                     let h = self.player.as_ref().map(|p| p.vehicle.heading.to_radians()).unwrap_or(0.0);
@@ -373,65 +532,8 @@ impl crate::App {
         log::info!("photo mode on at {:.1},{:.1},{:.1}, the bus at {:.1} km/h", cam.position.x, cam.position.y, cam.position.z, velocity.length() * 3.6);
     }
 
-    /// Out of the photo mode: the game as it was.
-    pub(crate) fn exit_photo(&mut self) {
-        let Some(ph) = self.photo.take() else { return };
-        self.photo_settings = Some(ph.settings.clone());
-        self.paused = ph.prev_paused;
-        if ph.clock_shift != 0.0 {
-            self.shift_clock(-ph.clock_shift);
-        }
-        if let Some(c) = ph.prev_camera {
-            self.camera = Some(c);
-        }
-        self.shell.drop_picture();
-        self.shell.opaque = false;
-        self.shell.clear();
-        log::info!("photo mode off");
-    }
-
     pub(crate) fn photo_request(&mut self, r: Request) {
-        match r {
-            Request::Exit => self.exit_photo(),
-            Request::Take => {
-                if let Some(ph) = self.photo.as_mut() {
-                    ph.render.capture = true;
-                }
-            }
-            Request::Reset => {
-                if let Some(ph) = self.photo.as_mut() {
-                    ph.settings = Settings { fov: ph.settings.fov, orbit: ph.settings.orbit, ..Settings::default() };
-                    ph.fov_target = ph.settings.fov;
-                }
-            }
-            Request::Level => {
-                if let Some(ph) = self.photo.as_mut() {
-                    ph.settings.roll = 0.0;
-                }
-            }
-            Request::HideUi => {
-                if let Some(ph) = self.photo.as_mut() {
-                    ph.hide_ui = !ph.hide_ui;
-                }
-            }
-            Request::Reveal(path) => crate::platform::reveal(&path),
-            Request::Clock(secs) => {
-                if self.net.lan.as_ref().is_some_and(|l| l.role == omsi_net::Role::Client) {
-                    if let Some(ph) = self.photo.as_mut() {
-                        ph.note = Some((omsi_ui::tr("In a LAN session the host sets the clock").into_owned(), 3.0));
-                    }
-                } else {
-                    let moved = !self.real_time_locked();
-                    self.shift_clock(secs);
-                    if let Some(ph) = self.photo.as_mut() {
-                        if moved {
-                            ph.clock_shift += secs;
-                        }
-                        ph.render.reset();
-                    }
-                }
-            }
-        }
+        photo_request(&mut PhotoCx::of(&mut self.parts()), r);
     }
 
     /// A key while the photo mode is on: all of them are its own.
@@ -444,35 +546,131 @@ impl crate::App {
             self.photo_request(r);
         }
     }
+}
 
-    /// The photo mode's frame before the picture: the pad, the camera flown, the view the
-    /// game streams the world round, and the panel.
-    pub(crate) fn frame_photo(&mut self, dt: f32) {
-        if self.photo.is_none() {
-            return;
-        }
-        let requests = match (self.photo.as_mut(), self.input.controllers.as_ref()) {
-            (Some(ph), Some(ctl)) => ph.pad.read(ctl),
-            (Some(ph), None) => {
-                ph.pad = pad::PadState::default();
-                Vec::new()
-            }
-            _ => Vec::new(),
-        };
-        for r in requests {
-            self.photo_request(r);
-        }
-        let world = self.world.clone();
-        let Some(ph) = self.photo.as_mut() else { return };
-        ph.fly(dt.min(0.1), |x, y| world.as_ref().and_then(|w| w.ground_height(x, y)));
-        if let Some(n) = ph.note.as_mut() {
-            n.1 -= dt;
-        }
-        if ph.note.as_ref().is_some_and(|n| n.1 <= 0.0) {
-            ph.note = None;
-            ph.saved = None;
-        }
-        self.camera = Some(ph.cam);
-        self.frame_photo_panel(dt);
+crate::app::stage_ctx!(
+    /// The photo mode's part of the game (the clock it may move included).
+    PhotoCx { reads: [input, net, world], writes: [ui, clock, view, menus, traffic, player, gfx] }
+);
+
+/// Out of the photo mode: the game as it was.
+fn exit_photo(cx: &mut PhotoCx) {
+    let Some(ph) = cx.ui.photo.take() else { return };
+    *cx.ui.photo_settings = Some(ph.settings.clone());
+    *cx.clock.paused = ph.prev_paused;
+    if ph.clock_shift != 0.0 {
+        crate::app_impl::shift_clock(crate::app::narrow!(cx => ShiftClockCx { reads: [net, input, world], writes: [clock, traffic, player, ui, gfx] }), -ph.clock_shift);
     }
+    if let Some(c) = ph.prev_camera {
+        *cx.view.camera = Some(c);
+    }
+    cx.menus.shell.drop_picture();
+    cx.menus.shell.opaque = false;
+    cx.menus.shell.clear();
+    log::info!("photo mode off");
+}
+
+/// What the photo mode's keys, pad and panel ask for (`Request`).
+pub(crate) fn photo_request(cx: &mut PhotoCx, r: Request) {
+    match r {
+        Request::Exit => exit_photo(cx),
+        Request::Take => {
+            if let Some(ph) = cx.ui.photo.as_mut() {
+                ph.render.capture = true;
+            }
+        }
+        Request::Reset => {
+            if let Some(ph) = cx.ui.photo.as_mut() {
+                ph.settings = Settings { fov: ph.settings.fov, orbit: ph.settings.orbit, ..Settings::default() };
+                ph.fov_target = ph.settings.fov;
+            }
+        }
+        Request::Level => {
+            if let Some(ph) = cx.ui.photo.as_mut() {
+                ph.settings.roll = 0.0;
+            }
+        }
+        Request::HideUi => {
+            if let Some(ph) = cx.ui.photo.as_mut() {
+                ph.hide_ui = !ph.hide_ui;
+            }
+        }
+        Request::Reveal(path) => crate::platform::reveal(&path),
+        Request::FocusAt(x, y) => {
+            if let Some(ph) = cx.ui.photo.as_mut() {
+                match ph.render.depth_at(x, y) {
+                    Some(d) => {
+                        ph.settings.auto_focus = false;
+                        ph.settings.focus = d.clamp(0.3, 5000.0);
+                        if !ph.settings.dof {
+                            ph.settings.dof = true;
+                        }
+                        ph.focus_mark = Some((x, y, 1.5));
+                    }
+                    None => ph.note = Some((omsi_ui::tr("Hold the camera still a moment, then click to focus").into_owned(), 3.0)),
+                }
+            }
+        }
+        Request::Hyperfocal => {
+            if let Some(ph) = cx.ui.photo.as_mut() {
+                let sh = ph.settings.sensor_h(ph.pro);
+                let (_, _, hyper) = exposure::dof_limits(ph.settings.focal(ph.pro), ph.fstop(), 10.0, sh);
+                ph.settings.auto_focus = false;
+                ph.settings.focus = hyper.clamp(0.3, 5000.0);
+            }
+        }
+        Request::Clock(secs) => {
+            if cx.net.lan.as_ref().is_some_and(|l| l.role == omsi_net::Role::Client) {
+                if let Some(ph) = cx.ui.photo.as_mut() {
+                    ph.note = Some((omsi_ui::tr("In a LAN session the host sets the clock").into_owned(), 3.0));
+                }
+            } else {
+                let moved = !crate::app_impl::real_time_locked(cx.common.settings, cx.net);
+                crate::app_impl::shift_clock(crate::app::narrow!(cx => ShiftClockCx { reads: [net, input, world], writes: [clock, traffic, player, ui, gfx] }), secs);
+                if let Some(ph) = cx.ui.photo.as_mut() {
+                    if moved {
+                        ph.clock_shift += secs;
+                    }
+                    ph.render.reset();
+                }
+            }
+        }
+    }
+}
+
+/// The photo mode's frame before the picture: the pad, the camera flown, the view the
+/// game streams the world round, and the panel.
+pub(crate) fn photo(mut cx: PhotoCx, dt: f32) {
+    if cx.ui.photo.is_none() {
+        return;
+    }
+    let requests = match (cx.ui.photo.as_mut(), cx.input.controllers.as_ref()) {
+        (Some(ph), Some(ctl)) => ph.pad.read(ctl),
+        (Some(ph), None) => {
+            ph.pad = pad::PadState::default();
+            Vec::new()
+        }
+        _ => Vec::new(),
+    };
+    for r in requests {
+        photo_request(&mut cx, r);
+    }
+    let world = cx.world.world.clone();
+    let Some(ph) = cx.ui.photo.as_mut() else { return };
+    ph.fly(dt.min(0.1), |x, y| world.as_ref().and_then(|w| w.ground_height(x, y)));
+    if let Some(n) = ph.note.as_mut() {
+        n.1 -= dt;
+    }
+    if let Some(m) = ph.focus_mark.as_mut() {
+        m.2 -= dt;
+    }
+    if ph.focus_mark.is_some_and(|m| m.2 <= 0.0) {
+        ph.focus_mark = None;
+    }
+    if ph.note.as_ref().is_some_and(|n| n.1 <= 0.0) {
+        ph.note = None;
+        ph.saved = None;
+    }
+    *cx.view.camera = Some(ph.cam);
+    panel::photo_panel(&mut cx, dt);
 }

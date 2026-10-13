@@ -54,10 +54,17 @@ fn cs_trace(@builtin(global_invocation_id) gid: vec3<u32>) {
         let sb = basis(p.sun.xyz);
         let sr = sqrt(su.x) * p.sun.w;
         let sd = normalize(p.sun.xyz + sb[0] * cos(6.2831853 * su.y) * sr + sb[1] * sin(6.2831853 * su.y) * sr);
-        vis = select(1.0, 0.0, ray_hit(RT_FORCE_OPAQUE | RT_FIRST_HIT, MASK_SHADOW, 0.0, 2000.0, o, sd).kind != RAY_QUERY_INTERSECTION_NONE);
+        // (a ray that leaves the surface at a slant runs along it for a while: the faceted
+        // ground, a road's camber and the steps' edges rise a few centimetres into its way
+        // and laid stripes of shadow over every surface the sun grazes. It starts where it
+        // has risen 2 cm above the surface: a few decimetres at the lowest suns, where a
+        // caster that close throws a shadow longer than the gap anyway)
+        let rise = max(dot(n, sd), 0.04);
+        let t0 = min(0.02 / rise, 0.5);
+        vis = select(1.0, 0.0, ray_hit(RT_FORCE_OPAQUE | RT_FIRST_HIT, MASK_SHADOW, t0, 2000.0, o, sd).kind != RAY_QUERY_INTERSECTION_NONE);
         if (vis > 0.0) {
             // through a bus's or a car's window: tinted glass lets only part of it in
-            vis = select(1.0, 0.45, ray_hit(RT_FORCE_OPAQUE | RT_FIRST_HIT, MASK_GLASS, 0.0, 200.0, o, sd).kind != RAY_QUERY_INTERSECTION_NONE);
+            vis = select(1.0, 0.45, ray_hit(RT_FORCE_OPAQUE | RT_FIRST_HIT, MASK_GLASS, t0, 200.0, o, sd).kind != RAY_QUERY_INTERSECTION_NONE);
         }
     }
     // --- the sky's occlusion

@@ -169,14 +169,11 @@ impl Body {
 /// Enhanced (in the same overcast rain: the light it adds to the road behind a car is about a
 /// third of the road's own in each mode), and the light it is given scales it from there -
 /// darker at dusk and at night.
-fn spray_look() -> ([f32; 3], f32) {
-    use std::sync::atomic::Ordering::Relaxed;
-    let (grey, opacity) = if crate::host::CLASSIC.load(Relaxed) {
-        (0.32, 0.26)
-    } else if crate::host::ENHANCED.load(Relaxed) {
-        (0.5, 1.0)
-    } else {
-        (0.65, 0.42)
+fn spray_look(graphics: crate::host::GraphicsKind) -> ([f32; 3], f32) {
+    let (grey, opacity) = match graphics {
+        crate::host::GraphicsKind::Classic => (0.32, 0.26),
+        crate::host::GraphicsKind::Enhanced => (0.5, 1.0),
+        crate::host::GraphicsKind::VanillaPlus => (0.65, 0.42),
     };
     ([grey, grey * 1.02, grey * 1.06], opacity)
 }
@@ -365,6 +362,8 @@ pub struct Spray {
     /// Tyres throwing water this frame, and how many of them in a puddle (`OMSI_DEBUG_RAIN`).
     pub tyres_wet: u32,
     pub tyres_in_puddle: u32,
+    /// The graphics the mist is drawn for (see `spray_look`).
+    pub graphics: crate::host::GraphicsKind,
 }
 
 impl Default for Spray {
@@ -375,7 +374,7 @@ impl Default for Spray {
 
 impl Spray {
     pub fn new() -> Spray {
-        Spray { puffs: Vec::new(), tyres: hashbrown::HashMap::new(), bodies: Vec::new(), rng: 0xD00D_F00D_1234_5678, tyres_wet: 0, tyres_in_puddle: 0 }
+        Spray { puffs: Vec::new(), tyres: hashbrown::HashMap::new(), bodies: Vec::new(), rng: 0xD00D_F00D_1234_5678, tyres_wet: 0, tyres_in_puddle: 0, graphics: Default::default() }
     }
 
     /// 0..1
@@ -591,7 +590,7 @@ impl Spray {
     pub fn sprites(&self, eye: DVec3, out: &mut Vec<SmokeParticle>) {
         let cab: Vec<&Body> = self.bodies.iter().filter(|b| b.contains(eye, 0.0)).collect();
         let near: Vec<&Body> = self.bodies.iter().filter(|b| (b.origin - eye).length() < SPAWN_RANGE + 40.0).collect();
-        let (color, strength) = spray_look();
+        let (color, strength) = spray_look(self.graphics);
         out.reserve(self.puffs.len());
         for p in &self.puffs {
             let mut size = p.size();

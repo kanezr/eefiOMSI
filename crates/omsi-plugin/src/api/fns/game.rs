@@ -26,7 +26,7 @@ fn panel_id(c: &mut Ctx<'_>, id: &str) -> Result<u64, ApiError> {
 pub static FNS: &[ApiFn] = &[
     def!("game.version", "game", [], "string", "The game's version (`\"0.2.22\"`).", NEW, None, false, |c, a| {
         let io = c.io();
-        io.info().into_iter().find(|(k, _)| *k == "version").and_then(|(_, v)| Value::from(v).to_text()).unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+        io.info().into_iter().find(|(k, _)| *k == "version").and_then(|(_, v)| Value::from(v).to_text()).unwrap_or_else(|| option_env!("OPENOMSI_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")).to_string())
     }),
     def!("game.api", "game", [], "integer", "The version of the plugin interface (`api_abi` of an `.oop`; raised only when something is taken away or changes).", NEW, None, false, |c, a| crate::api::ABI),
     def!("game.has", "game", [p("name", "string")], "boolean", "Whether this game has an API function (`\"weather.set\"`): for a plugin that should also run in an older openOMSI.", NEW, None, false, |c, a| {

@@ -75,6 +75,27 @@ impl ScriptTexture {
         true
     }
 
+    /// A picture an `.opl` plugin drew (`AccessScriptTexture`), in place of the texture's:
+    /// taken only at the texture's own size. It goes up as if a script had let it go - while
+    /// a script holds the texture locked, as the image released, so the script's half-done
+    /// drawing does not show and its next unlock draws over the plugin's again.
+    pub fn replace(&mut self, width: u32, height: u32, rgba: &[u8]) -> bool {
+        if (width, height) != (self.width, self.height) || rgba.len() != self.rgba.len() {
+            return false;
+        }
+        if self.locked {
+            match &mut self.pending {
+                Some(p) if p.len() == rgba.len() => p.copy_from_slice(rgba),
+                p => *p = Some(rgba.to_vec()),
+            }
+        } else {
+            self.rgba.copy_from_slice(rgba);
+            self.pending = None;
+            self.dirty = true;
+        }
+        true
+    }
+
     pub fn clear(&mut self) {
         self.rgba.iter_mut().for_each(|b| *b = 0);
         self.dirty = true;
@@ -238,6 +259,25 @@ mod tests {
         assert_eq!(t.take_upload(), Some(vec![9; 8]));
     }
     use super::ScriptTexture;
+
+    /// A plugin's picture (`AccessScriptTexture`) goes up at the texture's size only, and
+    /// while a script holds the texture locked it waits as the released image.
+    #[test]
+    fn a_plugins_picture_replaces_the_texture() {
+        let mut t = ScriptTexture::new(2, 1);
+        let _ = t.take_upload();
+        assert!(!t.replace(1, 2, &[1; 8]), "another size is not taken");
+        assert!(!t.replace(2, 1, &[1; 4]), "nor a short buffer");
+        assert!(t.replace(2, 1, &[1; 8]));
+        assert_eq!(t.take_upload(), Some(vec![1; 8]));
+        assert_eq!(t.take_upload(), None);
+        // locked by a script that is drawing: its buffer stays, the plugin's goes up
+        t.locked = true;
+        t.put(0, 0, [5; 4]);
+        assert!(t.replace(2, 1, &[2; 8]));
+        assert_eq!(t.take_upload(), Some(vec![2; 8]));
+        assert_eq!(t.get(0, 0), [5; 4]);
+    }
 
     #[test]
     fn a_loaded_bitmap_fills_the_texture_at_its_own_power_of_two_size() {

@@ -34,7 +34,7 @@ impl App {
         let to=custom.to_weather();
         let clouds_changed=self.session.weather.as_ref().is_none_or(|w|w.clouds.0.trim()!=to.clouds.0.trim());
         self.args.weather=Some(spec.clone()); self.session.weather_blend=None; self.session.weather_cycle=None; self.session.wetness=custom.road_wetness;
-        crate::scene::SNOW_WEATHER.store(to.snow,std::sync::atomic::Ordering::Relaxed);
+        if let Some(w) = self.world.as_ref() { w.settings.set_snow(to.snow); }
         omsi_sim::host::set_ambient_weather(to.temp.0,to.temp.1);
         crate::weather_setup::publish_page_weather(&to);
         self.session.weather=Some(to);
@@ -166,7 +166,7 @@ impl App {
         }
         match self.args.weather.as_deref().and_then(|w| w.strip_prefix("metar:")) {
             Some(code) if !code.trim().is_empty() => code.trim().to_ascii_uppercase(),
-            _ => crate::launcher::drive::nearest_airport(&self.args.root.to_string_lossy(), &self.args.map),
+            _ => omsi_launcher_lib::nearest_airport(&self.args.root.to_string_lossy(), &self.args.map),
         }
     }
 
@@ -273,7 +273,9 @@ impl App {
         let wire = crate::weather_setup::report_wire(&to).unwrap_or_else(|| file.clone());
         let name = to.name.clone();
         let from = self.session.weather.clone().unwrap_or_default();
-        crate::scene::SNOW_WEATHER.store(to.snow, std::sync::atomic::Ordering::Relaxed);
+        if let Some(w) = self.world.as_ref() {
+            w.settings.set_snow(to.snow);
+        }
         omsi_sim::host::set_ambient_weather(to.temp.0, to.temp.1);
         crate::weather_setup::publish_page_weather(&to);
         self.args.weather = Some(file.clone());

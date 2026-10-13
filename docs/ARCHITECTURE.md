@@ -27,7 +27,7 @@ change behaviour is checked is in [REFACTOR_CHECKS.md](REFACTOR_CHECKS.md).
 | `mc_Form_Main`, main loop              | `omsi-app`                    | offscreen + window, start menu, HUD, tile streaming; the original's dialogs are the launcher |
 | vehicle runtime (`TRoadVehicleInst`)   | `omsi-sim`                    | scripts, animations, dynamic materials, keyboard/mouse input, IBIS typing, coupled parts |
 | AI (`mc_path`, `mc_pathrule`), humans, physics (ODE) | `omsi-sim` | `traffic` + `ai_motion` (rules, light programs, following, passing), `human` + `crowd` (poses, queues, avoidance), `rigid` + `physics` (wheels, collisions) |
-| Optionen and the start dialogs         | `omsi-launcher-ui` + `omsi-launcher-core` | the game's own window (wgpu, `omsi-ui`): profile, bus, map, duty, weather, settings, mods, running games (the Tauri launcher is gone since round 9) |
+| Optionen and the start dialogs         | `launcher/` (Tauri) + `omsi-launcher-core`, `omsi-launcher-api`, `omsi-launcher-model` | the desktop launcher, a program of its own (its page also in Android's web view; SwiftUI on Apple's systems): profile, bus, map, duty, weather, settings, mods, running games; the game has no launcher window |
 | - (no original counterpart)            | `omsi-net`, `omsi-lan`, `omsi-app::lan` | LAN play: UDP session, bit-packed vehicle states, chat |
 
 ## Crates
@@ -38,13 +38,13 @@ Bottom up:
 
 | Layer | Crates | What they hold |
 |---|---|---|
-| base | `omsi-cfg`, `omsi-ui` | text files, the virtual file system, settings, the `OMSI_*` flag registry, the panic guard; the immediate-mode UI toolkit |
+| base | `omsi-cfg`, `omsi-ui` | text files, the virtual file system, settings, the `OMSI_*` flag registry, the panic guard; interface drawing and the immediate-mode widget kit (`omsi_ui::kit`, `theme`) the pause menu, photo mode and developer tools are drawn with |
 | formats and content | `omsi-o3d`, `omsi-texture`, `omsi-model`, `omsi-map`, `omsi-scenery`, `omsi-vehicle`, `omsi-timetable`, `omsi-content`, `omsi-script`, `omsi-geometry`, `omsi-world` | files in, plain data out; the map-wide index and the placement of attached objects (`omsi-world`) |
 | simulation | `omsi-sim` | vehicles (`vehicle/` by subsystem), scripts' host (`host/`), AI traffic, people, timetable, physics; no renderer, audio, texture decoder or network: pictures and HTML pages come through hooks the game registers (`image_decode`, `htmltex::set_backend`) |
 | beside the simulation | `omsi-htmlengine`, `omsi-weather`, `omsi-career` | the `[htmltexture]` engine; the weather and season models; the driver's career and real-time mode |
 | presentation | `omsi-render`, `omsi-audio`, `omsi-soundscape`, `omsi-photo`, `omsi-scene` | the renderer (`gpu/`, `resources/`, `scene/`, `lighting/`, `frame_plan`, shader parts); the mixer; ambience, scenery sounds and the radio; photo mode's lens and darkroom; the scene: loaded content turned into renderer data |
-| devices and services | `omsi-input`, `omsi-xr`, `omsi-net`, `omsi-lan`, `omsi-platform`, `omsi-plugin`, `omsi-plugin-ui` | controllers, force feedback, head tracking, key names; OpenXR; the LAN transport and the game-side session; updater, Discord, the presence count, version stamp; plugin hosting and its UI |
-| launcher | `omsi-launcher-core`, `omsi-launcher-ui` | the launcher's logic; its window and pages, talking to the game through `omsi_launcher_ui::host::Host` |
+| devices and services | `omsi-input`, `omsi-xr`, `omsi-net`, `omsi-lan`, `omsi-platform`, `omsi-plugin`, `omsi-plugin-ui` | controllers, force feedback, head tracking, key names; OpenXR; the LAN transport and the game-side session; updater, Discord, version stamp; plugin hosting and its UI |
+| launcher | `omsi-launcher-core`, `omsi-launcher-api`, `omsi-launcher-model` | the launcher's data side; the page's commands (desktop launcher and Android's web view); the window-free model the Swift launcher works on (`state`, the map as data), asking the game through `omsi_launcher_model::host::Host`. The launcher's window is `launcher/` (Tauri, a workspace of its own) |
 | app | `omsi-app` | the glue: `App` and its field groups, the frame (`frame_stages`: one declared list of stages for the window and one for the offscreen run, one runner), view sync, the adapters that hold the crates' state in `App` |
 
 ## Threading
@@ -76,8 +76,56 @@ Bottom up:
   also culls in parallel, records the main pass as render bundles and finishes the command
   buffers on helper threads, and the enhanced sky is computed on a helper thread and taken
   in when it is ready.
-* Planned: scenery object scripts in parallel, physics on its own step loop, audio on the
-  audio thread.
+* Audio: the mixer owns the voices and runs on the device's callback; the game (any thread:
+  `AudioEngine` is `Send + Sync`) hands it commands (play, parameters, stop, the radio's
+  effects) through a lock-free single-producer ring (`omsi_audio::spsc`) and gets the voices
+  that ended back through another, to free their clips on its side. The callback takes no
+  lock and allocates nothing (room for more voices is made on the game's side); the game
+  keeps its own list of the voices playing and never waits for a block being mixed. The
+  cpal stream lives on the "audio device" thread, which also follows the default output.
+  The internet radio's frames come through a ring as well (`stream::StreamBuf`).
+* The sim thread (`omsi_sim::sim_thread`, `OMSI_SIM_THREAD`, off unless set): the main
+  thread keeps the window, the input and the surface, and with the switch on the AI
+  traffic's steps (`TrafficSim::advance`, one for each tick of the frame) run on a thread of
+  its own while the main thread draws and presents the frame's picture; the traffic stage
+  does the rest of the traffic on what the last step left, and the stepped traffic is back
+  before the frame is counted. The cars are one frame later than the rest of the frame; the player's
+  vehicle and its input stay in their stage (no added input latency). The offscreen run never
+  reads the switch. The scenery objects' scripts go in the same job after the traffic's
+  step (they read its lights, as the scripted stage did after the traffic stage); the
+  scripted stage then shows the commands of the step made during the last picture and owes
+  the next one with its inputs owned (`OwnedSceneryInputs`). The people's step goes in the
+  same job, tick by tick after the traffic's step of the tick: the people go out whole and
+  read the player's bus, which the picture keeps, from a copy made in the humans stage
+  (`omsi_sim::people::PlayerBusView`, the same values the inline step reads); the humans
+  stage then applies what the step made during the last picture (`steps::humans_after_step`)
+  and owes the next. The timetable's step still runs in its stage (its fleet uploads sit
+  between its two halves).
+* Scenery object scripts (`omsi_sim::scenery::SceneryState`, held by the session, not by
+  `World`): the scripts and variables of the loaded tiles' scripted objects are one owned
+  list in the simulation; the view's half (render instances, materials, texts, sounds) stays
+  in `World` (`omsi_scene::ScriptedSet`) under the same key. The tile loader hands the
+  simulation's halves over through a `SceneryInbox` (placed objects, tiles that went, the
+  particle emitters' owners), which the list takes at the start of its step and before the
+  player's clicks and the trains' points reach it. Only the objects within reach of the
+  camera's 50 m cell are looked at (a candidate set made anew when the camera changes cell
+  or a tile goes); the exact 800 m cut picks among them. Their scripts run side by side
+  (`frame_each`) on inputs gathered before (light phases, boards, clock), and the step ends
+  in commands in object order (`SceneryCmd`) that carry values - the meshes' transforms,
+  the variables the view reads, changed texts, page pictures, fired triggers - so the view
+  (`World::apply_scripted`) applies them without reading the simulation's list.
+* The fixed step (`omsi_sim::tick`, `RATE_HZ` = 60 ticks a second, always; at most 4 a
+  frame, so the wall clock is kept down to 15 frames a second): the window's
+  frame runs its stages as three lists (`app_events/frame/stages.rs`, run by `ticked.rs`):
+  the housekeeping and the player's input once a frame (`FRAME_BEFORE`), the simulation
+  (traffic, the player's bus with its scripts, the people, the duty, the clock and the
+  weather) once per tick of 1/60 s (`FRAME_TICK`; what only the picture and the sound need of
+  the traffic and the people - their view syncs, the AI's sounds - in the frame's last tick
+  alone, `SimTicks::view_due`), then the view, the sounds, the LAN, the
+  interface and the picture once a frame (`FRAME_AFTER`), with the player's bus and the
+  camera drawn between the last two ticks. The offscreen run's step is one tick. Still on the
+  frame, not the tick: the tile streaming's handover and the population's camera, so the AI
+  traffic is not yet the same at every frame rate (the player's bus is).
 
 ## Memory
 
@@ -171,8 +219,8 @@ rules forbid it the renderer, the UI, the simulation, the scene, the audio and t
   mode's switches, then `omsi_guard::start(Launcher)` for a launcher start, which starts the
   watcher - the same program again, without a window - or heals right away when this version
   already failed here.
-* The watcher waits for the launcher's first frames (`omsi_guard::healthy`, called by the
-  launcher at its first presented frame and by a game session after 60 frames), its end, or
+* The watcher waits for the launcher's start (`omsi_guard::healthy`, called once the desktop
+  launcher a plain start opens is running, and by a game session after 60 frames), its end, or
   `OMSI_GUARD_DEADLINE` (120 s, then it ends it). A failed start of a version that never ran
   here, or two in a row, is healed (`rescue`): a newer release, else the version before
   (`omsi_platform::recovery::rollback` - the updater keeps the replaced files until the new
@@ -225,13 +273,33 @@ checked against it.
   `omsi_cfg::flags` (`docs/DEBUG_FLAGS.md`); `App`'s state is grouped by subsystem
   (`omsi-app/src/app/groups.rs`).
 
+* **The stages' declarations are checked.** `App::parts` (`omsi-app/src/app/parts.rs`)
+  takes `App` apart into one borrow per `Group`, naming every field of `App` and of
+  `SessionState` (a new field does not build until it has its group). A stage handed a
+  context made by `stage_ctx!` (placement, streaming, traffic, view_keys, humans,
+  after_humans, on_foot, player_tick, scripted, lights, wheel_surface, audio, photo,
+  lighting, trace_look) can touch its groups only, and its declaration is that context's
+  `READS`/`WRITES`, so the compiler holds it to it. A helper such a stage shares with the
+  rest of the game takes a narrower context of its own (`shift_clock` a `ShiftClockCx`),
+  which the stage takes out of its own with `narrow!` and an `App` method with `XCx::of`.
+  The other window stages still take the whole `App`: they call `App` methods of many groups,
+  and several write what `Common` lends read-only (the controllers, duty and weather stages
+  the command line's `Args`, the view camera the seat in `Settings`). For them
+  `frame_stages/access_tests.rs` reads the crate's source (`omsi-srcscan`) and fails when a stage reaches,
+  through `App` methods and the functions handed the `App`, a field of a group it does not
+  declare. What the declarations show: the stages that take the whole `App` reach most of
+  the sixteen groups each, so no two of them are independent, and the converted ones are a
+  fraction of a millisecond: no stage runs in parallel (a stage becomes a candidate once its
+  context is narrow and it costs enough). OMSI_PROFILE's keys are `profile_keys::ProfKey`,
+  a slot of an array each (the names in the logs and in OMSI_PROFILE_JSON are unchanged).
+
 * **The timetable** is `omsi-sim::timetable_run`: the trip times, the IBIS, the player's
   duty, and `ScheduleSim` (`timetable_run/sim/`) - the day's departures and which are due,
   queued, waiting for their tiles or awaiting their tour's bus, the tours' vehicles
   (`choose`), the routes on the lanes and where on its route a due bus is
   (`place_departure`), the routes carried on as tiles load, the tours, the duty taken
-  from one and the departure boards. It reads the map through `TimetableWorld` (omsi-app's
-  `World` implements it) and the traffic as `TrafficSim`. `omsi-app::schedule::Schedule`
+  from one and the departure boards. It reads the map through `TimetableWorld` (the world
+  snapshot `omsi_sim::world_data::WorldData` implements it) and the traffic as `TrafficSim`. `omsi-app::schedule::Schedule`
   holds it (`Deref` to `ScheduleSim`) as the GPU adapter: `fleet` reads and uploads the
   vehicle sets of the next departures, `dispatch` and `spawn` put the buses on the road
   (`Traffic::spawn_bus`, `set_trailers`, `attach_cars`, `turn_train`), hand a tour's bus
@@ -239,6 +307,34 @@ checked against it.
   departure. Still in the adapter: the bus put on the road itself (its trailers and
   cars, where it starts, whether it may appear there), which needs the app's `Traffic`
   (`trailer_chain`, `may_appear`, `blocked`) besides the GPU.
+
+* **The map world the simulation reads** is `omsi-sim::world_data`: `WorldData`, an
+  immutable snapshot of Arc'd parts - the loaded tiles' ground (`GroundTiles`: terrain and
+  road faces, with the wheel, walking, camera and drawn-ground questions), the lists made
+  from the tiles (`TileLists`: stops, waiting places, obstacles, parked cars' boxes, petrol
+  stations, echoing places), where the map's objects stand (`ObjectPlaces`), the map
+  index's stop facts and the map's own facts (`MapFacts`: the only copy of the AI lists, the
+  date and the chrono folders). `omsi-scene::World` holds it in a `WorldCell` (arc-swap) and
+  publishes a new one where a tile's ground comes or goes and where the tile lists are
+  rebuilt; readers take it without a lock (`peek` for one look, `snapshot` for a step), the
+  vehicles' wheels through `LiveGround`. It implements `people::World` and `TimetableWorld`.
+  What loading hands the simulation goes through `omsi-sim::handover::Inbox` (pushed by the
+  loader's threads, taken whole at the start of a step): the traffic's `TrafficArrival`s -
+  the crossings' light programs as they are numbered, a tile's lanes and parked cars. Still
+  in `World` and locked: the GPU side, the type and file caches of loading, the light
+  programs' numbering by owner object, the scripted objects' view halves and the lamps.
+
+* **LAN play** (`omsi-lan`): the session as the game plays it is `omsi_lan::game` and runs
+  on values - a `LanConfig` the game fills from its arguments (and takes back where a
+  joining player adopted the host's map, date, time and weather), a `LanInput` each frame,
+  our bus as a `VehicleInstance` - and asks the rest of the game through `LanHost` (the
+  world as `WorldData`, its lanes, another player's vehicle made as the game makes its
+  vehicles, destination displays). A frame is `tick_send`, the shared world, `tick_receive`,
+  then `view_sync::apply_lan` draws and sounds the others from `LanGame::drawn`. The app's
+  side is `omsi-app/src/lan_play.rs` (name tags, the HUD's line, `AppLanHost`). Still the
+  app's: the shared world's mirror (`omsi-app/src/lan_world.rs`), which drives `Traffic`,
+  `Humans` and their view directly; it goes to omsi-lan once it is simulation state plus
+  events for the view, as the other players' vehicles are.
 
 * **The view sync phase** (`omsi-app/src/view_sync/`): the code that turns the traffic's
   and the people's state into renderer instances is in one module - `traffic.rs` (the AI
@@ -261,18 +357,41 @@ checked against it.
     both before each snapshot (the traffic, the player's pose, then the people from the
     snapshot's camera) and in the closing reports.
 
-  Not yet in the phase: renders made or let go inside the wrappers' own calls, at the
-  moment the simulation needs them - a car's when the traffic puts it on the road or takes
-  it off (population, timetable departures, trains, the LAN mirror, its step's retired
-  cars), and the people who appeared or went at the end of every `Humans` call that made
-  them (`BodyOp`s replayed by `Humans::show_bodies`). Those calls take the part of the
-  `SimView` they change (`&mut TrafficView`, `&mut PeopleView`) with the renderer, and
-  the timetable's and the LAN world's steps that make them pass it through. The traffic's sync still hands the AI vehicles `Envir_Brightness`; the cars that
-  finished parking are taken off by the simulation itself (`TrafficSim::take_parked`), the
-  sync only puts their parked objects back. The player's and the AI buses' per-frame sync
-  (materials, lamps, script and text textures, glass cracks, dents) is in the phase too:
-  `view_sync/vehicle.rs` and `vehicle_damage.rs`, and the AI cars' sounds in
-  `view_sync/traffic_audio.rs`.
+  The simulation's calls hand the view data, never renderer calls: what they did that the
+  renders have to follow - a car put on the road with its coupled parts or taken off (now,
+  or at the next sync for the step's retired and parked cars), parts coupled or let go, a
+  train made anew under its id, a parked car driving off or one parking - is written down
+  as `omsi_sim::view_events::TrafficEvent`s (`Traffic::events`), somebody appearing, going
+  or renamed and coins on the desk as `omsi_sim::people::BodyOp`s (`PeopleSim::bodies`).
+  `view_sync::apply_traffic` and `apply_people` replay them in order, called right after
+  each call that can make them (population, the timetable's tick - before its vehicle sets
+  go up and at its end -, the LAN mirror, admin and plugin removals, the clock's restart,
+  the people's step, the avatar), where those calls made the renderer calls before: the
+  renderer sees the same calls in the same order (`OMSI_SCENE_DIGEST` checks it on an
+  offscreen run). None of those calls takes a renderer, a scene or a part of the view;
+  `Traffic::tick` is `TrafficSim::advance` plus `Traffic::after_step` (the step's retired
+  cars to events), so the step can run on another thread. The people hold no renderer
+  handles (`PeopleView::meshes`, by person id); the parked cars' world side
+  (`World::take_departing_parked`, `take_returning_parked`) is apart from their renderer
+  side (`show_parked_instances`). The AI cars are drawn from an owned `FrameSnapshot`
+  (`omsi_sim::view_events`: every car's parts, their meshes' transforms, visibility and
+  per-slot values in flat buffers kept from frame to frame), taken at the sync, with their
+  looks (`TrafficSim::snapshot_looks`, `CarLooks`: a copy of the variables for the switched
+  materials, the string variables as they change, the interior lamps, the text, script and
+  HTML pictures to upload, cracks, dents and reshaped bellows - the simulation's side of
+  drawing a car is done there) and the timetable buses as their drivers read them
+  (`snapshot_drivers`, `DriverFrame`; the figures read a bus through
+  `omsi_scene::driver::DriverCar`). The AI cars' sounds play from a `SoundFrame`
+  (`TrafficSim::snapshot_sounds`), the people are posed from a `PeopleFrame`
+  (`PeopleSim::snapshot_into`; the pose as drawn is the view's, `PeopleView`).
+
+  Still read from the simulation's state while syncing (the sync is therefore a point where
+  the simulation stands still): the snapshots are taken there, not at the end of a step;
+  the traffic's lamps (their scripts run there: the scenery state's `LampScripts`, by key);
+  the player's vehicle (materials, lamps, textures, bellows, damage: `view_sync/vehicle.rs`
+  reads it in place through `LookVars`), the bus the player rides in on foot (its sound);
+  the people's coins and ticket blocks; the sync also hands the AI vehicles
+  `Envir_Brightness` and swaps their poses between the traffic's last two steps.
 
 * **Global mutable state.** The introduction's "no global mutable state" is still not
   quite true, but what is left no longer carries a session's state into the next one. The
@@ -293,11 +412,15 @@ checked against it.
   handles and process resources (the signal handler, the tilt sensor, the translation
   worker, thread pools, the LAN gateway and mods root), memos of file contents and
   environment switches, rate limits of log lines and refreshes, the picture-file numbering
-  that is the same for every renderer, and a handful of settings and the session's weather
-  broadcast to loading code without game state at hand (`scene::host`, `SNOW_WEATHER`,
-  `rain::QUALITY`, `startup::{CLOUDS, SOUND_AI, ENHANCED_PLUS}`, the lamps' cone weather),
-  set again at every session start or frame. Those last are the next to go, once the
-  vehicle and world loading take them as arguments.
+  that is the same for every renderer. The settings and the session's weather that were
+  broadcast to loading code through statics are passed down now: the session's look and
+  switches in `Args::session_settings` (`startup::SessionSettings`: Enhanced+, Enhanced,
+  Vanilla, clouds), carried on to the `SkyState`, the tyres' spray (`scene::host::GraphicsKind`)
+  and the renderer's options; what the world's loading and sounds read (the scenery's
+  volume, the mirrors' size, the rain's quality, the weather's snow) in each `World`
+  (`World::settings`, a `scene::host::SceneSettings`); the traffic's volume, the rain's
+  quality and the lamps' cone weather (`lights::ConeWeather`) as arguments of the calls
+  that use them.
 * **Very long functions and files.** `scripts/size-budget.sh` (run on every pull request)
   keeps them from growing; `scripts/size-budget.txt` lists those over the limits
   (1500 lines a file, 300 a function) with their recorded sizes. The baseline only goes down.

@@ -9,6 +9,33 @@ fn script_speed_reports_tiny_resting_motion_as_stopped() {
     assert_eq!(script_speed(0.02), 0.02);
 }
 
+#[test]
+fn ai_scripts_receive_pedals_before_both_frame_variants() {
+    for frame in ["frame", "frame_ai"] {
+        let script = format!(
+            "{{{frame}}}\n(L.L.Throttle) (S.L.engine_throttle_injection)\n(L.L.Brake) (S.L.brake_seen)\n(L.L.Clutch) (S.L.clutch_seen)\n{{end}}\n"
+        );
+        let mut v = crate::timetable_run::tests::script_test_vehicle(
+            &script,
+            "Throttle\nBrake\nClutch\nengine_throttle_injection\nbrake_seen\nclutch_seen\n",
+            "",
+        );
+        for (throttle, brake, clutch) in [(0.75, 0.0, 0.0), (0.0, 0.6, 0.2), (0.0, 0.0, 0.0)] {
+            v.set_controls(crate::Controls { throttle, brake, clutch, ..Default::default() });
+            v.update_ai(0.02, &AiFrame { speed: 8.0, ..Default::default() });
+            assert_eq!(v.var("engine_throttle_injection"), Some(throttle), "{frame}");
+            assert_eq!(v.var("brake_seen"), Some(brake), "{frame}");
+            assert_eq!(v.var("clutch_seen"), Some(clutch), "{frame}");
+        }
+        let inputs = [(v.ty.program.var("Throttle").unwrap(), 0.4)];
+        let pinned = [(v.ty.program.var("engine_throttle_injection").unwrap(), 0.9)];
+        v.update_ai_with(0.02, &AiFrame::default(), &inputs, &[]);
+        assert_eq!(v.var("engine_throttle_injection"), Some(0.4));
+        v.update_ai_with(0.02, &AiFrame::default(), &inputs, &pinned);
+        assert_eq!(v.var("engine_throttle_injection"), Some(0.9));
+    }
+}
+
 /// A shadow blob at the model's z = 0 is laid onto the plane through the wheels: 15 cm
 /// up with the body sagging, and following a pitch; one axle gives a level plane.
 #[test]

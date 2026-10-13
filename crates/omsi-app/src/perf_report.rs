@@ -13,14 +13,14 @@ pub(crate) const MAX_FRAMES: usize = 1 << 20;
 
 /// The profile when the warm-up ended, for what the stages took after it.
 pub(crate) struct ProfileMark {
-    app: BTreeMap<&'static str, f64>,
+    app: crate::profile_keys::ProfileTimes,
     render: BTreeMap<&'static str, f64>,
     /// Per GPU pass: the milliseconds measured in all and the frames measured.
     gpu: BTreeMap<String, (f64, u32)>,
 }
 
 impl ProfileMark {
-    pub(crate) fn take(app: &BTreeMap<&'static str, f64>, r: &omsi_render::Renderer) -> Self {
+    pub(crate) fn take(app: &crate::profile_keys::ProfileTimes, r: &omsi_render::Renderer) -> Self {
         ProfileMark {
             app: app.clone(),
             render: r.stats.borrow().clone(),
@@ -111,7 +111,7 @@ fn stages_since(perf: &crate::app::PerfState, r: &omsi_render::Renderer, frames:
     let mark = perf.profile_mark.as_ref();
     let mut stages = BTreeMap::new();
     for (k, v) in &perf.profile {
-        let before = mark.and_then(|m| m.app.get(k)).copied().unwrap_or(0.0);
+        let before = mark.map_or(0.0, |m| m.app.get(k));
         stages.insert(k.to_string(), (v - before).max(0.0) / n * 1000.0);
     }
     for (k, v) in r.stats.borrow().iter() {

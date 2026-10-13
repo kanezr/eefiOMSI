@@ -72,7 +72,7 @@ impl App {
         self.frame_loading_fade();
         // the pause menu, drawn with the launcher's toolkit over all of it
         self.frame_shell(dt);
-        *self.perf.profile.entry("hud").or_default() += __t.elapsed().as_secs_f64();
+        self.perf.profile.add(crate::profile_keys::ProfKey::Hud, __t.elapsed().as_secs_f64());
         vr_nav_display
     }
 
@@ -107,7 +107,7 @@ impl App {
             let text = match d.trips.get(d.trip_index + 1) {
                 Some(next) => format!(
                     "End of the trip. Next: {} to {}, from {} at {} (it starts by itself a minute before)",
-                    if next.line.trim().is_empty() { "service trip".to_string() } else { format!("line {}", next.line) },
+                    if next.line.trim().is_empty() { omsi_ui::tr("service trip").into_owned() } else { omsi_ui::tr("line {}").replacen("{}", &next.line, 1) },
                     next.terminus.strip_prefix(&format!("{} ", next.line)).unwrap_or(&next.terminus),
                     next.stops.first().map(|s| s.name.trim()).unwrap_or("?"),
                     crate::schedule::hhmm(next.departure)
@@ -127,7 +127,7 @@ impl App {
         }
         self.service_msg = self.service_msg.take().filter(|(_, l)| *l > 0.0);
         if let Some(lan) = self.net.lan.as_ref() {
-            for t in lan::hud_lines(lan, &self.net.remotes, self.player.as_ref()).into_iter().chain(self.sound.voice.as_ref().and_then(|v| v.hud_line())) {
+            for t in lan::hud_lines(lan).into_iter().chain(self.sound.voice.as_ref().and_then(|v| v.hud_line())) {
                 say(t.clone(), t, NoticeKind::Info);
             }
         }
@@ -293,11 +293,11 @@ impl App {
             nav.frame_at(r, scene, &frame, hud[0]);
             nav.enabled = old_enabled;
             nav.opacity = old_opacity;
-            *self.perf.profile.entry("hud.navigator").or_default() += __tn.elapsed().as_secs_f64();
+            self.perf.profile.add(crate::profile_keys::ProfKey::HudNavigator, __tn.elapsed().as_secs_f64());
             // OMSI 2's dynamic route arrows over the junctions ahead
             if nav.arrows {
                 if let Some(w) = self.world.as_ref() {
-                    let spots = nav.arrow_spots(self.session.traffic.as_ref().map(|t| &t.net), 350.0, &|id| w.object_positions.lock().get(&id).map(|p| (p.0, p.1[0])));
+                    let spots = nav.arrow_spots(self.session.traffic.as_ref().map(|t| &t.net), 350.0, &|id| w.data.peek().objects.get(&id).map(|p| (p.0, p.1[0])));
                     self.gfx.route_arrows.tick(dt, w, r, scene, &spots);
                 }
             } else if self.gfx.route_arrows.any() {
@@ -358,6 +358,7 @@ impl App {
     ) {
         // (the steering cross: before the renderer and the scene are borrowed)
         let steer_cross = self.steer_cross_point();
+        self.refresh_perf_overlay();
         // (the pause menu is the launcher toolkit's, `frame_shell`, unless a headset shows it)
         let shell_menu = self.shell_takes_mouse();
         let (Some(r), Some(scene)) = (self.renderer.as_ref(), self.scene.as_mut()) else { return };
@@ -456,6 +457,9 @@ impl App {
                 // once they stood on the timetable's line)
                 notes: if !map_open && self.menus.game_menu.is_none() { notes } else { &[] },
                 fps: self.settings.show_fps.then_some(self.perf.fps),
+                perf: self.settings.perf_overlay_on().then_some(&self.perf.overlay),
+                perf_detailed: self.settings.perf_overlay == "detailed",
+                perf_touch: self.input.touch.enabled.then(|| self.input.touch.top_gap.map(|g| g[2])),
                 paused: self.paused,
                 menu: match chooser_sel {
                     _ if shell_menu => None,

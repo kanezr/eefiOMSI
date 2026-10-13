@@ -3,7 +3,8 @@
 // every page draws without an error. The report goes back to the program, which prints it.
 
 import { call, contentUrl } from './api.js';
-import { S, set } from './store.js';
+import { S, set, remembered, remember } from './store.js';
+import { applyTheme } from './data.js';
 import { t } from './i18n.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,7 +71,7 @@ export async function selftest() {
       check('route map', false, e.message || String(e));
     }
   }
-  for (const page of ['drive', 'multiplayer', 'profile', 'mods', 'settings', 'controls', 'games', 'tutorials', 'setup']) {
+  for (const page of ['drive', 'multiplayer', 'profile', 'mods', 'settings', 'controls', 'games', 'tutorials', 'timetable', 'setup']) {
     const before = errors.length;
     set({ page });
     await sleep(500);
@@ -81,7 +82,36 @@ export async function selftest() {
     const dash = document.body.textContent.match(/.{0,20}[\u2010-\u2015\u2212\u2E3A\u2E3B\uFE58\uFF0D\u00B7].{0,20}/);
     if (dash) check(`no dashes on ${page}`, false, dash[0]);
   }
-  set({ page: 'drive' });
+  const layout = remembered('launcher_layout', 'cards');
+  for (const other of ['classic', 'cards']) {
+    const before = errors.length;
+    remember('launcher_layout', other);
+    applyTheme();
+    set({ page: 'profile' });
+    await sleep(100);
+    set({ page: 'drive' });
+    await sleep(500);
+    const shown = document.querySelector('.page h1')?.textContent;
+    check(`page drive (${other})`, !!shown && errors.length === before && !!document.querySelector(other === 'classic' ? '.classic-drive' : '.drive'), shown || errors.slice(before).join('; '));
+  }
+  remember('launcher_layout', layout);
+  applyTheme();
+  try {
+    const [c, st] = [await call('controllers_load'), await call('controllers_state')];
+    check('game controllers', Array.isArray(c.devices) && Array.isArray(st.connected), `${c.devices.length} set up, ${st.connected.length} connected`);
+  } catch (e) {
+    check('game controllers', false, e.message || String(e));
+  }
+  try {
+    const k = await call('keyboard_actions', { lang: 'en', actions: ['horn'] });
+    check('key action names', typeof k.labels?.horn === 'string', k.labels?.horn);
+  } catch (e) {
+    check('key action names', false, e.message || String(e));
+  }
+  set({ page: 'controls', controlsTab: 'pads' });
+  for (let i = 0; i < 50 && !document.querySelector('.pads'); i++) await sleep(100);
+  check('page controls: game controllers', !!document.querySelector('.pads') && !document.querySelector('.pads .notice.danger'), document.querySelector('.page')?.textContent.slice(0, 200));
+  set({ page: 'drive', controlsTab: 'keyboard' });
   check('no script errors', errors.length === 0, errors.join('; '));
   const report = { version: S.boot?.version, seconds: Math.round(performance.now() - t0) / 1000, passed, failed, errors };
   await call('selftest_done', { report });

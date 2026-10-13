@@ -18,6 +18,9 @@ pub struct CityMap {
     /// The view stays on the bus until the map is dragged.
     follow: bool,
     pub(super) drag: Option<(f32, f32)>,
+    /// How far the mouse has moved (pixels) since it was pressed on the map: a press let go
+    /// without moving is a click.
+    travel: f32,
     target: Option<(TextureId, u32, u32)>,
     /// The roads mesh (buffer 3): the map version it was built for, its size and anchor.
     roads: Option<(u64, u32, DVec2)>,
@@ -212,7 +215,10 @@ impl Navigator {
             Some(1) => self.city.mpp = (self.city.mpp / 1.6).max(0.25),
             Some(2) => self.city.mpp = (self.city.mpp * 1.6).min(self.max_mpp()),
             Some(3) => self.city.open = false,
-            _ => self.city.drag = Some((x, y)),
+            _ => {
+                self.city.drag = Some((x, y));
+                self.city.travel = 0.0;
+            }
         }
     }
 
@@ -228,13 +234,16 @@ impl Navigator {
         Some(self.city.center + DVec2::new(lx, -ly) * self.city.mpp)
     }
 
-    pub fn map_release(&mut self) {
-        self.city.drag = None;
+    /// The mouse let go over the map: true when the press was a click on the map itself
+    /// (not a drag, not one of its buttons).
+    pub fn map_release(&mut self) -> bool {
+        self.city.drag.take().is_some() && self.city.travel < 6.0
     }
 
     pub fn map_move(&mut self, x: f32, y: f32) {
         if let Some((px, py)) = self.city.drag {
             let (dx, dy) = ((x - px) as f64, (y - py) as f64);
+            self.city.travel += (dx.abs() + dy.abs()) as f32;
             if dx.abs() + dy.abs() > 0.5 {
                 self.city.follow = false;
             }

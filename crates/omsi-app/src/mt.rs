@@ -47,12 +47,8 @@ fn state() -> &'static (Mutex<Mt>, Condvar) {
 // switches it, the launcher and every session share it)
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static WORKER: std::sync::Once = std::sync::Once::new();
-/// What the translation is doing, for the launcher's settings page.
+/// What the translation is doing (the last step it logged).
 static STATUS: Mutex<String> = Mutex::new(String::new());
-
-pub fn status() -> String {
-    STATUS.lock().clone()
-}
 
 fn set_status(s: impl Into<String>) {
     *STATUS.lock() = s.into();
@@ -88,6 +84,7 @@ fn nllb(lang: &str) -> Option<&'static str> {
         "hu" => "hun_Latn",
         "pt" | "pt-pt" => "por_Latn",
         "nl" => "nld_Latn",
+        "sv" => "swe_Latn",
         "tr" => "tur_Latn",
         "zh-tw" | "zh-hk" => "zho_Hant",
         "ko" => "kor_Hang",

@@ -13,7 +13,7 @@
 use super::*;
 use std::path::Path;
 
-pub(crate) use omsi_lan::server_cfg::{allows, enforce_vehicles, player_info, ServerCfg, SERVER_VEHICLES};
+pub(crate) use omsi_lan::server_cfg::{enforce_vehicles, player_info, ServerCfg, SERVER_VEHICLES};
 
 /// The server's status as the web gateway tells it (see `omsi_net::ws::ServerInfo`).
 pub(crate) fn info_of(cfg: &ServerCfg) -> omsi_net::ws::ServerInfo {
@@ -23,7 +23,7 @@ pub(crate) fn info_of(cfg: &ServerCfg) -> omsi_net::ws::ServerInfo {
         map: cfg.map.clone(),
         players: 0,
         max_players: cfg.max_players,
-        version: format!("{} ({})", env!("CARGO_PKG_VERSION"), BUILD),
+        version: format!("{} ({})", omsi_platform::VERSION, BUILD),
         icon: cfg.icon.clone(),
         time: cfg.time.clone(),
         weather: cfg.weather.clone().unwrap_or_default(),
@@ -56,7 +56,7 @@ pub(crate) fn prepare(args: &mut Args, path: &Path) -> Result<ServerCfg> {
     }
     args.weather = cfg.weather.clone();
     // the METAR sync: the report's weather from the start (the host loop downloads it again)
-    let station = cfg.metar_sync.then(|| if cfg.metar_station.is_empty() { crate::launcher::drive::nearest_airport(&args.root.to_string_lossy(), &args.map) } else { cfg.metar_station.clone() });
+    let station = cfg.metar_sync.then(|| if cfg.metar_station.is_empty() { omsi_launcher_lib::nearest_airport(&args.root.to_string_lossy(), &args.map) } else { cfg.metar_station.clone() });
     if let Some(icao) = station.as_ref() {
         match crate::weather_setup::try_metar(icao).and_then(|w| crate::weather_setup::report_wire(&w)) {
             Some(wire) => args.weather = Some(wire),

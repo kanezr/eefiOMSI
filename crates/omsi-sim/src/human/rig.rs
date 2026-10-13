@@ -53,6 +53,8 @@ pub struct HumanMesh {
     /// Per material: the model's `[matl_alpha]` for it (0 opaque, 1 alpha test, 2 blend) -
     /// the hair of the stock women and of man02 is an alpha-tested texture.
     pub alpha: Vec<i32>,
+    /// Blend shapes in the model frame (an imported avatar's face; OMSI's people have none).
+    pub morphs: Vec<omsi_o3d::Morph>,
 }
 
 /// The skeleton of one human type, measured from its `[links]` and its mesh. Index 0 of the
@@ -297,7 +299,9 @@ pub struct HumanType {
     pub variants: Vec<crate::vehicle::PaintScheme>,
     /// Folders the textures may lie in besides the usual ones: the `[CTC]` folders and
     /// the sub-folders of the human's own folder (see [`HumanType::texture_dirs`]).
-    extra_dirs: Vec<PathBuf>,
+    pub(super) extra_dirs: Vec<PathBuf>,
+    /// An imported avatar's face: which blend shape of `meshes[0]` makes which expression.
+    pub face: Option<super::face::FaceRig>,
 }
 
 impl HumanType {
@@ -355,6 +359,7 @@ impl HumanType {
                     bones,
                     skin,
                     alpha,
+                    morphs: Vec::new(),
                 });
             }
         }
@@ -405,6 +410,7 @@ impl HumanType {
             meshes,
             variants,
             extra_dirs,
+            face: None,
         })
     }
 
@@ -451,7 +457,7 @@ impl HumanType {
 /// legs swing about the x axis, along which the error lies), but a leg rig measured from
 /// them reaches its foot 0.8 m out to the side and crosses the legs. Such a coordinate is
 /// taken from the mesh instead: the middle of the limb's vertices at the joint's height.
-fn fit_leg_joints(j: &mut Joints, meshes: &[HumanMesh], path: &Path) {
+pub(super) fn fit_leg_joints(j: &mut Joints, meshes: &[HumanMesh], path: &Path) {
     let verts = |slots: &[usize]| -> Vec<Vec3> {
         let mut out = Vec::new();
         for m in meshes {
@@ -498,7 +504,7 @@ fn fit_leg_joints(j: &mut Joints, meshes: &[HumanMesh], path: &Path) {
 
 /// Per-vertex influences from the file's bone lists: each bone counted once per vertex,
 /// the strongest four kept, normalised. A vertex no bone claims follows the torso.
-fn influences(data: &MeshData, bones: &[(i32, Vec<(u32, f32)>)]) -> Vec<Influence> {
+pub(super) fn influences(data: &MeshData, bones: &[(i32, Vec<(u32, f32)>)]) -> Vec<Influence> {
     let n = data.positions.len();
     let mut per: Vec<Vec<(u8, f32)>> = vec![Vec::new(); n];
     for (id, weights) in bones {

@@ -412,8 +412,25 @@ pub fn archive_of(path: &Path) -> Option<PathBuf> {
     locate(path).map(|(m, _)| m.path.clone())
 }
 
+/// Files that exist only in memory, by their exact path: the pictures packed into a model
+/// file (a `.glb`'s or an `.fbx`'s embedded textures), put beside it under a name of their
+/// own so that the texture lookup finds them as it finds any file.
+static MEMORY: RwLock<Option<HashMap<PathBuf, Arc<[u8]>>>> = RwLock::new(None);
+
+/// Put a file into memory at `path` (see [`MEMORY`]); a file there before is replaced.
+pub fn put_memory_file(path: PathBuf, bytes: Arc<[u8]>) {
+    MEMORY.write().unwrap().get_or_insert_with(HashMap::new).insert(path, bytes);
+}
+
+fn memory_file(path: &Path) -> Option<Arc<[u8]>> {
+    MEMORY.read().unwrap().as_ref().and_then(|m| m.get(path).cloned())
+}
+
 /// Read a whole file, from a folder, a mounted archive or a sealed store.
 pub fn read(path: &Path) -> io::Result<Vec<u8>> {
+    if let Some(b) = memory_file(path) {
+        return Ok(b.to_vec());
+    }
     if let Some((m, key)) = sealed::locate(path) {
         return m.read(&key);
     }
@@ -429,6 +446,9 @@ pub fn read_text(path: &Path) -> io::Result<String> {
 }
 
 pub fn exists(path: &Path) -> bool {
+    if memory_file(path).is_some() {
+        return true;
+    }
     if let Some((m, key)) = sealed::locate(path) {
         return m.is_file(&key) || m.is_dir(&key);
     }
@@ -439,6 +459,9 @@ pub fn exists(path: &Path) -> bool {
 }
 
 pub fn is_file(path: &Path) -> bool {
+    if memory_file(path).is_some() {
+        return true;
+    }
     if let Some((m, key)) = sealed::locate(path) {
         return m.is_file(&key);
     }
@@ -487,6 +510,9 @@ pub fn list_dir(path: &Path) -> Option<Vec<(OsString, bool)>> {
 /// The size of a file (a folder's, an archive's or a sealed store's); `None` when it is no
 /// file.
 pub fn file_size(path: &Path) -> Option<u64> {
+    if let Some(b) = memory_file(path) {
+        return Some(b.len() as u64);
+    }
     if let Some((m, key)) = sealed::locate(path) {
         return m.size(&key);
     }
@@ -540,6 +566,16 @@ pub fn mount_env_zips() -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn a_memory_file_reads_like_one_on_disk() {
+        let p = std::env::temp_dir().join("omsi-vfs-memory-test").join("bus.glb.tex0.png");
+        assert!(!is_file(&p));
+        put_memory_file(p.clone(), Arc::from(&b"picture"[..]));
+        assert!(is_file(&p) && exists(&p));
+        assert_eq!(read(&p).unwrap(), b"picture");
+        assert_eq!(file_size(&p), Some(7));
+    }
 
     /// A small archive with a wrapper folder, a stored and a deflated entry.
     fn build_zip(path: &Path) {

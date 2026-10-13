@@ -42,7 +42,7 @@ impl App {
                 return;
             }
             // and gives the mouse back to the bus when the plugins' panels have it
-            if self.release_plugin_focus() {
+            if self.integrations.release_plugin_focus() {
                 return;
             }
             // and closes the game's panel on top (the quick menu, a form, the editor)
@@ -278,7 +278,7 @@ impl App {
                     .find(|b| b.scan_code == scan && b.matches(chord) && b.action.to_ascii_lowercase().starts_with("chat_"))
                     .map(|b| b.action.clone()))
             };
-            if lan::chat_key(l, &mut self.net.remotes, code, pressed, repeat, bound.as_deref()) {
+            if lan::chat_key(l, &mut self.net.remotes, crate::app_impl::lan_tick::chat_key_of(code), pressed, repeat, bound.as_deref()) {
                 return true;
             }
         }
@@ -399,7 +399,7 @@ impl App {
         if pressed && !repeat {
             match code {
                 // OMSI's `toggel_mouse_ctrl` (O): steering and pedals with the mouse
-                KeyCode::KeyO if !ctrl && !alt && !shift_now && self.key_left_free(code, "toggel_mouse_ctrl") => {
+                KeyCode::KeyO if !ctrl && !alt && !shift_now && self.input.key_left_free(code, "toggel_mouse_ctrl") => {
                     self.game_action("toggel_mouse_ctrl");
                     return true;
                 }
@@ -525,10 +525,10 @@ impl App {
             // (F1-F4 where keyboard.cfg has no view keys; a key the player gave to
             // something else, or a view key moved elsewhere, leaves them alone, #701)
             match code {
-                KeyCode::F1 if self.key_left_free(code, "view_set_driver") => self.view = "driver".into(),
-                KeyCode::F2 if self.key_left_free(code, "view_set_passenger") => self.view = "pax".into(),
-                KeyCode::F3 if self.key_left_free(code, "view_set_outside") => self.view = "outside".into(),
-                KeyCode::F4 if self.key_left_free(code, "view_set_map") => {
+                KeyCode::F1 if self.input.key_left_free(code, "view_set_driver") => self.view = "driver".into(),
+                KeyCode::F2 if self.input.key_left_free(code, "view_set_passenger") => self.view = "pax".into(),
+                KeyCode::F3 if self.input.key_left_free(code, "view_set_outside") => self.view = "outside".into(),
+                KeyCode::F4 if self.input.key_left_free(code, "view_set_map") => {
                     // the free camera starts where the current view is looking
                     self.view = "free".into();
                     self.cam.ego = false;
@@ -687,13 +687,6 @@ impl App {
                 p.key(scan, m, pressed);
             }
         }
-    }
-
-    /// Whether a key the game gives `action` by itself (F1 the driver's view, O the mouse
-    /// steering) is still free for it: neither bound by the player to something of their
-    /// own nor `action` bound to another key in keyboard.cfg.
-    pub(crate) fn key_left_free(&self, code: KeyCode, action: &str) -> bool {
-        key_left_free(keys::dik_code(code), action, &self.input.own_keys, &self.input.game_keys)
     }
 
     /// A key of the input script by name: a letter, a digit, F1..F12, or one of the named keys.
@@ -1280,5 +1273,14 @@ mod key_tests {
         assert!(!super::key_left_free(Some(59), "view_set_driver", &own, &[]));
         assert!(!super::key_left_free(Some(59), "view_set_driver", &none, &[kb("view_set_driver", 2)]));
         assert!(super::key_left_free(Some(59), "view_set_driver", &none, &[kb("view_set_passenger", 60)]));
+    }
+}
+
+impl InputState {
+    /// Whether a key the game gives `action` by itself (F1 the driver's view, O the mouse
+    /// steering) is still free for it: neither bound by the player to something of their
+    /// own nor `action` bound to another key in keyboard.cfg.
+    pub(crate) fn key_left_free(&self, code: KeyCode, action: &str) -> bool {
+        key_left_free(keys::dik_code(code), action, &self.own_keys, &self.game_keys)
     }
 }

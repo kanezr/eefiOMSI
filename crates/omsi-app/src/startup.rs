@@ -48,7 +48,15 @@ pub(crate) fn thread_cpu_seconds() -> Option<f64> {
         }
         None
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+        let (mut created, mut exited, mut kernel, mut user) = Default::default();
+        unsafe { GetThreadTimes(GetCurrentThread(), &mut created, &mut exited, &mut kernel, &mut user) }.ok()?;
+        let ticks = |t: windows::Win32::Foundation::FILETIME| ((t.dwHighDateTime as u64) << 32 | t.dwLowDateTime as u64) as f64;
+        Some((ticks(kernel) + ticks(user)) / 1e7)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         None
     }
@@ -118,19 +126,16 @@ pub(crate) fn fatal_dialog(title: &str, text: &str) {
 /// openOMSI's own content folder: the folder of the game binary, laid out like an OMSI 2
 /// installation (Vehicles, maps, Sceneryobjects ...). Mods live here; it is searched before
 /// the original installation.
-/// The `Inputs/keyboard.cfg` the game follows: the content folder's once the launcher has
-/// saved key bindings there, else the original installation's (never written) - or, where
-/// that has none, its `keyboard_reset.cfg`, the standard keys OMSI falls back to as well.
+/// The `Inputs/keyboard.cfg` the game follows: the newer of `~/.openomsi/Inputs`' and the
+/// content folder's once the launcher has saved key bindings, else the original installation's
+/// (never written) - or, where that has none, its `keyboard_reset.cfg`, the standard keys OMSI
+/// falls back to as well.
 pub(crate) fn keyboard_cfg(root: &Path) -> PathBuf {
-    if let Some(own) = content_dir().map(|c| c.join("Inputs/keyboard.cfg")).filter(|p| p.exists()) {
-        return own;
-    }
-    omsi_cfg::original_keyboard_cfg(root)
+    omsi_cfg::input_in_use("keyboard.cfg").unwrap_or_else(|| omsi_cfg::original_keyboard_cfg(root))
 }
 
-/// The keys (scan codes without a modifier) the player's own `keyboard.cfg` (the content
-/// folder's, written by the launcher) binds to something the original's does not bind to
-/// them: see `App::own_keys`.
+/// The keys (scan codes without a modifier) the player's own `keyboard.cfg` (written by the
+/// launcher) binds to something the original's does not bind to them: see `App::own_keys`.
 pub(crate) fn own_keys(root: &Path) -> std::collections::HashSet<i32> {
     own_bindings(root, 0)
 }
@@ -140,7 +145,11 @@ pub(crate) fn own_keys(root: &Path) -> std::collections::HashSet<i32> {
 /// built-in list, not from the installation's file - a player who edited that file had
 /// every change overridden by the game's conveniences (Z / X / C, Shift+number).
 pub(crate) fn own_bindings(root: &Path, modifier: i32) -> std::collections::HashSet<i32> {
-    let Ok(m) = omsi_content::KeyboardCfg::load(&keyboard_cfg(root)) else { return Default::default() };
+    own_bindings_in(&keyboard_cfg(root), modifier)
+}
+
+fn own_bindings_in(file: &Path, modifier: i32) -> std::collections::HashSet<i32> {
+    let Ok(m) = omsi_content::KeyboardCfg::load(file) else { return Default::default() };
     let stock: std::collections::HashSet<(String, i32, i32)> = crate::stock_keys::STOCK_KEYS.iter().map(|(a, k, md)| (a.to_ascii_lowercase(), *k, *md)).collect();
     m.vehicles
         .iter()
@@ -518,14 +527,6 @@ impl RendererStart {
         self.building.as_ref().is_none_or(|h| h.is_finished())
     }
 
-    /// Let go of the renderer being built: waits for its pipelines and drops it (on a thread
-    /// that may wait, see the launcher's rest while a game runs).
-    pub(crate) fn abandon(mut self) {
-        if let Some(h) = self.building.take() {
-            let _ = h.join();
-        }
-    }
-
     /// The renderer, once its pipelines are built. A build that failed is followed by the
     /// next adapter and interface, as before (on this thread: the
     /// window keeps the picture it has meanwhile); its renderer is then on another device
@@ -556,10 +557,6 @@ impl RendererStart {
         }
     }
 }
-
-/// The colour a window shows before it has anything else to show: the launcher's background
-/// and the game's loading screen (linear, as the sRGB window takes it).
-pub(crate) const WINDOW_BACKGROUND: wgpu::Color = wgpu::Color { r: 0.0056, g: 0.0056, b: 0.0056, a: 1.0 };
 
 /// A picture of `color` alone into `surface`, shown (no pipeline needed: a clear). False when
 /// the window gave no picture to draw into (hidden, covered, being resized).
@@ -665,25 +662,99 @@ pub(crate) fn window_icon() -> Option<winit::window::Icon> {
     winit::window::Icon::from_rgba(img.into_raw(), w, h).ok()
 }
 
-/// Enhanced+ (ray tracing) asked for by `--enhanced-plus` or OMSI_ENHANCED_PLUS=1 whatever
-/// the settings say (see `Settings::render_options`). These settings statics are set again
-/// by every session start (`make_app`) and read deep in loading and sound code that has no
-/// App to ask.
-pub(crate) static ENHANCED_PLUS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// Volume of the AI vehicles and of the scenery's own sounds (OMSI's `sound_ai` and
-/// `sound_scenery`), as the bits of an f32.
-pub(crate) static SOUND_AI: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
-// (the scenery's volume, the graphics' kind and the mirrors' size: the scene's, see `scene::host`)
-pub(crate) use crate::scene::host::{sound_gain, CLASSIC, ENHANCED, MIRROR_SIZE, SOUND_SCENERY};
+/// What a session's settings and arguments ask for of its look and of the world's loading,
+/// worked out once at its start (`make_app`; the launcher's showroom from the settings
+/// alone) and carried in its `Args` to what draws the sky, opens the renderer and opens the
+/// world (`World::settings`). (A field, not statics: a second drive in the same process
+/// starts from its own.)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SessionSettings {
+    /// Enhanced+ (ray tracing) asked for by `--enhanced-plus` or OMSI_ENHANCED_PLUS=1
+    /// whatever the settings say (see `Settings::render_options`).
+    pub(crate) enhanced_plus: bool,
+    /// Enhanced graphics, and the Vanilla graphics (see `scene::host::GraphicsKind`).
+    pub(crate) enhanced: bool,
+    pub(crate) classic: bool,
+    /// The `clouds` setting: clouds in the sky (off: a clear sky whatever the weather says).
+    pub(crate) clouds: bool,
+    /// The scenery's own sounds' volume, the mirrors' picture size and the rain's quality
+    /// (see `scene::host::SceneSettings`).
+    pub(crate) sound_scenery: f32,
+    pub(crate) mirror_size: u32,
+    pub(crate) rain_quality: u8,
+}
+
+impl Default for SessionSettings {
+    fn default() -> SessionSettings {
+        SessionSettings { enhanced_plus: false, enhanced: false, classic: false, clouds: true, sound_scenery: 1.0, mirror_size: 256, rain_quality: 2 }
+    }
+}
+
+impl SessionSettings {
+    /// A game session's: the settings, the arguments and the switches.
+    pub(crate) fn for_session(settings: &crate::settings::Settings, args: &crate::Args) -> SessionSettings {
+        let plus = args.enhanced_plus || omsi_cfg::flags::OMSI_ENHANCED_PLUS.is_set();
+        let enhanced = settings.enhanced || args.enhanced || plus || omsi_cfg::flags::OMSI_ENHANCED.is_set();
+        SessionSettings {
+            enhanced_plus: plus,
+            enhanced,
+            classic: settings.classic() && !enhanced,
+            clouds: SessionSettings::clouds_of(settings),
+            sound_scenery: settings.vol_scenery,
+            mirror_size: settings.mirror_size,
+            rain_quality: crate::rain::quality_of(&settings.rain_quality),
+        }
+    }
+
+    /// The launcher's showroom: drawn the way the game will be, from the settings.
+    pub(crate) fn for_showroom(settings: &crate::settings::Settings) -> SessionSettings {
+        SessionSettings {
+            enhanced_plus: false,
+            enhanced: settings.enhanced || omsi_cfg::flags::OMSI_ENHANCED.is_set(),
+            classic: settings.classic(),
+            clouds: SessionSettings::clouds_of(settings),
+            // (the world's: as a world opens without the game)
+            ..SessionSettings::default()
+        }
+    }
+
+    fn clouds_of(settings: &crate::settings::Settings) -> bool {
+        settings.clouds && !omsi_cfg::flags::OMSI_NO_CLOUDS.is_set()
+    }
+
+    /// The renderer's options: the settings', with ray tracing when Enhanced+ is asked for
+    /// whatever they say.
+    pub(crate) fn render_options(&self, settings: &crate::settings::Settings) -> omsi_render::RenderOptions {
+        let o = settings.render_options();
+        omsi_render::RenderOptions { ray_tracing: o.ray_tracing || self.enhanced_plus, ..o }
+    }
+
+    /// The world's settings from these (see `scene::host::SceneSettings`).
+    pub(crate) fn apply_to(&self, world: &crate::scene::World) {
+        world.settings.set_sound_scenery(self.sound_scenery);
+        world.settings.set_mirror_size(self.mirror_size);
+        world.settings.set_rain_quality(self.rain_quality);
+    }
+
+    /// The scene's graphics kind (Vanilla before Enhanced, as the showroom may ask both).
+    pub(crate) fn graphics(&self) -> crate::scene::host::GraphicsKind {
+        use crate::scene::host::GraphicsKind;
+        if self.classic {
+            GraphicsKind::Classic
+        } else if self.enhanced {
+            GraphicsKind::Enhanced
+        } else {
+            GraphicsKind::VanillaPlus
+        }
+    }
+}
+
 
 /// The game's settings a world reads as it opens (see `scene::host::OpenSettings`), from the
 /// settings file at that moment.
 pub(crate) fn install_scene_settings() {
     crate::scene::host::install_open_settings(|| crate::scene::host::OpenSettings { max_parked: crate::settings::Settings::load().ai_max_parked as i64 });
 }
-
-/// The `clouds` setting: clouds in the sky (off: a clear sky whatever the weather says).
-pub(crate) static CLOUDS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// macOS's allocator keeps freed large blocks for reuse, and they count as the game's
 /// memory: after loading and unloading tiles it held more than half a gigabyte of them, and
@@ -745,8 +816,9 @@ mod own_key_tests {
         if !root.join("Inputs/keyboard.cfg").exists() {
             return;
         }
-        assert!(super::own_bindings(root, 0).is_empty());
-        assert!(super::own_bindings(root, omsi_content::input::KEY_SHIFT).is_empty());
+        let stock = omsi_cfg::original_keyboard_cfg(root);
+        assert!(super::own_bindings_in(&stock, 0).is_empty());
+        assert!(super::own_bindings_in(&stock, omsi_content::input::KEY_SHIFT).is_empty());
     }
 }
 

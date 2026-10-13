@@ -67,7 +67,7 @@ struct BusPreview: View {
             ZStack {
                 // (the viewer's ground, until the showroom's first picture)
                 Color(hex: 0x1A1A1A)
-                if let img = model.image {
+                if let img = model.image, store.snapshot.preview.error == nil {
                     Image(decorative: img, scale: scale)
                         .resizable()
                         .interpolation(.high)
@@ -109,6 +109,9 @@ struct BusPreview: View {
             )
             .onAppear { model.run(id, width: Int(geo.size.width * scale), height: Int(geo.size.height * scale)) }
             .onChange(of: geo.size) { _, s in model.run(id, width: Int(s.width * scale), height: Int(s.height * scale)) }
+            .onChange(of: store.snapshot.preview.error, initial: true) { _, error in
+                if error != nil { model.image = nil }
+            }
             .onDisappear { model.stop(id) }
         }
     }

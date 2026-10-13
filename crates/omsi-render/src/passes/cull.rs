@@ -80,15 +80,11 @@ impl Renderer {
         let fov_y = camera.fov_deg.to_radians().max(1e-3);
         let max_obj_dist = self.options.max_obj_dist;
         let min_obj_size = lighting.min_obj_size.max(self.options.min_obj_size);
-        // When the picture is rendered at a lower scale (render_scale < 1), objects
-        // appear even smaller on the final screen, so we can cull more aggressively.
-        // The scale factor is the inverse: at 0.75 scale, multiply by 1/0.75 = 1.33.
-        let rs = self.options.render_scale;
-        let min_obj_size = if rs > 0.0 && rs < 1.0 {
-            min_obj_size / rs
-        } else {
-            min_obj_size
-        };
+        // Culling adapts to render scale: when the 3D picture is drawn at a lower
+        // resolution (render_scale < 1), objects appear even smaller on the final
+        // screen; divide the min object size threshold by the scale so more small
+        // objects are culled, saving draw calls.
+        let render_scale = self.options.render_scale.max(0.1);
         // (a copy: the culling closures run on the worker pool, the renderer is not shared)
         let shadow_blobs = self.shadow_blobs;
         // (instance, distance along the view direction, the camera is inside its bounds)
@@ -196,9 +192,14 @@ impl Renderer {
             };
             // `OMSI_DEBUG_CULL`: what near and in the picture is left out, and why
             let near_dbg = debug_cull && with_overlays && (inst.origin - camera.position).length() < 150.0;
+            // Culling adapts to render scale: when the 3D picture is drawn at a lower
+            // resolution (render_scale < 1), objects appear even smaller on the final
+            // screen; divide the min object size threshold by the scale so more small
+            // objects are culled, saving draw calls.
+            let effective_min_size = min_obj_size / render_scale;
             // (an object's size is held already; a lone mesh's is not)
             let keep = if was_drawn(i) && inst.object_radius <= 0.0 { 0.85 } else { 1.0 };
-            if !inst.surface && size < min_obj_size * inst.detail * keep {
+            if !inst.surface && size < effective_min_size * inst.detail * keep {
                 if near_dbg {
                     log::info!("cull: instance {i} mesh {} at {:.0} m: size {size:.4} < {:.4} (radius {:.1}, detail {})", inst.mesh, (inst.origin - camera.position).length(), min_obj_size * inst.detail, inst.object_radius, inst.detail);
                 }

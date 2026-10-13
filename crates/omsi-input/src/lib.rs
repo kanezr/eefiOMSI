@@ -5,6 +5,8 @@
 //! the application reads these devices each frame and applies what they say.
 
 pub mod actions;
+pub mod auto_setup;
+pub mod background;
 pub mod controllers;
 pub mod describe;
 pub mod ffb_calibration;

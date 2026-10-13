@@ -250,7 +250,8 @@ pub(crate) fn clear_ai_traffic(app: &mut App) {
         return;
     }
     if let (Some(t), Some(w), Some(r), Some(scene)) = (app.session.traffic.as_mut(), app.world.as_ref(), app.renderer.as_ref(), app.scene.as_mut()) {
-        let removed = t.clear_random(&mut app.gfx.sim_view.traffic, w, r, scene);
+        let removed = t.clear_random();
+        crate::view_sync::apply_traffic(t, &mut app.gfx.sim_view.traffic, w, r, scene);
         app.service_msg = Some((format!("{removed} AI vehicles taken off the road"), 3.0));
     }
 }
@@ -258,13 +259,6 @@ pub(crate) fn clear_ai_traffic(app: &mut App) {
 /// A player's id (the argument of an action).
 fn who_id(arg: &str) -> Option<u32> {
     arg.trim().parse::<u32>().ok()
-}
-
-/// Ask the server for its administration with `password` (see the module); the password
-/// waits in the session's `LanGame::admin_password` for the server's challenge.
-pub(crate) fn request(lan: &mut LanSession, game: &mut crate::lan::LanGame, password: &str) {
-    game.admin_password = Some(password.to_string());
-    lan.command(1, "auth?");
 }
 
 /// The own bus (or the walker) put beside another vehicle.
@@ -282,7 +276,7 @@ pub(crate) fn teleport(app: &mut App, at: glam::DVec3, heading: f64) {
     // bridge), else the highest ground there (a place picked on the map, at no height)
     let ground = app.world.as_ref().and_then(|w| {
         let near = (at.z != 0.0)
-            .then(|| crate::scene::drive_probe(&w.terrains, &w.surfaces, at.x, at.y, at.z + 1.5).below)
+            .then(|| w.data.peek().drive_probe(at.x, at.y, at.z + 1.5).below)
             .flatten()
             .filter(|b| (at.z - b).abs() < 3.0);
         near.or_else(|| w.walk_height(at.x, at.y))
@@ -473,7 +467,7 @@ pub(crate) fn guard_fall(app: &mut App, dt: f32) {
     // building's roof is not its ground - measured from the roof, a bus driving under it
     // had fallen through the world and was put up there), and the highest there is
     let (under, ground) = match app.world.as_ref() {
-        Some(w) => (crate::scene::drive_probe(&w.terrains, &w.surfaces, at.x, at.y, at.z + 1.5).below, w.walk_height(at.x, at.y)),
+        Some(w) => (w.data.peek().drive_probe(at.x, at.y, at.z + 1.5).below, w.walk_height(at.x, at.y)),
         None => (None, None),
     };
     app.session.safe_age += dt;

@@ -138,39 +138,46 @@ impl PeopleSim {
     }
 
     pub fn vehicle_next_stop(&self, vehicle: &VehicleInstance) -> Option<RequestStop> {
-        if let Ok(index) = usize::try_from(vehicle.host.tt_busstop_index) {
-            if let Some(id) = vehicle.host.tt_stop_ids.get(index) {
-                let name = vehicle.host.tt_stops.get(index).map(|stop| stop.0.as_str());
-                if let Some(stop) = self.request_stop(*id, name, None) {
-                    return Some(stop);
-                }
+        let tt = usize::try_from(vehicle.host.tt_busstop_index).ok().and_then(|index| {
+            vehicle.host.tt_stop_ids.get(index).map(|id| (*id, vehicle.host.tt_stops.get(index).map(|stop| stop.0.as_str())))
+        });
+        self.next_stop_at(tt, &vehicle.str_var("act_busstop"), vehicle.position, vehicle.heading)
+    }
+
+    /// The stop a bus at `position`, heading `heading`, is due at: its timetable's (`tt`: the
+    /// stop's object and name), else the nearest stop of the name its scripts give
+    /// (`act_busstop`), one facing its way first.
+    pub fn next_stop_at(&self, tt: Option<(i64, Option<&str>)>, act_busstop: &str, position: DVec3, heading: f64) -> Option<RequestStop> {
+        if let Some((id, name)) = tt {
+            if let Some(stop) = self.request_stop(id, name, None) {
+                return Some(stop);
             }
         }
-        let name = vehicle.str_var("act_busstop");
+        let name = act_busstop;
         if name.trim().is_empty() {
             return None;
         }
         let (id, _) = self
             .stops
             .iter()
-            .filter(|(_, stop)| stop.is_named(&name))
+            .filter(|(_, stop)| stop.is_named(name))
             .min_by(|(_, a), (_, b)| {
                 let back =
-                    |stop: &PaxStop| crowd::angle_diff(vehicle.heading, stop.heading).abs() > 100.0;
+                    |stop: &PaxStop| crowd::angle_diff(heading, stop.heading).abs() > 100.0;
                 back(a).cmp(&back(b)).then_with(|| {
-                    (a.pos - vehicle.position)
+                    (a.pos - position)
                         .length_squared()
-                        .total_cmp(&(b.pos - vehicle.position).length_squared())
+                        .total_cmp(&(b.pos - position).length_squared())
                 })
             })?;
-        self.request_stop(*id, Some(&name), None)
+        self.request_stop(*id, Some(name), None)
     }
 
     /// The buses passengers deal with this frame.
     pub fn gather_buses(
         &mut self,
         world: &dyn World,
-        bus: Option<&VehicleInstance>,
+        bus: Option<&PlayerBusView>,
         traffic: Option<&TrafficSim>,
     ) -> Vec<BusNow> {
         let mut out = Vec::new();
@@ -192,33 +199,25 @@ impl PeopleSim {
                 })
                 .map(|s| s.0)
         };
-        let bb_of = |v: &VehicleInstance| {
-            let bb =
-                v.ty.def
-                    .bounding_box
-                    .unwrap_or([2.5, 11.0, 3.0, 0.0, 0.0, 1.5]);
+        let bb_from = |bb: Option<[f32; 6]>| {
+            let bb = bb.unwrap_or([2.5, 11.0, 3.0, 0.0, 0.0, 1.5]);
             (
                 DVec2::new(bb[0] as f64 * 0.5, bb[1] as f64 * 0.5),
                 DVec2::new(bb[3] as f64, bb[4] as f64),
             )
         };
-        if let (Some(b), Some(cabin)) = (bus, self.player_cabin.clone()) {
-            let speed = b.physics.velocity_kmh() as f64 / 3.6;
-            let (entry_open, exit_open) =
-                Self::doors_open(b, cabin.entries.len(), cabin.exits.len());
-            let (half, centre) = bb_of(b);
-            let trailers = part_frames(b, &cabin);
-            let terminus = match (b.var("target_index_int"), b.host.hof.as_ref()) {
-                (Some(i), Some(hof)) if i.is_finite() && i >= 0.0 => hof
-                    .termini
-                    .get(i.round() as usize)
-                    .filter(|t| !t.all_exit)
-                    .map(|t| t.texture_id.trim().to_string()),
+        let bb_of = |v: &VehicleInstance| bb_from(v.ty.def.bounding_box);
+        if let (Some(b), Some(cabin), Some(cv)) = (bus, self.player_cabin.clone(), bus.and_then(|b| b.cabin.as_ref())) {
+            let speed = b.speed_kmh as f64 / 3.6;
+            let (entry_open, exit_open) = (cv.entry_open.clone(), cv.exit_open.clone());
+            let (half, centre) = bb_from(b.bounding_box);
+            let trailers = cv.trailers.clone();
+            let terminus = match &b.terminus {
+                Some(shown) => shown.clone(),
                 // (a bus whose scripts keep no destination index: on a duty, its trip's
                 // terminus - not for one showing an `[addterminus_allexit]` sign, which
                 // empties the bus whatever the duty)
-                (None, _) => self.duty.as_ref().map(|(trip, _, _)| trip.terminus.clone()),
-                _ => None,
+                None => self.duty.as_ref().map(|(trip, _, _)| trip.terminus.clone()),
             };
             // On a duty the people its trip takes where they are going get on. In free drive
             // the bus takes whom its destination display takes, as Omsi.exe's buses do
@@ -236,19 +235,19 @@ impl PeopleSim {
                 next_stop: self
                     .player_next_stop
                     .clone()
-                    .or_else(|| self.vehicle_next_stop(b)),
+                    .or_else(|| self.next_stop_at(b.tt_stop.as_ref().map(|(id, n)| (*id, n.as_deref())), &b.act_busstop, b.position, b.heading)),
                 walk_open: None,
-                places_off: places_off(b, &cabin),
+                places_off: cv.places_off.clone(),
                 served: None,
                 cabin,
                 pos: b.position,
-                rot: b.body_rotation(),
+                rot: b.rot,
                 heading: b.heading,
                 speed,
                 entry_open,
                 exit_open,
-                interior: b.interior_light(),
-                air: CabinAir::of(b),
+                interior: b.interior,
+                air: b.air,
                 half,
                 centre,
                 accel: DVec2::ZERO,

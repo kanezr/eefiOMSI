@@ -927,6 +927,70 @@ openOMSI does the same (`crates/omsi-plugin`, driven from `crates/omsi-app/src/p
 * `PluginStart` gets a nil owner: there is no Delphi application object. Plugins that
   open their own windows do so without a parent.
 
+### Script textures (openOMSI only)
+
+OMSI 2 gives plugins no way into the vehicle's `[scripttexture]`s; tools such as OmsiHook
+reach them in Omsi.exe's memory, which does not exist here. openOMSI adds one optional
+procedure and one `.opl` tag for it. OMSI skips both, so one DLL and `.opl` serve both
+games.
+
+```
+[scripttexturelist]
+2
+0
+3
+```
+
+lists the player's vehicle's script textures the plugin draws, by number (0-based, as
+`[useScriptTexture]` and `\S:n` count them). Every frame, after the triggers, the game calls
+for each entry the vehicle has:
+
+```pascal
+procedure AccessScriptTexture(index: Word; width, height: Integer; pixels: Pointer;
+  var write: Boolean); stdcall;
+```
+
+* `index` is the entry's position in the list (as for the other `Access*` procedures), not
+  the texture's number.
+* `pixels` is `width` x `height` x 4 bytes: RGBA, top row first, rows `width * 4` bytes
+  apart, straight (not premultiplied) alpha. The size is the texture's own (its
+  `[scripttexture]` entry, or what `STLoadTex` made it).
+* The buffer belongs to that entry and keeps what the plugin drew last, so a plugin may
+  redraw only what changed; it starts zeroed and is zeroed again when the texture's size
+  changes. It is valid only during the call.
+* Set `write` to show the buffer: the texture shows it from the next picture on. Leave it
+  false while nothing changed: a written picture is copied, and through
+  `omsi-plugin-host32.exe` it travels over a pipe (a 512 x 256 texture is 512 KiB).
+* A script drawing into the same texture (`STLock` ... `STUnlock`) and the plugin take
+  turns: the last to let go is what shows. Give the plugin textures the scripts leave alone.
+* No player vehicle, or a number the vehicle has no texture for: the entry is skipped.
+
+#### The mouse on those textures
+
+```pascal
+procedure AccessScriptTexturePointer(index: Word; kind: Integer; x, y: Single); stdcall;
+```
+
+A library that also exports this hears the mouse on its `[scripttexturelist]` textures. The
+game finds where a click lands on the bus's meshes the way it does for `[htmltexture]` pages
+(the nearest mesh slot whose material shows the texture with `[useScriptTexture]`) and calls
+it in the next frame, before `AccessScriptTexture`, so the picture drawn then can already
+answer:
+
+* `kind` 0: the button went down on the texture; 1: the cursor moved while it is held (at
+  most one a frame, the latest); 2: it came up (off the texture: where it was last on it).
+* `x`, `y`: the place in the texture's pixels, from its top left (`0..width`, `0..height`,
+  fractional).
+* `index` is the entry's position in the list, as for `AccessScriptTexture`.
+
+A press on such a texture is the plugin's: a `[mouseevent]` mesh under it does not fire, as
+for a page. Events are not kept while the game is paused.
+
+A 64-bit DLL loads in-process in the 64-bit game, without the pipe; a 32-bit one runs in
+the host, which keeps the buffers on its side. A host from before this keeps working for
+every plugin without `AccessScriptTexture` (the textures are on the wire only for a library
+that has it).
+
 ### Building the host
 
 ```bash

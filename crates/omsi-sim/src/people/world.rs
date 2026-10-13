@@ -1,11 +1,10 @@
 //! What the people need of the loaded map: the surfaces they walk on, the bus stops and
-//! their waiting places, the walls and the parked cars. omsi-app's `World` gives it; the
-//! simulation never sees the rest of it (textures, the GPU, the loading of the tiles).
+//! their waiting places, the walls and the parked cars. The world snapshot
+//! (`crate::world_data::WorldData`) gives it; the simulation never sees the rest of the
+//! game's world (textures, the GPU, the loading of the tiles).
 
 use crate::collision::{CollisionWorld, Obb};
 use glam::DVec3;
-use hashbrown::HashMap;
-use parking_lot::MutexGuard;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -31,16 +30,16 @@ pub trait World {
     /// Stop object `id`'s length (30 m when the map says nothing).
     fn stop_length(&self, id: i64) -> f32;
     /// Placed `[busstop]` objects: (map id, world position, heading, name).
-    fn bus_stops(&self) -> MutexGuard<'_, Vec<(i64, DVec3, f64, String)>>;
+    fn bus_stops(&self) -> &[(i64, DVec3, f64, String)];
     /// Where people wait at the stops: (object id, world position, heading in degrees, seat
     /// height - 0 for a standing place).
-    fn waiting_places(&self) -> MutexGuard<'_, Vec<(i64, DVec3, f64, f32)>>;
+    fn waiting_places(&self) -> &[(i64, DVec3, f64, f32)];
     /// World position and rotation of every loaded map object by id.
-    fn object_positions(&self) -> MutexGuard<'_, HashMap<i64, (DVec3, [f64; 3])>>;
+    fn object_positions(&self) -> &crate::world_data::ObjectPlaces;
     /// The scenery's collision boxes and meshes.
-    fn collision(&self) -> MutexGuard<'_, Arc<CollisionWorld>>;
+    fn collision(&self) -> &Arc<CollisionWorld>;
     /// The boxes of the parked cars of the loaded tiles, which people walk round.
-    fn parked_boxes(&self) -> MutexGuard<'_, Arc<Vec<Obb>>>;
+    fn parked_boxes(&self) -> &Arc<Vec<Obb>>;
     /// Counts the changes of the loaded tiles: whoever keeps what it derived from the
     /// stops, the waiting places or the ground looks again.
     fn tiles_generation(&self) -> u64;

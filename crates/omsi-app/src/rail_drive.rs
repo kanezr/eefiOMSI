@@ -143,8 +143,8 @@ fn angle_diff(a: f64, b: f64) -> f64 {
 impl RailDrive {
     /// Move `ds` metres (forward along the vehicle, negative backwards) and put the
     /// vehicle there. `blinker`: 1 left, 2 right (the branch at the next fork).
-    pub(crate) fn advance(&mut self, p: &mut Player, net: &Network, world: &World, dt: f32, ds: f32, blinker: u8) {
-        if !self.step(net, Some(world), ds, blinker) {
+    pub(crate) fn advance(&mut self, p: &mut Player, net: &Network, world: &World, scenery: &mut omsi_sim::scenery::SceneryState, dt: f32, ds: f32, blinker: u8) {
+        if !self.step(net, Some((world, &mut *scenery)), ds, blinker) {
             p.vehicle.set_speed(0.0);
         }
         let bogie_dist = p.vehicle.ty.def.boogies.map(|b| b.abs() * 0.5).filter(|&b| b > 0.25)
@@ -179,11 +179,11 @@ impl RailDrive {
 
         let (pos, heading, pitch) = if let Some(l) = bogie_dist {
             let mut front_probe = self.clone();
-            front_probe.step(net, Some(world), center_y + l, blinker);
+            front_probe.step(net, Some((world, &mut *scenery)), center_y + l, blinker);
             let (pos_f, h_f) = net.lanes[front_probe.lane].at(front_probe.s);
 
             let mut rear_probe = self.clone();
-            rear_probe.step(net, Some(world), center_y - l, blinker);
+            rear_probe.step(net, Some((world, &mut *scenery)), center_y - l, blinker);
             let (pos_r, h_r) = net.lanes[rear_probe.lane].at(rear_probe.s);
 
             let diff = pos_f - pos_r;
@@ -275,7 +275,7 @@ impl RailDrive {
 
     /// Move along the rails by `ds` (the vehicle's forward); false at the end of the track.
     /// `world`: the switches (read and thrown); None looks without touching them.
-    fn step(&mut self, net: &Network, world: Option<&World>, ds: f32, blinker: u8) -> bool {
+    fn step(&mut self, net: &Network, mut world: Option<(&World, &mut omsi_sim::scenery::SceneryState)>, ds: f32, blinker: u8) -> bool {
         // along the lane: the vehicle's forward is the lane's if it faces it
         let mut d = if self.along { ds } else { -ds };
         let mut guard = 0;
@@ -285,7 +285,7 @@ impl RailDrive {
             let t = self.s + d;
             if t > len {
                 let facing = self.along;
-                match self.pick(net, world, &net.lanes[self.lane].next, true, blinker, facing) {
+                match self.pick(net, world.as_mut().map(|(w, s)| (*w, &mut **s)), &net.lanes[self.lane].next, true, blinker, facing) {
                     Some(n) => {
                         d = t - len;
                         self.lane = n;
@@ -300,7 +300,7 @@ impl RailDrive {
                 }
             } else if t < 0.0 {
                 let prev = net.prev.get(self.lane).cloned().unwrap_or_default();
-                match self.pick(net, world, &prev, false, blinker, !self.along) {
+                match self.pick(net, world.as_mut().map(|(w, s)| (*w, &mut **s)), &prev, false, blinker, !self.along) {
                     Some(n) => {
                         d = t;
                         self.lane = n;
@@ -322,7 +322,7 @@ impl RailDrive {
 
     /// The next (or previous) rail lane among `candidates`: the indicator's branch, else
     /// the one the switch is set to, else the straightest. The points it takes are thrown.
-    fn pick(&self, net: &Network, world: Option<&World>, candidates: &[usize], forward: bool, blinker: u8, _facing: bool) -> Option<usize> {
+    fn pick(&self, net: &Network, mut world: Option<(&World, &mut omsi_sim::scenery::SceneryState)>, candidates: &[usize], forward: bool, blinker: u8, _facing: bool) -> Option<usize> {
         let here = &net.lanes[self.lane];
         let h0 = if forward { here.at(here.length()).1 } else { here.at(0.0).1 } as f64;
         let mut rails: Vec<(usize, f64)> = candidates
@@ -346,12 +346,12 @@ impl RailDrive {
             2 => rails.last().map(|r| r.0),
             _ => rails
                 .iter()
-                .find(|(i, _)| net.lanes[*i].key.and_then(|k| world.and_then(|w| w.switch_set_to(k.id, k.path))) == Some(true))
+                .find(|(i, _)| net.lanes[*i].key.and_then(|k| world.as_mut().and_then(|(w, s)| w.switch_set_to(s, k.id, k.path))) == Some(true))
                 .or_else(|| rails.iter().min_by(|a, b| a.1.abs().total_cmp(&b.1.abs())))
                 .map(|r| r.0),
         }?;
-        if let (Some(k), Some(w)) = (net.lanes[chosen].key, world) {
-            w.set_switches(&[(k.id, k.path)]);
+        if let (Some(k), Some((w, s))) = (net.lanes[chosen].key, world) {
+            w.set_switches(s, &[(k.id, k.path)]);
         }
         Some(chosen)
     }
@@ -373,14 +373,14 @@ fn blinker_of(v: &omsi_sim::VehicleInstance) -> u8 {
 
 /// One frame of a rail-bound player vehicle after its own update: onto the track (first),
 /// then along it by the distance its speed covered.
-pub(crate) fn frame(p: &mut Player, net: Option<&Network>, world: &World, dt: f32) {
+pub(crate) fn frame(p: &mut Player, net: Option<&Network>, world: &World, scenery: &mut omsi_sim::scenery::SceneryState, dt: f32) {
     if !p.rail_bound {
         return;
     }
     let Some(net) = net else { return };
     if p.rail.is_none() {
         if let Some(mut r) = attach(p, net, 3000.0) {
-            r.advance(p, net, world, dt, 0.0, 0);
+            r.advance(p, net, world, scenery, dt, 0.0, 0);
             p.rail = Some(r);
         }
         return;
@@ -420,7 +420,7 @@ pub(crate) fn frame(p: &mut Player, net: Option<&Network>, world: &World, dt: f3
     let ds = p.vehicle.physics.speed * dt;
     let blinker = blinker_of(&p.vehicle);
     if let Some(mut r) = p.rail.take() {
-        r.advance(p, net, world, dt, ds, blinker);
+        r.advance(p, net, world, scenery, dt, ds, blinker);
         p.rail = Some(r);
     }
 }

@@ -74,7 +74,6 @@ pub(super) fn option_now(app: &App, verb: &str, arg: &str) -> Option<f32> {
         "temp" => app.session.weather.as_ref()?.temp.0,
         "wind_speed" => app.session.weather.as_ref()?.wind.1,
         "wind_dir" => app.session.weather.as_ref()?.wind.0.rem_euclid(360.0),
-        "lod_bias" => s.lod_bias,
         _ => return None,
     })
 }
@@ -394,7 +393,6 @@ pub(super) fn toggle_now(app: &App, id: &str) -> Option<bool> {
         "reflections" => s.reflections,
         "clouds" => s.clouds,
         "windy_trees" => s.windy_trees,
-        "tree_shadows" => s.tree_shadows,
         "mirror_hud_every_frame" => s.mirror_hud_every_frame,
         "ambient" => s.ambient,
         "fullscreen" => s.fullscreen,
@@ -466,7 +464,7 @@ pub(super) fn toggle_set(app: &mut App, id: &str, on: bool) -> Option<(&'static 
         // (at once: stuck under a bridge a map made too low, the bus drives on)
         "coll_objects" => {
             app.settings.collision_objects = on;
-            let cw = app.world.as_ref().map(|w| w.collision.lock().clone());
+            let cw = app.world.as_ref().map(|w| w.data.peek().lists.collision.clone());
             if let Some(p) = app.player.as_mut() {
                 p.vehicle.collision = cw.filter(|_| on);
             }

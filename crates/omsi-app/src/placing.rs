@@ -61,13 +61,13 @@ pub(crate) fn put_vehicle(v: &mut omsi_sim::VehicleInstance, at: DVec3, heading:
     }
 }
 
-impl App {
-    /// The vehicle just placed (`uid`) follows the mouse until it is set down.
-    pub(crate) fn begin_placing(&mut self, uid: u64, heading: f64) {
-        self.menus.placing = Some(Placing { uid, heading, at: None, blocked: false });
-        self.service_msg = Some(("Placing: point at the ground, mouse wheel or Q / E turns it, R turns it round, click sets it down, Esc takes it away".into(), 30.0));
-    }
+/// The vehicle just placed (`uid`) follows the mouse until it is set down.
+pub(crate) fn begin_placing(menus: &mut crate::app::MenuState, service_msg: &mut Option<(String, f32)>, uid: u64, heading: f64) {
+    menus.placing = Some(Placing { uid, heading, at: None, blocked: false });
+    *service_msg = Some(("Placing: point at the ground, mouse wheel or Q / E turns it, R turns it round, click sets it down, Esc takes it away".into(), 30.0));
+}
 
+impl App {
     /// Every frame while placing: the vehicle where the cursor points.
     pub(crate) fn placing_frame(&mut self) {
         let Some(pl) = self.menus.placing.as_ref() else { return };

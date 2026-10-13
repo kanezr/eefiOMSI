@@ -30,7 +30,7 @@ use omsi_sim::ai_traffic::dormant::*;
 use omsi_sim::ai_traffic::lights::*;
 use omsi_sim::ai_traffic::model::*;
 use omsi_sim::ai_traffic::viewer::*;
-use crate::view_sync::traffic::{depart_parked, release_car_render, TrafficView};
+use omsi_sim::view_events::TrafficEvent;
 
 pub use omsi_sim::ai_traffic::AI_SCHEMES;
 pub(crate) use omsi_sim::ai_traffic::model::{vehicle_bodies, AiCar, BusSetup, ParkPlan, PlayerBox};
@@ -40,10 +40,21 @@ pub(crate) use omsi_sim::ai_traffic::viewer::Viewer;
 /// The traffic simulation with what the game makes of it: the cars' sounds (played by the
 /// view sync, `crate::view_sync::traffic_audio`). Everything of
 /// the simulation reads through it (`Deref` to `TrafficSim`). The cars' pictures are the
-/// view sync's (`TrafficView`, in `view_sync::SimView`): the traffic's own steps that put a
-/// car on the road or take it off take it, and make or let go the car's renders at once.
+/// view sync's (`TrafficView`, in `view_sync::SimView`): the traffic's own calls that put a
+/// car on the road or take it off write down what the pictures have to follow (`events`),
+/// replayed by `view_sync::apply_traffic`.
 pub struct Traffic {
     pub sim: TrafficSim,
+    /// What the renders have to follow since the view last caught up, oldest first (see
+    /// `TrafficEvent`).
+    pub(crate) events: Vec<TrafficEvent>,
+    /// Where the cars and their meshes are drawn, taken at each view sync (its buffers kept
+    /// from one to the next; see `FrameSnapshot`).
+    pub(crate) snapshot: omsi_sim::view_events::FrameSnapshot,
+    /// What the snapshots sent the view of each car's looks (see `LookTracker`).
+    pub(crate) looks: omsi_sim::view_events::LookTracker,
+    /// What the cars' sounds read of them, taken at each audio update (see `SoundFrame`).
+    pub(crate) sound_frame: omsi_sim::view_events::SoundFrame,
     /// `[sound_ai]` set of each car near the listener, by car id (see `audio`).
     pub(crate) sounds: HashMap<u64, omsi_audio::SoundSet>,
     /// Sound sets of despawned cars, stopped at the next audio update.
@@ -82,6 +93,10 @@ impl Traffic {
     fn with_sim(sim: TrafficSim) -> Traffic {
         Traffic {
             sim,
+            events: Vec::new(),
+            snapshot: Default::default(),
+            looks: Default::default(),
+            sound_frame: Default::default(),
             sounds: HashMap::new(),
             orphan_sounds: Vec::new(),
             riding_sounds: None,
@@ -92,16 +107,22 @@ impl Traffic {
         }
     }
 
-    /// Advance all cars by a frame (see `TrafficSim::advance`: in the traffic's fixed steps);
-    /// the cars it took off the road go silent
-    /// and their pictures go back to the world at the next sync.
+    /// Advance all cars by a frame (see `TrafficSim::advance`: in the traffic's fixed steps),
+    /// then [`Traffic::after_step`].
     /// `player`: (centre, heading in degrees, half length, half width, speed) of the
     /// player's vehicle.
-    pub fn tick(&mut self, view: &mut TrafficView, dt: f32, player: Option<PlayerBox>) {
+    pub fn tick(&mut self, dt: f32, player: Option<PlayerBox>) {
         self.sim.advance(dt, player);
+        self.after_step();
+    }
+
+    /// What follows the traffic's step (`TrafficSim::advance`, which may run elsewhere): the
+    /// cars it took off the road go silent, and their pictures go back to the world at the
+    /// next sync (`TrafficEvent::Retired`).
+    pub fn after_step(&mut self) {
         for id in std::mem::take(&mut self.sim.retired) {
             self.orphan_sounds.extend(self.sounds.remove(&id));
-            view.retire(id);
+            self.events.push(TrafficEvent::Retired { id });
         }
     }
 

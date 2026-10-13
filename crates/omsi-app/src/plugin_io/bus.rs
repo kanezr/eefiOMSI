@@ -200,9 +200,10 @@ pub(crate) fn traffic_list(app: &App) -> Vec<op::AiCar> {
 
 pub(crate) fn traffic_remove(app: &mut App, id: u64) -> bool {
     let (Some(t), Some(w), Some(r), Some(sc)) = (app.session.traffic.as_mut(), app.world.as_ref(), app.renderer.as_ref(), app.scene.as_mut()) else { return false };
-    if !t.remove_car(&mut app.gfx.sim_view.traffic, w, r, sc, id) {
+    if !t.remove_car(id) {
         return false;
     }
+    crate::view_sync::apply_traffic(t, &mut app.gfx.sim_view.traffic, w, r, sc);
     if let Some(s) = app.session.schedule.as_mut() {
         s.sim.forget_car(id);
     }
@@ -215,7 +216,9 @@ pub(crate) fn traffic_remove(app: &mut App, id: u64) -> bool {
 
 pub(crate) fn traffic_clear(app: &mut App) -> Option<usize> {
     let (Some(t), Some(w), Some(r), Some(sc)) = (app.session.traffic.as_mut(), app.world.as_ref(), app.renderer.as_ref(), app.scene.as_mut()) else { return None };
-    Some(t.clear_random(&mut app.gfx.sim_view.traffic, w, r, sc))
+    let removed = t.clear_random();
+    crate::view_sync::apply_traffic(t, &mut app.gfx.sim_view.traffic, w, r, sc);
+    Some(removed)
 }
 
 /// The light on the street ahead of the player's bus: the first lane within `reach` that

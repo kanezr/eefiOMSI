@@ -47,6 +47,9 @@ impl App {
         if !plugins.is_empty() {
             self.plugin_watch(&mut plugins);
         }
+        // the mouse on the plugins' script textures since their frame, and which those are now
+        plugins.pointer = std::mem::take(&mut self.integrations.plugin_pointer.pending);
+        self.integrations.plugin_pointer.pages = plugins.pointer_textures();
         if !plugins.is_empty() && !self.paused {
             let keys = std::mem::take(&mut self.integrations.plugin_keys);
             let events = std::mem::take(&mut self.integrations.plugin_events);

@@ -40,17 +40,15 @@ pub(super) fn options_pages(app: &App) -> Vec<Page> {
         pick("anisotropy", "Anisotropic", later),
         // (Enhanced+ traces its shadows, occlusion and reflections: always on there)
         switch_row(app, "shadows", "Sun shadows", "Enables/Disabled shadows").filter(|_| !app.settings.ray_tracing()),
-pick("shadow_size", "Shadow map", later),
-        switch_row(app, "shadow_blobs", "Shadow blobs", "The flat blobs under vehicles from OMSI 2").filter(|_| !app.settings.ray_tracing()),
-        switch_row(app, "tree_shadows", "Tree shadows (near)", "Alpha-tested trees and fences cast shadows in the near cascade. Off saves GPU time; their shadows are just card silhouettes"),
+        pick("shadow_size", "Shadow map", later),
+        switch_row(app, "ssao", "Ambient occlusion", later).filter(|_| !app.settings.ray_tracing()),
         pick("shadow_casters", "Shadows cast by", later),
         switch_row(app, "detail_textures", "Detail texturing up close", "The ground and large walls get fine grain when close"),
         slider_row(app, "night_brightness", "Night brightness", "Enhanced graphics: how much brighter the night is shown", &|v| if v < 0.01 { "Off".to_string() } else { format!("+{v:.2}") }),
         slider_row(app, "led_glow", "LED glow", "How strongly the dots of LED destination displays glow", &|v| format!("{}/15", v as i64)),
         slider_row(app, "led_mips", "LED mask mipmaps", "Keep the mip chain of the LED masks (smoother from a distance).", &|v| format!("{v:.2}")),
         switch_row(app, "reflections", "Reflection maps (paint, chrome, glass)", later).filter(|_| !app.settings.ray_tracing()),
-        pick("max_texture_size", "Max texture size", "Maximum texture dimension (0 = device limit). Lower saves VRAM and bandwidth"),
-        slider_row(app, "lod_bias", "Texture LOD bias", "Positive = blurrier mips (faster, less bandwidth), negative = sharper", &|v| format!("{:+.1}", v)),
+        switch_row(app, "clouds", "Clouds", later),
         pick("cloud_quality", "Cloud quality", "Enhanced: the volumetric clouds marched in fewer steps - faster, a little grainier")
             .filter(|_| matches!(crate::settings::graphics_mode(&app.settings.graphics), "enhanced" | "enhanced_plus") && app.settings.clouds),
         pick("rain_quality", "Rain quality", "Lower is faster: the drops on the glass painted less often, less spray and fewer streaks; Low shows OMSI 2's own rain on the glass (from the next bus loaded)"),
@@ -133,10 +131,13 @@ pick("shadow_size", "Shadow map", later),
         switch_row(app, "vsync", "V-sync", "Waits for the screen's refresh"),
         pick("max_fps", "Frame limit", "Frames a second at most"),
         switch_row(app, "fps", "Frame rate", "Show the frames per second in the top right corner"),
+        pick("perf_overlay", "Performance details", "Where each frame's time goes, how busy the processor is and what slows the game down, with live graphs"),
         pick("view_distance", "View distance", later),
         pick("max_obj_dist", "Object distance", later),
         pick("min_obj_size", "Small objects", later),
         pick("mirror_size", "Mirrors", later),
+        pick("mirror_refresh", "Real-time reflections", "How often the mirrors are drawn: every frame, the street moves through them as smoothly as through the windscreen"),
+        pick("mirror_quality", "Mirror quality", "In Enhanced and Enhanced+: the mirrors shaded as the picture is, with its light and its sky, instead of the plain light"),
         switch_row(app, "mirror_hud_every_frame", "Mirror panels every frame", "The mirror panels in the cab (Ctrl+M) are drawn every frame, as in ETS2, instead of taking turns with the other mirrors"),
         pick("texture_memory", "Texture memory", later),
         switch_row(app, "texture_compression", "Compress textures on loading", later),
@@ -237,6 +238,7 @@ pick("shadow_size", "Shadow map", later),
         .collect();
     let interface: Vec<(String, String)> = vec![
         pick("language", "Language", "The language of the game's interface"),
+        pick("units", "Units", "Speeds, distances and temperatures in the game's own texts"),
         switch_row(app, "machine_translation", "Translate the remaining texts automatically (offline, downloads 620 MB once)", "Translates texts nobody has translated, on this machine"),
         slider_row(app, "ui_scale", "Game interface size", "The size of the texts, the menu, the timetable and the navigator", &pct),
         switch_row(app, "ui_scale_window", "Interface grows with the window", "On a window taller than 1080p the interface grows with it"),
@@ -355,6 +357,22 @@ pub(super) fn world_pages(app: &App) -> Vec<Page> {
             }
             for (name, hm, secs) in [("Morning", "06:00", 6 * 3600), ("Noon", "12:00", 12 * 3600), ("Evening", "18:00", 18 * 3600), ("Night", "23:00", 23 * 3600)] {
                 time.push(button(name, hm, "Jump to this time of day.", &format!("clock_set {secs}")));
+            }
+            // the date: by a day, a week or a month, the time of day kept (the timetable's
+            // day, the season and the map's chrono changes follow it as at midnight)
+            let (d, m) = app.clock.day_month();
+            let day = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][app.clock.weekday().rem_euclid(7) as usize];
+            let date = format!("{:04}-{m:02}-{d:02}  {}", app.clock.year, omsi_ui::tr(day));
+            time.push((row("Date", 'i', &date, "The day the timetable, the season and the map's changes follow", None), "noop".to_string()));
+            for (name, text, secs) in [
+                ("Date -1 month", "-1 month", app.clock.months_away(-1)),
+                ("Date -1 week", "-1 week", -7.0 * 86400.0),
+                ("Date -1 day", "-1 day", -86400.0),
+                ("Date +1 day", "+1 day", 86400.0),
+                ("Date +1 week", "+1 week", 7.0 * 86400.0),
+                ("Date +1 month", "+1 month", app.clock.months_away(1)),
+            ] {
+                time.push(button(name, text, "Move the date.", &format!("clock_shift {secs}")));
             }
             if let (Some(_), Some(p)) = (app.session.duty.as_ref(), app.player.as_ref()) {
                 let d = p.vehicle.host.tt_delay as f64;

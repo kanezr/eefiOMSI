@@ -267,7 +267,7 @@ impl PlayerDuty {
     /// gets its place once the tile comes, and one placed roughly (an object hung on
     /// another) its exact one. A stop without a place was never reached: the next stop
     /// stayed on it for the rest of the trip (#975) and the map left it out (#1014).
-    pub fn learn_loaded(&mut self, positions: &HashMap<i64, (glam::DVec3, [f64; 3])>) {
+    pub fn learn_loaded(&mut self, positions: &crate::world_data::ObjectPlaces) {
         // (the trip under way and the next: the later ones learn theirs when they come)
         let from = self.trip_index;
         for trip in self.trips[from..].iter_mut().take(2) {

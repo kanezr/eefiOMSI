@@ -66,20 +66,82 @@ pub struct Shot {
     /// The bus's velocity (m/s, world) and how long the shutter is open (s): the bus and the
     /// camera travel together while the world passes (a rolling shot).
     pub motion: Option<(Vec3, f32)>,
+    /// The camera stands on a tripod while the shutter is open: the bus moves through the
+    /// picture (blurred) and the street stays sharp - else it pans with the bus.
+    pub tripod: bool,
+    /// The sensor's height (mm): with the field of view it gives the lens's real focal
+    /// length, and so how wide the aperture opens at an f-number.
+    pub sensor_h: f32,
+    /// The lens tilted against the sensor (degrees: about the frame's horizontal axis, then
+    /// its vertical one): the plane of focus leans (Scheimpflug).
+    pub tilt: [f32; 2],
+    /// The lens shifted over the sensor (shares of the frame's height: right, up): the view
+    /// moves without the camera turning, the verticals stay upright.
+    pub shift: [f32; 2],
+    /// How much brighter than the picture's white the lights burnt out in it are taken to be
+    /// (the pictures are 8 bit: a lamp is as white as a white wall) - out of focus they
+    /// spread into the bright discs a lens makes of them.
+    pub highlights: f32,
+}
+
+impl Default for Shot {
+    fn default() -> Shot {
+        Shot { dof: false, fstop: 2.8, focus: 10.0, blades: 0, motion: None, tripod: false, sensor_h: SENSOR_H_MM, tilt: [0.0; 2], shift: [0.0; 2], highlights: 0.0 }
+    }
+}
+
+/// The real focal length (mm) of a vertical field of view on a sensor `sensor_h` mm high.
+pub fn focal_on(fov_deg: f32, sensor_h: f32) -> f32 {
+    sensor_h * 0.5 / (fov_deg.to_radians() * 0.5).tan().max(1e-4)
+}
+
+/// The aperture's radius in metres: the real focal length over twice the f-number.
+pub fn aperture_radius(fov_deg: f32, shot: &Shot) -> f32 {
+    focal_on(fov_deg, shot.sensor_h) / 1000.0 / (2.0 * shot.fstop.max(0.7))
+}
+
+/// One picture of a photo: the camera it is taken with, the moment of the shutter (s from
+/// its middle) and the point of the aperture (m: right, up) it looks through.
+#[derive(Clone, Copy, Debug)]
+pub struct Sample {
+    pub cam: Camera,
+    pub t: f32,
+    pub aperture: glam::Vec2,
+}
+
+/// The inverse of the distance (along the view) of the plane of focus at the view direction
+/// (u, v) (tangents: right, up), for a lens of `focal_m` metres: the focus distance where
+/// the lens is not tilted. A lens tilted by an angle turns the plane of focus about a hinge
+/// line `focal / sin(tilt)` below it (Scheimpflug) - tilted down, through the hinge under the
+/// camera and the point of focus, the plane lies along the ground.
+pub fn inv_focus_at(shot: &Shot, focal_m: f32, u: f32, v: f32) -> f32 {
+    let (sv, su) = (shot.tilt[0].to_radians().sin(), shot.tilt[1].to_radians().sin());
+    1.0 / shot.focus.max(0.05) - (v * sv + u * su) / focal_m.max(1e-3)
+}
+
+/// The radius (pixels) of the blur circle of a point `z` metres away along the view, at the
+/// view direction (u, v): `pix` is the tangent a pixel spans.
+pub fn coc_px(shot: &Shot, radius_m: f32, focal_m: f32, z: f32, u: f32, v: f32, pix: f32) -> f32 {
+    if !shot.dof {
+        return 0.0;
+    }
+    radius_m * (1.0 / z.max(0.05) - inv_focus_at(shot, focal_m, u, v)).abs() / pix.max(1e-9)
 }
 
 /// The `i`th picture of a photo: the camera moved over the aperture and aimed back at the
 /// plane of focus, turned within the pixel (`height_px`: the picture's height), and the
 /// moment of the shutter (seconds from its middle) it is taken at.
-pub fn sample(base: &Camera, i: u32, shot: &Shot, height_px: f32) -> (Camera, f32) {
+pub fn sample(base: &Camera, i: u32, shot: &Shot, height_px: f32) -> Sample {
     let mut cam = *base;
     let f = base.forward();
     let (right, up) = (base.right(), base.up());
     let mut dir = f;
+    let mut aperture = glam::Vec2::ZERO;
     if shot.dof && i > 0 {
-        let radius = focal_mm(base.fov_deg) / 1000.0 / (2.0 * shot.fstop.max(0.7));
+        let radius = aperture_radius(base.fov_deg, shot);
         let (ax, ay) = aperture_point(halton(i, 2), halton(i, 3), shot.blades);
-        let off = right * (ax * radius) + up * (ay * radius);
+        aperture = glam::Vec2::new(ax, ay) * radius;
+        let off = right * aperture.x + up * aperture.y;
         let focus = f * shot.focus.max(0.05);
         cam.position = base.position + off.as_dvec3();
         dir = (focus - off).normalize_or(f);
@@ -100,11 +162,12 @@ pub fn sample(base: &Camera, i: u32, shot: &Shot, height_px: f32) -> (Camera, f3
         Some((_, shutter)) if i > 0 => ((i as f32 * 0.618_034).fract() - 0.5) * shutter,
         _ => 0.0,
     };
-    (cam, t)
+    Sample { cam, t, aperture }
 }
 
 /// Where the bus is moved for a picture taken `t` seconds from the shutter's middle.
 pub fn travel(shot: &Shot, t: f32) -> DVec3 {
+    // (on a tripod the camera stays; the bus moves all the same, see the app)
     shot.motion.map(|(v, _)| (v * t).as_dvec3()).unwrap_or(DVec3::ZERO)
 }
 
@@ -139,11 +202,11 @@ mod tests {
     #[test]
     fn every_picture_aims_at_the_same_point_of_the_focus_plane() {
         let base = cam();
-        let shot = Shot { dof: true, fstop: 1.4, focus: 8.0, blades: 0, motion: None };
+        let shot = Shot { dof: true, fstop: 1.4, focus: 8.0, ..Shot::default() };
         let target = base.position + (base.forward() * 8.0).as_dvec3();
         let mut moved = 0.0f64;
         for i in 1..32 {
-            let (c, _) = sample(&base, i, &shot, 100_000.0);
+            let c = sample(&base, i, &shot, 100_000.0).cam;
             moved = moved.max((c.position - base.position).length());
             // (the ray from the moved camera passes the focus point)
             let to = (target - c.position).as_vec3().normalize();
@@ -156,9 +219,9 @@ mod tests {
     #[test]
     fn without_depth_of_field_the_camera_stays_put() {
         let base = cam();
-        let shot = Shot { dof: false, fstop: 2.8, focus: 5.0, blades: 0, motion: None };
+        let shot = Shot { dof: false, fstop: 2.8, focus: 5.0, ..Shot::default() };
         for i in 0..8 {
-            let (c, t) = sample(&base, i, &shot, 1080.0);
+            let Sample { cam: c, t, .. } = sample(&base, i, &shot, 1080.0);
             assert_eq!(c.position, base.position);
             assert_eq!(t, 0.0);
             assert!((c.yaw - base.yaw).abs() < 0.05 && (c.pitch - base.pitch).abs() < 0.05);
@@ -167,10 +230,35 @@ mod tests {
 
     #[test]
     fn the_shutter_spreads_the_pictures_over_its_time() {
-        let shot = Shot { dof: false, fstop: 2.8, focus: 5.0, blades: 0, motion: Some((Vec3::new(10.0, 0.0, 0.0), 1.0 / 30.0)) };
-        let ts: Vec<f32> = (1..64).map(|i| sample(&cam(), i, &shot, 1080.0).1).collect();
+        let shot = Shot { dof: false, fstop: 2.8, focus: 5.0, motion: Some((Vec3::new(10.0, 0.0, 0.0), 1.0 / 30.0)), ..Shot::default() };
+        let ts: Vec<f32> = (1..64).map(|i| sample(&cam(), i, &shot, 1080.0).t).collect();
         let (lo, hi) = ts.iter().fold((1.0f32, -1.0f32), |(a, b), t| (a.min(*t), b.max(*t)));
         assert!(lo < -0.015 && hi > 0.015 && lo >= -0.0168 && hi <= 0.0168, "{lo} {hi}");
         assert!((travel(&shot, hi).x - 10.0 * hi as f64).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_tilted_lens_leans_the_plane_of_focus() {
+        let flat = Shot { dof: true, focus: 10.0, ..Shot::default() };
+        assert!((inv_focus_at(&flat, 0.05, 0.3, -0.2) - 0.1).abs() < 1e-6);
+        // tilted down: the plane goes further off towards the top of the frame (the ground)
+        let tilted = Shot { tilt: [8.0, 0.0], ..flat };
+        assert!(inv_focus_at(&tilted, 0.05, 0.0, 0.2) < inv_focus_at(&tilted, 0.05, 0.0, -0.2));
+        assert!((inv_focus_at(&tilted, 0.05, 0.0, 0.0) - 0.1).abs() < 1e-6);
+        // the hinge: 50 mm tilted 8 degrees, some 36 cm under the lens - a camera 1.5 m up
+        // looking level has the ground (1/z = -v / 1.5) nearly in focus
+        let hinge = 0.05 / 8f32.to_radians().sin();
+        assert!((hinge - 0.359).abs() < 0.01, "{hinge}");
+    }
+
+    #[test]
+    fn the_blur_circle_grows_away_from_the_focus_and_with_the_sensor() {
+        let shot = Shot { dof: true, fstop: 2.0, focus: 10.0, ..Shot::default() };
+        let r = aperture_radius(40.0, &shot);
+        assert!(coc_px(&shot, r, 0.05, 10.0, 0.0, 0.0, 0.001) < 1e-3);
+        assert!(coc_px(&shot, r, 0.05, 100.0, 0.0, 0.0, 0.001) > coc_px(&shot, r, 0.05, 20.0, 0.0, 0.0, 0.001));
+        // a smaller sensor at the same view: a shorter lens, a smaller aperture, less blur
+        let small = Shot { sensor_h: 24.0 / 2.0, ..shot };
+        assert!((aperture_radius(40.0, &small) - r * 0.5).abs() < 1e-6);
     }
 }

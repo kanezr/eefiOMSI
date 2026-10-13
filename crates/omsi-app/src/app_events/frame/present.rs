@@ -3,32 +3,37 @@
 
 use super::*;
 
-impl App {
-    /// The lighting the frame is drawn with.
-    pub(super) fn frame_lighting(&mut self, dt: f32, daylight: omsi_sim::Daylight) -> omsi_render::Lighting {
-        if let Some(w) = self.session.weather.as_ref() {
-            self.session.wetness = road_wetness(precip_of(w).1, dt as f64, self.session.wetness);
-        }
-        let inside = match self.net.inside_remote.and_then(|id| self.net.remotes.remotes.get(&id)) {
-            // (in another player's bus: its box is the one the camera is in)
-            Some(rv) => Some(rv.vehicle()),
-            None => self.player.as_ref().map(|p| &p.vehicle),
-        };
-        steps::picture_lighting(
-            &daylight,
-            self.session.weather.as_ref(),
-            self.session.cloud_drift,
-            self.session.wetness,
-            self.world.as_deref(),
-            inside,
-            self.player.as_ref().map(|p| &p.vehicle),
-            self.session.cabin_air.appearance(),
-            &self.settings,
-            self.clock.run_time as f32,
-            &self.session.sky,
-        )
-    }
+crate::app::stage_ctx!(
+    /// The lighting stage's part of the game.
+    LightingCx { reads: [net, world, clock], writes: [weather, player] }
+);
 
+/// The lighting the frame is drawn with.
+pub(super) fn lighting(cx: LightingCx, dt: f32, daylight: omsi_sim::Daylight) -> omsi_render::Lighting {
+    if let Some(w) = cx.weather.weather.as_ref() {
+        *cx.weather.wetness = road_wetness(precip_of(w).1, dt as f64, *cx.weather.wetness);
+    }
+    let inside = match cx.net.inside_remote.and_then(|id| cx.net.remotes.remotes.get(&id)) {
+        // (in another player's bus: its box is the one the camera is in)
+        Some(rv) => Some(rv.vehicle()),
+        None => cx.player.player.as_ref().map(|p| &p.vehicle),
+    };
+    steps::picture_lighting(
+        &daylight,
+        cx.weather.weather.as_ref(),
+        *cx.weather.cloud_drift,
+        *cx.weather.wetness,
+        cx.world.world.as_deref(),
+        inside,
+        cx.player.player.as_ref().map(|p| &p.vehicle),
+        cx.weather.cabin_air.appearance(),
+        cx.common.settings,
+        cx.clock.clock.run_time as f32,
+        &*cx.weather.sky,
+    )
+}
+
+impl App {
     /// The frame drawn and shown (or, with the window hidden, the simulation kept at a
     /// display's pace), the frame rate limited, the session's statistics.
     pub(super) fn frame_render(
@@ -69,6 +74,9 @@ impl App {
                 None => self.frame_hidden(time.now),
             }
             self.frame_pace(time.now, shown_nothing, presented);
+            // (what the sim thread stepped meanwhile is back before the frame is counted or
+            // the session finished, see `sim_thread`)
+            self.join_sim_thread();
             finish = self.frame_count(event_loop);
             if let Some(win) = self.window.as_ref() {
                 win.request_redraw();
@@ -106,7 +114,7 @@ impl App {
         // so it does not depend on a frame being acquired)
         let (path, include_touch) = shot;
         // the photo mode: its developed photo (stretched to the window) under its panel
-        let developed = self.photo.as_ref().filter(|ph| ph.render.showing_photo()).and_then(|ph| ph.developed()).map(|(w, h, px)| crate::photo::stretch(w, h, px, s.config.width, s.config.height));
+        let developed = self.photo.as_ref().filter(|ph| ph.render.showing_photo()).and_then(|ph| ph.shown()).map(|(w, h, px)| crate::photo::stretch(w, h, px, s.config.width, s.config.height));
         match developed.map(Ok).unwrap_or_else(|| r.render_to_image(
             scene,
             s.config.width,
@@ -219,7 +227,7 @@ impl App {
             }
             _ => (None, None),
         };
-        *self.perf.profile.entry("acquire").or_default() += __t.elapsed().as_secs_f64();
+        self.perf.profile.add(crate::profile_keys::ProfKey::Acquire, __t.elapsed().as_secs_f64());
         if frame.is_none() {
             self.gfx.hidden_frames += 1;
         }
@@ -331,12 +339,12 @@ impl App {
         self.shell.render(r, &view, s.config.width, s.config.height);
         // the on-screen controls over the picture (a phone)
         self.input.touch.render(r, &view, s.config.width, s.config.height);
-        *self.perf.profile.entry("render").or_default() += __t.elapsed().as_secs_f64();
+        self.perf.profile.add(crate::profile_keys::ProfKey::Render, __t.elapsed().as_secs_f64());
         if omsi_cfg::flags::OMSI_PROFILE_GPU.is_set() {
             // wait for the GPU here, so that its time shows as a stage of its own
             let __t = Instant::now();
             let _ = omsi_render::wait_gpu(&r.device, None);
-            *self.perf.profile.entry("gpu").or_default() += __t.elapsed().as_secs_f64();
+            self.perf.profile.add(crate::profile_keys::ProfKey::Gpu, __t.elapsed().as_secs_f64());
         }
         let __t = Instant::now();
         match frame {
@@ -351,7 +359,7 @@ impl App {
                 let _ = omsi_render::wait_gpu(&r.device, None);
             }
         }
-        *self.perf.profile.entry("present").or_default() += __t.elapsed().as_secs_f64();
+        self.perf.profile.add(crate::profile_keys::ProfKey::Present, __t.elapsed().as_secs_f64());
     }
 
     /// The bus's mirrors redrawn, in turn, within their budget.
@@ -376,6 +384,7 @@ impl App {
         if let (Some(p), Some(w)) = (self.player.as_ref(), self.world.as_ref()) {
             steps::mirror_hud_sync(&mut self.gfx.mirror_hud, w, p, self.settings.mirror_hud);
         }
+        r.options.mirror_enhanced = self.settings.mirror_quality == "enhanced";
         #[cfg(windows)]
         let vr_active = self.xr.vr.is_some();
         #[cfg(not(windows))]
@@ -399,6 +408,22 @@ impl App {
         if self.settings.mirror_size == 0 {
             self.gfx.mirror_budget = 0.0;
             self.gfx.mirrors_seen = 0;
+        } else if self.settings.mirror_refresh == "every" && !vr_active {
+            // every mirror in the picture every frame: the street goes by in them as smoothly
+            // as through the windscreen (in turns, each picture was a step behind, and the
+            // steps grew with the speed - the mirrors seemed to shake)
+            self.gfx.mirror_budget = 0.0;
+            let mirror_view = if self.settings.triple.enabled || (self.gfx.mirror_hud.active() && self.cam.in_cab && panel_cams.is_empty()) {
+                None
+            } else {
+                Some((*cam, s.config.width as f32 / s.config.height.max(1) as f32))
+            };
+            let near = self.player.as_ref().is_some_and(|p| (p.vehicle.position - cam.position).length() < 12.0);
+            if let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) {
+                if self.cam.in_cab || near {
+                    self.gfx.mirrors_seen = render_mirrors(r, scene, w, p, lighting, MirrorPick::All(&panel_cams), mirror_view);
+                }
+            }
         } else if self.settings.mirror_refresh == "off" {
             self.gfx.mirror_budget = 0.0;
             if let (Some(w), Some(p)) = (self.world.as_ref(), self.player.as_ref()) {
@@ -481,7 +506,7 @@ impl App {
             }
         }
         self.gfx.mirror_panel_cams = panel_cams;
-        *self.perf.profile.entry("mirrors").or_default() += __t.elapsed().as_secs_f64();
+        self.perf.profile.add(crate::profile_keys::ProfKey::Mirrors, __t.elapsed().as_secs_f64());
     }
 
     /// Nothing to draw into: what was uploaded let go, the simulation at a display's pace.
@@ -496,7 +521,7 @@ impl App {
         let __t = Instant::now();
         r.queue.submit(std::iter::empty::<wgpu::CommandBuffer>());
         let _ = r.device.poll(wgpu::PollType::Poll);
-        *self.perf.profile.entry("present").or_default() += __t.elapsed().as_secs_f64();
+        self.perf.profile.add(crate::profile_keys::ProfKey::Present, __t.elapsed().as_secs_f64());
         if let Some(rest) =
             std::time::Duration::from_millis(16).checked_sub(now.elapsed())
         {
@@ -552,7 +577,7 @@ impl App {
         if max_fps > 0 && !vr_active && !vsync_paces {
             let __t = Instant::now();
             pace_until(now, std::time::Duration::from_secs_f64(1.0 / max_fps as f64));
-            *self.perf.profile.entry("limiter").or_default() += __t.elapsed().as_secs_f64();
+            self.perf.profile.add(crate::profile_keys::ProfKey::Limiter, __t.elapsed().as_secs_f64());
         }
     }
 

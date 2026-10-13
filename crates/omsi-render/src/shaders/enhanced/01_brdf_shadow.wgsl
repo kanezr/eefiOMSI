@@ -147,6 +147,24 @@ fn sun_shadow_soft(world_in: vec3<f32>, n: vec3<f32>, thin: bool) -> f32 {
     return mix(far_safe, near_value, near_weight);
 }
 
+// Enhanced+: the solid casters' shadow where no traced one is there for a surface. The close
+// and near maps hold only the cut-out casters then (`shadow_plan`), and such a surface - a
+// pane, the edge of a step or a handrail thinner than a pixel of the depth prepass - lay in
+// the sun under a roof: bright specks and stair-stepped lines along the edges, flickering
+// as the camera moved and the traced texel was found or not. The far map keeps them all.
+fn sun_shadow_far(world: vec3<f32>, n: vec3<f32>) -> f32 {
+    if (camera.shadow.x < 0.5) {
+        return 1.0;
+    }
+    let ndl = clamp(dot(n, camera.sun_dir.xyz), 0.0, 1.0);
+    let flp = camera.light_view_proj_far * vec4<f32>(world + shadow_push_far(n, ndl), 1.0);
+    let fuv = vec2<f32>(flp.x * 0.5 + 0.5, 0.5 - flp.y * 0.5);
+    if (fuv.x < 0.0 || fuv.x > 1.0 || fuv.y < 0.0 || fuv.y > 1.0 || flp.z < 0.0 || flp.z > 1.0) {
+        return 1.0;
+    }
+    return shadow_pcf_far(fuv, flp.z, shadow_receiver_slope(camera.light_view_proj_far, n), 1.0);
+}
+
 // The sun's shadow at a point by one compare in the finest cascade that holds it (the close
 // one, else the near one; lit beyond): for glass (see fs_enhanced).
 fn sun_shadow_hard(world: vec3<f32>, n: vec3<f32>) -> f32 {

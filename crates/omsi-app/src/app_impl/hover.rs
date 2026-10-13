@@ -4,27 +4,11 @@ use super::*;
 
 impl App {
     pub(crate) fn hud_size(&self) -> (f32, f32) {
-        let v = self
-            .gfx.surface
-            .as_ref()
-            .map(|s| {
-                self.settings
-                    .hud_viewport((s.config.width, s.config.height))
-            })
-            .unwrap_or([0.0, 0.0, 1.0, 1.0]);
-        (v[2], v[3])
+        hud_size(&self.settings, &self.gfx)
     }
 
     pub(crate) fn hud_cursor(&self) -> (f32, f32) {
-        let x = self
-            .gfx.surface
-            .as_ref()
-            .map(|s| {
-                self.settings
-                    .hud_viewport((s.config.width, s.config.height))[0]
-            })
-            .unwrap_or(0.0);
-        (self.input.cursor.0 - x, self.input.cursor.1)
+        hud_cursor(&self.settings, &self.gfx, &self.input)
     }
 
     pub(crate) fn cockpit_cursor_ray(&self, cam: &Camera, size: (u32, u32)) -> (glam::DVec3, glam::Vec3, f32) {
@@ -43,9 +27,7 @@ impl App {
     /// The triple screen's rig as drawn this frame (the view's zoom applied), while it is on
     /// and no headset is asked for.
     pub(crate) fn triple_rig(&self, size: (u32, u32)) -> Option<omsi_render::TripleScreen> {
-        (self.settings.triple.enabled && !self.settings.vr_requested()).then(|| {
-            self.settings.triple.zoomed(size.0, size.1, self.cam.view_zoom.get(&self.view).copied().unwrap_or(1.0))
-        })
+        triple_rig(&self.settings, &self.cam, &self.view, size)
     }
 
     /// The desktop ray under the cursor for placing and editing on the ground: the window's
@@ -60,16 +42,13 @@ impl App {
         }
     }
 
-    /// With a triple screen, the frustum around all three panels for "nothing appears or
-    /// vanishes in sight": tangents of its half-angles, horizontal and vertical (None: the
-    /// window's own view is the whole picture).
-    pub(crate) fn sight_extent(&self, cam: &Camera, size: (u32, u32)) -> Option<(f64, f64)> {
-        let rig = self.triple_rig(size)?;
-        let (tx, ty) = rig.view_extent(cam, size.0, size.1);
-        Some((tx as f64, ty as f64))
+    pub(crate) fn update_hover(&mut self) {
+        let sim = self.player_to_drawn_pose();
+        self.hover_now();
+        self.player_back_to_sim_pose(sim);
     }
 
-    pub(crate) fn update_hover(&mut self) {
+    fn hover_now(&mut self) {
         if self.xr.vr_nav_edit.is_some() || self.input.cursor_hidden.is_some() {
             self.menus.hover = None;
             self.menus.hover_part = None;
@@ -211,4 +190,39 @@ impl App {
             0
         }
     }
+}
+
+/// The triple screen's panels as the view's zoom has them (None: no triple screen).
+pub(crate) fn triple_rig(settings: &settings::Settings, cam: &ViewState, view: &str, size: (u32, u32)) -> Option<omsi_render::TripleScreen> {
+    (settings.triple.enabled && !settings.vr_requested())
+        .then(|| settings.triple.zoomed(size.0, size.1, cam.view_zoom.get(view).copied().unwrap_or(1.0)))
+}
+
+/// With a triple screen, the frustum around all three panels for "nothing appears or
+/// vanishes in sight": tangents of its half-angles, horizontal and vertical (None: the
+/// window's own view is the whole picture).
+pub(crate) fn sight_extent(settings: &settings::Settings, view: &crate::app::ViewPart<'_>, cam: &Camera, size: (u32, u32)) -> Option<(f64, f64)> {
+    let rig = triple_rig(settings, view.cam, view.view, size)?;
+    let (tx, ty) = rig.view_extent(cam, size.0, size.1);
+    Some((tx as f64, ty as f64))
+}
+
+/// The HUD's width and height in the window (`App::hud_size`).
+pub(crate) fn hud_size(settings: &settings::Settings, gfx: &GfxState) -> (f32, f32) {
+    let v = gfx
+        .surface
+        .as_ref()
+        .map(|s| settings.hud_viewport((s.config.width, s.config.height)))
+        .unwrap_or([0.0, 0.0, 1.0, 1.0]);
+    (v[2], v[3])
+}
+
+/// The cursor in the HUD's frame (`App::hud_cursor`).
+pub(crate) fn hud_cursor(settings: &settings::Settings, gfx: &GfxState, input: &InputState) -> (f32, f32) {
+    let x = gfx
+        .surface
+        .as_ref()
+        .map(|s| settings.hud_viewport((s.config.width, s.config.height))[0])
+        .unwrap_or(0.0);
+    (input.cursor.0 - x, input.cursor.1)
 }

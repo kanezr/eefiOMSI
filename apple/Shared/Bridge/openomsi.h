@@ -25,8 +25,6 @@ void openomsi_preview_zoom(float k);
 void openomsi_ios_main(void);
 /// The scene is connected: the game may put its window on it.
 void openomsi_ios_scene_ready(void);
-/// The launcher drawn by the game (1) or the Swift one (0).
-void openomsi_ios_set_cross_platform_launcher(int32_t on);
 #endif
 
 #endif

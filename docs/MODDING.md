@@ -34,8 +34,20 @@ OMSI 2 reads the first four and skips the rest. A model may declare any number o
 
 ## Textures of any resolution
 
-- Textures up to 16384 × 16384 pixels load: DDS (DXT1/3/5, uncompressed), TGA, BMP, PNG and
-  JPG. Where the graphics card cannot take that size, the texture is halved until it fits.
+- Textures up to 16384 × 16384 pixels load. Where the graphics card cannot take that size,
+  the texture is halved until it fits.
+- Every picture format of today's tools is read, by its content whatever its name says:
+  - DDS with the DX10 header (BC4, BC5, BC6H, BC7 as texconv, Substance and the engines
+    write them; R10G10B10A2, R11G11B10 float, R9G9B9E5, 16- and 32-bit float and 16-bit
+    channels, B5G6R5 / B5G5R5A1 / B4G4R4A4, R8G8, R8, A8; DX10 cube maps), ATI1 / ATI2 /
+    BC4U / BC5U (the z of a two-channel normal map is made from x and y), RXGB, Direct3D's
+    float formats, and OMSI's DXT1-5 and uncompressed DDS;
+  - KTX 1 and KTX 2 (not supercompressed) with RGBA8, BC1-BC7, ETC1, ETC2 / EAC and ASTC;
+  - PNG (also 16 bits per channel), JPEG (also progressive and CMYK), BMP, TGA, WebP, GIF,
+    TIFF, QOI, OpenEXR, Radiance HDR, ICO, PNM and farbfeld.
+- A texture named in a model (`bus.bmp`) is found as `bus.dds` first, then under its own
+  name, then as `.bmp`, `.tga`, `.jpg`, `.png`, `.jpeg`, `.webp`, `.tif`, `.tiff`, `.gif`,
+  `.ktx2`, `.ktx`, `.qoi`, `.hdr`, `.exr` and `.pnm`.
 - There is no 2 GB address-space limit: openOMSI is a 64-bit program.
 - A texture keeps its full resolution within 150 m of the camera, so a bus's own 4K
   textures always stay sharp. Far scenery gives up detail only when the texture memory
@@ -138,6 +150,18 @@ that camera sees from the rear section.
 
 ## Models
 
+- A `[mesh]` (and every other place OMSI reads a mesh) may name a **glTF / GLB**, **FBX**
+  or **OBJ** file besides `.o3d` and `.x`; the format is told by the file's content. The
+  model is read in the frame the modelling tool shows it in - exported from Blender with the
+  vehicle's front along +Y, as for an `.o3d` - in metres (FBX in any unit), with every node's
+  transform applied:
+  - materials keep their base colour and their colour texture. A texture beside the model
+    (or in a `texture` folder beside it) is found there, one packed into a `.glb` or `.fbx`
+    is read from the file; the material is named after the picture's file name, so a
+    `[matl] <picture> <n>` of the model's `.cfg` acts on it as on an `.o3d`'s material;
+  - skins (bone names and weights) and blend shapes come along; an FBX may be ASCII or
+    binary of any version, an OBJ has its `.mtl` (`Kd`, `d`, `map_Kd`) and any polygons;
+  - `cargo run -p omsi-o3d --example mesh_info <file>` shows what openOMSI reads of a model.
 - `[led_glow_effect]` after a `[matl]` (a number from 0 to 1) says how much an LED panel's
   dots glow in the enhanced picture: 1 the full `LED glow` setting, 0.5 half of it, 0 not at
   all (the slot is no LED panel). Without it openOMSI guesses: a slot with a `\S:n` script

@@ -49,6 +49,9 @@ pub(crate) struct CameraUniform {
     /// The player's vehicle's velocity (m/s, world) and 1: the airstream the rain on its
     /// glass meets (see `Lighting::glass_wind`).
     pub(crate) wind: [f32; 4],
+    /// LOD bias for mipmapping (positive = blurrier, negative = sharper).
+    pub(crate) lod_bias: f32,
+    pub(crate) _pad_lod_bias: [f32; 3],
     /// Enhanced: the street lamps' shadow maps (`LAMP_SHADOWS` tiles under the far map),
     /// and the light indices they belong to (-1: none).
     pub(crate) lamp_view_proj: [[[f32; 4]; 4]; 4],
@@ -66,10 +69,6 @@ pub(crate) struct CameraUniform {
     /// Enhanced: the field each light cookie layer covers (`cookies::CookieAtlas::fields`).
     /// After the rest: the shaders that light nothing by a cookie leave it out.
     pub(crate) cookies: [[f32; 4]; COOKIE_LAYERS],
-    /// Texture LOD bias: positive = blurrier mips (faster, less bandwidth), negative = sharper.
-    pub(crate) lod_bias: f32,
-    /// Padding to match WGSL struct alignment (16 bytes).
-    pub(crate) _pad: [f32; 3],
 }
 
 /// The period the sky's cloud patterns repeat with (m): 5 x the cloud field (14 km), 8 x

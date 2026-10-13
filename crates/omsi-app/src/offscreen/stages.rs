@@ -1,8 +1,9 @@
-//! The offscreen run's step as a list of stages (`OFFSCREEN_STEP`, 1/30 s each), taken by
-//! the same runner as the window's frame (see `frame_stages`).
+//! The offscreen run's step as a list of stages (`OFFSCREEN_STEP`, a tick of 1/60 s each),
+//! taken by the same runner as the window's frame (see `frame_stages`).
 
 use super::*;
 use crate::frame_stages::{self, Flow, Group, Phase, Profile, Role, StageInfo};
+use crate::profile_keys::{ProfKey, ProfileTimes};
 
 /// The offscreen run's stages, in the order of [`OFFSCREEN_STEP`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,8 +29,8 @@ pub(crate) const OFFSCREEN_STEP: &[OffscreenStage] = {
     &[Server, Clock, Traffic, Startup, Duty, Drive, GroundGap, Humans, Lan, Surroundings, Snapshot, Record]
 };
 
-const fn stage(name: &'static str, phase: Phase, role: Role, reads: &'static [Group], writes: &'static [Group]) -> StageInfo {
-    StageInfo { name, phase, role, reads, writes, takes: &[], gives: &[], profile: Profile::Key(name) }
+const fn stage(key: ProfKey, phase: Phase, role: Role, reads: &'static [Group], writes: &'static [Group]) -> StageInfo {
+    StageInfo { name: key.name(), phase, role, reads, writes, takes: &[], gives: &[], profile: Profile::Key(key) }
 }
 
 impl frame_stages::Stage for OffscreenStage {
@@ -37,19 +38,20 @@ impl frame_stages::Stage for OffscreenStage {
         use Group as G;
         use OffscreenStage::*;
         use Phase as P;
+        use ProfKey as K;
         match self {
-            Server => stage("server", P::Housekeeping, Role::Own, &[G::Net, G::Clock, G::Traffic, G::People], &[G::Net, G::Clock, G::Traffic, G::Gfx]),
-            Clock => stage("clock", P::Sim, Role::Clock, &[G::Clock, G::Weather, G::World], &[G::Clock, G::Player]),
-            Traffic => stage("traffic", P::Sim, Role::Traffic, &[G::Traffic, G::Player, G::People, G::World, G::View, G::Clock, G::Weather, G::Net], &[G::Traffic, G::Player, G::Gfx, G::Perf]),
-            Startup => stage("startup", P::Sim, Role::Own, &[G::Player], &[G::Player]),
-            Duty => stage("duty", P::Sim, Role::Duty, &[G::Duty, G::Player, G::People, G::Clock, G::World], &[G::Duty, G::Player, G::Perf]),
-            Drive => stage("drive", P::Sim, Role::Player, &[G::Player, G::Input, G::World, G::Traffic], &[G::Player, G::Traffic, G::Gfx, G::Perf]),
-            GroundGap => stage("ground_gap", P::Sim, Role::Own, &[G::World, G::Player, G::Traffic, G::Clock], &[G::Perf]),
-            Humans => stage("humans", P::Sim, Role::People, &[G::People, G::Player, G::Traffic, G::Duty, G::Clock, G::World, G::View, G::Net], &[G::People, G::Player, G::Traffic, G::Duty, G::Gfx, G::Perf]),
-            Lan => stage("lan", P::Sim, Role::Lan, &[G::Net, G::Player, G::Clock, G::Duty, G::View], &[G::Net, G::Traffic, G::People, G::Gfx, G::Sound]),
-            Surroundings => stage("surroundings", P::Present, Role::Surroundings, &[G::Weather, G::Player, G::Traffic, G::Net, G::View, G::People], &[G::Weather]),
-            Snapshot => stage("snapshot", P::Output, Role::Picture, &[G::Gfx, G::View, G::Traffic, G::Weather], &[G::Gfx, G::Perf]),
-            Record => stage("record", P::Output, Role::Own, &[G::Gfx, G::View, G::Sound], &[G::Gfx, G::Perf]),
+            Server => stage(K::Server, P::Housekeeping, Role::Own, &[G::Net, G::Clock, G::Traffic, G::People], &[G::Net, G::Clock, G::Traffic, G::Gfx]),
+            Clock => stage(K::Clock, P::Sim, Role::Clock, &[G::Clock, G::Weather, G::World], &[G::Clock, G::Player]),
+            Traffic => stage(K::Traffic, P::Sim, Role::Traffic, &[G::Traffic, G::Player, G::People, G::World, G::View, G::Clock, G::Weather, G::Net], &[G::Traffic, G::Player, G::Gfx, G::Perf]),
+            Startup => stage(K::Startup, P::Sim, Role::Own, &[G::Player], &[G::Player]),
+            Duty => stage(K::Duty, P::Sim, Role::Duty, &[G::Duty, G::Player, G::People, G::Clock, G::World], &[G::Duty, G::Player, G::Perf]),
+            Drive => stage(K::Drive, P::Sim, Role::Player, &[G::Player, G::Input, G::World, G::Traffic], &[G::Player, G::Traffic, G::Gfx, G::Perf]),
+            GroundGap => stage(K::GroundGap, P::Sim, Role::Own, &[G::World, G::Player, G::Traffic, G::Clock], &[G::Perf]),
+            Humans => stage(K::Humans, P::Sim, Role::People, &[G::People, G::Player, G::Traffic, G::Duty, G::Clock, G::World, G::View, G::Net], &[G::People, G::Player, G::Traffic, G::Duty, G::Gfx, G::Perf]),
+            Lan => stage(K::Lan, P::Sim, Role::Lan, &[G::Net, G::Player, G::Clock, G::Duty, G::View], &[G::Net, G::Traffic, G::People, G::Gfx, G::Sound]),
+            Surroundings => stage(K::Surroundings, P::Present, Role::Surroundings, &[G::Weather, G::Player, G::Traffic, G::Net, G::View, G::People], &[G::Weather]),
+            Snapshot => stage(K::Snapshot, P::Output, Role::Picture, &[G::Gfx, G::View, G::Traffic, G::Weather], &[G::Gfx, G::Perf]),
+            Record => stage(K::Record, P::Output, Role::Own, &[G::Gfx, G::View, G::Sound], &[G::Gfx, G::Perf]),
         }
     }
 }
@@ -86,7 +88,7 @@ impl frame_stages::Host<OffscreenStage> for Step<'_, '_> {
         Ok(Flow::Go)
     }
 
-    fn profile(&mut self) -> &mut std::collections::BTreeMap<&'static str, f64> {
+    fn profile(&mut self) -> &mut ProfileTimes {
         &mut self.run.profile
     }
 }

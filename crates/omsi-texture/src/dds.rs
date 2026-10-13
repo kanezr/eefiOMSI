@@ -1,7 +1,11 @@
-//! DDS decoder covering what D3DX accepts in the original: uncompressed formats with
+//! DDS decoder covering what D3DX accepts in the original - uncompressed formats with
 //! arbitrary channel masks (A8R8G8B8, X8R8G8B8, R5G6B5, A1R5G5B5, A4R4G4B4, R8G8B8, A8, L8,
-//! A8L8) and the BC1/BC2/BC3 (DXT1/3/5) block formats. Only the top mip level is used.
+//! A8L8) and the BC1/BC2/BC3 (DXT1/3/5) block formats - and what newer tools write: the
+//! DX10 header's DXGI formats (BC4-BC7, 10- and 16-bit and float channels, packed 16-bit
+//! colours), the ATI1/ATI2 and BC4U/BC5U fourccs, RXGB normal maps, Direct3D's float
+//! formats. Only the top mip level is used.
 
+use crate::blocks::{self, Block};
 use crate::Image;
 
 fn u32_at(b: &[u8], o: usize) -> u32 {
@@ -30,12 +34,17 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
     // a cube map (six faces of the same size, one after the other): OMSI's reflections are
     // sphere maps, so the faces are turned into one (the first face alone had been taken)
     let caps2 = u32_at(bytes, 112);
-    if caps2 & 0x200 != 0 && caps2 & 0xFC00 == 0xFC00 && data.len() >= 6 {
+    // (a DX10 header says it with its misc flag, TEXTURECUBE, and six array slices)
+    let dx10_cube = fourcc == b"DX10" && bytes.len() >= 148 && u32_at(bytes, 136) & 4 != 0 && u32_at(bytes, 140) <= 1;
+    if (caps2 & 0x200 != 0 && caps2 & 0xFC00 == 0xFC00 || dx10_cube) && data.len() >= 6 {
         let face_len = data.len() / 6;
         let mut faces = Vec::with_capacity(6);
         for k in 0..6 {
             let mut one = bytes[..data_start].to_vec();
             one[112..116].copy_from_slice(&0u32.to_le_bytes());
+            if one.len() >= 148 && &one[84..88] == b"DX10" {
+                one[136..140].copy_from_slice(&0u32.to_le_bytes());
+            }
             one.extend_from_slice(&data[k * face_len..(k + 1) * face_len]);
             faces.push(decode(&one)?);
         }
@@ -59,11 +68,24 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
         if let Some(img) = dxgi.and_then(|f| dxgi_plain(f, data, width, height)) {
             return img;
         }
+        // the block formats of newer tools
+        let modern = match (fourcc, dxgi) {
+            (b"ATI1" | b"BC4U" | b"BC4S", _) | (_, Some(79..=81)) => Some(Block::Bc4),
+            (b"ATI2" | b"BC5U" | b"BC5S", _) | (_, Some(82..=84)) => Some(Block::Bc5),
+            (_, Some(94 | 95)) => Some(Block::Bc6Unsigned),
+            (_, Some(96)) => Some(Block::Bc6Signed),
+            (_, Some(97..=99)) => Some(Block::Bc7),
+            (b"ETC1", _) => Some(Block::Etc1),
+            _ => None,
+        };
+        if let Some(k) = modern {
+            return blocks::decode(k, data, width, height);
+        }
         // compressed
         let (block_bytes, kind) = match (fourcc, dxgi) {
             (b"DXT1", _) | (_, Some(70..=72)) => (8, 1),
             (b"DXT2" | b"DXT3", _) | (_, Some(73..=75)) => (16, 3),
-            (b"DXT4" | b"DXT5", _) | (_, Some(76..=78)) => (16, 5),
+            (b"DXT4" | b"DXT5" | b"RXGB", _) | (_, Some(76..=78)) => (16, 5),
             (_, Some(f)) => return Err(format!("unsupported DXGI format {f}")),
             (other, None) => return Err(format!("unsupported fourcc {:?}", String::from_utf8_lossy(other))),
         };
@@ -89,6 +111,13 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
                 }
             }
         }
+        // RXGB (Doom 3's normal maps): DXT5 with the red channel in the alpha
+        if fourcc == b"RXGB" {
+            for p in rgba.chunks_exact_mut(4) {
+                p[0] = p[3];
+                p[3] = 255;
+            }
+        }
         if premultiplied {
             for p in rgba.chunks_exact_mut(4) {
                 if p[3] > 0 && p[3] < 255 {
@@ -98,7 +127,7 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
                 }
             }
         }
-        let has_alpha = kind != 1 || rgba.chunks_exact(4).any(|p| p[3] < 255);
+        let has_alpha = fourcc != b"RXGB" && (kind != 1 || rgba.chunks_exact(4).any(|p| p[3] < 255));
         return Ok(Image { width: width as u32, height: height as u32, rgba, has_alpha });
     }
     // uncompressed: masks describe the channels (luminance: r mask only, flag 0x20000)
@@ -149,32 +178,83 @@ pub fn decode(bytes: &[u8]) -> Result<Image, String> {
 
 /// The uncompressed DXGI formats of a DX10 header: R8G8B8A8 (28, 29 sRGB), B8G8R8A8 (87,
 /// 91), B8G8R8X8 (88, 93), R16G16B16A16 float (10) and unorm (11), R32G32B32A32 float (2),
-/// R8 (61), A8 (65).
+/// R32G32B32 float (6), R10G10B10A2 (24), R11G11B10 float (26), R16G16 float (34) and
+/// unorm (35), R32 float (41), R8G8 (49), R16 float (54) and unorm (56), R8 (61), A8 (65),
+/// R9G9B9E5 (67), B5G6R5 (85), B5G5R5A1 (86), B4G4R4A4 (115).
 fn dxgi_plain(format: u32, data: &[u8], width: usize, height: usize) -> Option<Result<Image, String>> {
     let wide = match format {
         10 => Some(113),
         11 => Some(36),
         2 => Some(116),
+        6 => Some(1006),
+        34 => Some(112),
+        35 => Some(34),
+        41 => Some(114),
+        54 => Some(111),
+        56 => Some(1056),
         _ => None,
     };
     if let Some(d3d) = wide {
         return wide_rgba(d3d, data, width, height);
     }
     let bytes_pp = match format {
-        28 | 29 | 87 | 88 | 91 | 93 => 4,
+        28 | 29 | 87 | 88 | 91 | 93 | 24 | 26 | 67 => 4,
+        49 | 85 | 86 | 115 => 2,
         61 | 65 => 1,
         _ => return None,
     };
     if data.len() < width * height * bytes_pp {
         return Some(Err("truncated pixel data".into()));
     }
+    let unit = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+    let bits = |v: u32, shift: u32, n: u32| (((v >> shift) & ((1 << n) - 1)) * 255 / ((1 << n) - 1)) as u8;
     let mut rgba = vec![0u8; width * height * 4];
     for (i, px) in data.chunks_exact(bytes_pp).take(width * height).enumerate() {
         let p = &mut rgba[i * 4..i * 4 + 4];
+        let v32 = || u32::from_le_bytes([px[0], px[1], px[2], px[3]]);
+        let v16 = || u16::from_le_bytes([px[0], px[1]]) as u32;
         match format {
             28 | 29 => p.copy_from_slice(px),
             87 | 91 => p.copy_from_slice(&[px[2], px[1], px[0], px[3]]),
             88 | 93 => p.copy_from_slice(&[px[2], px[1], px[0], 255]),
+            24 => {
+                let v = v32();
+                p.copy_from_slice(&[bits(v, 0, 10), bits(v, 10, 10), bits(v, 20, 10), bits(v, 30, 2)]);
+            }
+            26 => {
+                let v = v32();
+                // 6-bit mantissa, 5-bit exponent (r, g); 5 and 5 (b): small floats
+                let f = |m: u32, mb: u32, e: u32| -> f32 {
+                    if e == 0 {
+                        m as f32 / (1 << mb) as f32 * 2f32.powi(-14)
+                    } else {
+                        (1.0 + m as f32 / (1 << mb) as f32) * 2f32.powi(e as i32 - 15)
+                    }
+                };
+                let r = f(v & 63, 6, (v >> 6) & 31);
+                let g = f((v >> 11) & 63, 6, (v >> 17) & 31);
+                let b = f((v >> 22) & 31, 5, (v >> 27) & 31);
+                p.copy_from_slice(&[unit(r), unit(g), unit(b), 255]);
+            }
+            67 => {
+                let v = v32();
+                let scale = 2f32.powi(((v >> 27) & 31) as i32 - 15 - 9);
+                let c = |s: u32| unit(((v >> s) & 511) as f32 * scale);
+                p.copy_from_slice(&[c(0), c(9), c(18), 255]);
+            }
+            49 => p.copy_from_slice(&[px[0], px[1], 0, 255]),
+            85 => {
+                let v = v16();
+                p.copy_from_slice(&[bits(v, 11, 5), bits(v, 5, 6), bits(v, 0, 5), 255]);
+            }
+            86 => {
+                let v = v16();
+                p.copy_from_slice(&[bits(v, 10, 5), bits(v, 5, 5), bits(v, 0, 5), bits(v, 15, 1)]);
+            }
+            115 => {
+                let v = v16();
+                p.copy_from_slice(&[bits(v, 8, 4), bits(v, 4, 4), bits(v, 0, 4), bits(v, 12, 4)]);
+            }
             61 => p.copy_from_slice(&[px[0], px[0], px[0], 255]),
             _ => p.copy_from_slice(&[255, 255, 255, px[0]]),
         }
@@ -183,25 +263,41 @@ fn dxgi_plain(format: u32, data: &[u8], width: usize, height: usize) -> Option<R
     Some(Ok(Image { width: width as u32, height: height as u32, rgba, has_alpha }))
 }
 
-/// `D3DFMT_A16B16G16R16` (36), `D3DFMT_A16B16G16R16F` (113) and `D3DFMT_A32B32G32R32F`
-/// (116): four channels in R, G, B, A order, tone-clamped to 0..1.
+/// Direct3D's wide formats, in R, G, B, A order and clamped to 0..1: `D3DFMT_A16B16G16R16`
+/// (36), `A16B16G16R16F` (113), `A32B32G32R32F` (116), `G16R16` (34), `R16F` (111),
+/// `G16R16F` (112), `R32F` (114), `G32R32F` (115); and two of DXGI's that Direct3D 9 lacks
+/// (here 1006, R32G32B32 float, and 1056, R16 unorm). A single channel shows grey.
 fn wide_rgba(format: u32, data: &[u8], width: usize, height: usize) -> Option<Result<Image, String>> {
-    let (bytes_pp, read): (usize, fn(&[u8]) -> f32) = match format {
-        36 => (8, |b| u16::from_le_bytes([b[0], b[1]]) as f32 / 65535.0),
-        113 => (8, |b| half_to_f32(u16::from_le_bytes([b[0], b[1]]))),
-        116 => (16, |b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+    let unorm16: fn(&[u8]) -> f32 = |b| u16::from_le_bytes([b[0], b[1]]) as f32 / 65535.0;
+    let half: fn(&[u8]) -> f32 = |b| half_to_f32(u16::from_le_bytes([b[0], b[1]]));
+    let float: fn(&[u8]) -> f32 = |b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+    let (channels, step, read) = match format {
+        36 => (4, 2, unorm16),
+        113 => (4, 2, half),
+        116 => (4, 4, float),
+        34 => (2, 2, unorm16),
+        111 => (1, 2, half),
+        112 => (2, 2, half),
+        114 => (1, 4, float),
+        115 => (2, 4, float),
+        1006 => (3, 4, float),
+        1056 => (1, 2, unorm16),
         _ => return None,
     };
-    let step = bytes_pp / 4;
+    let bytes_pp = channels * step;
     if data.len() < width * height * bytes_pp {
         return Some(Err("truncated pixel data".into()));
     }
     let mut rgba = vec![0u8; width * height * 4];
     for (i, px) in data.chunks_exact(bytes_pp).take(width * height).enumerate() {
-        for c in 0..4 {
-            let v = read(&px[c * step..]);
-            rgba[i * 4 + c] = (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-        }
+        let c = |k: usize| (read(&px[k * step..]).clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        let out = match channels {
+            1 => [c(0), c(0), c(0), 255],
+            2 => [c(0), c(1), 0, 255],
+            3 => [c(0), c(1), c(2), 255],
+            _ => [c(0), c(1), c(2), c(3)],
+        };
+        rgba[i * 4..i * 4 + 4].copy_from_slice(&out);
     }
     let has_alpha = rgba.chunks_exact(4).any(|p| p[3] < 255);
     Some(Ok(Image { width: width as u32, height: height as u32, rgba, has_alpha }))

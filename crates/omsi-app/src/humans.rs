@@ -9,7 +9,7 @@ use crate::ambience;
 use crate::scene::World;
 use crate::traffic::Traffic;
 use glam::DVec3;
-use omsi_render::{Camera, Renderer, Scene};
+use omsi_render::Camera;
 use omsi_sim::human::HumanType;
 use omsi_sim::people::pax::{StopPlan, TripPlan};
 use omsi_sim::people::{DutyTrip, PeopleSim};
@@ -35,8 +35,9 @@ pub use omsi_sim::people::VoiceLine;
 
 /// The people as the game drives them. Everything of the simulation reads through it
 /// (`Deref` to `PeopleSim`). Their pictures are the view sync's (`PeopleView`, in
-/// `view_sync::SimView`): every call that makes or removes people takes it and shows them
-/// before it returns.
+/// `view_sync::SimView`): the calls that make or remove people write down what the
+/// pictures have to follow (`PeopleSim::bodies`), and the caller shows it right after the
+/// call with `view_sync::apply_people`.
 pub struct Humans {
     pub sim: PeopleSim,
 }
@@ -72,58 +73,42 @@ impl Humans {
         Humans { sim }
     }
 
-    /// Advance everybody (see `PeopleSim::tick_inner`), and show the renderer what the step
-    /// did. `bus`: the player's vehicle; `traffic`: the timetable buses, the traffic lights
-    /// and the cars pedestrians wait for. Returns true when a passenger took the printed
-    /// ticket (the caller resets `GivenTicket`).
-    #[allow(clippy::too_many_arguments)]
-    pub fn tick(
-        &mut self,
-        view: &mut PeopleView,
-        dt: f32,
-        world: &World,
-        bus: Option<&VehicleInstance>,
-        traffic: Option<&Traffic>,
-        renderer: &Renderer,
-        scene: &mut Scene,
-    ) -> bool {
-        let started = std::time::Instant::now();
+    /// Advance everybody (see `PeopleSim::tick_inner`). `bus`: the player's bus as read this frame;
+    /// `traffic`: the timetable buses, the traffic lights and the cars pedestrians wait for.
+    /// Returns true when a passenger took the printed ticket (the caller resets
+    /// `GivenTicket`). What the step did is shown and the step closed by
+    /// `steps::tick_humans` (`view_sync::apply_people`, then [`Humans::tick_done`]).
+    pub fn tick(&mut self, dt: f32, world: &World, bus: Option<&omsi_sim::people::PlayerBusView>, traffic: Option<&Traffic>) -> bool {
         self.sim.tick_stages.clear();
-        let took = self.sim.tick_inner(dt, world, bus, traffic.map(|t| &t.sim));
-        // what the step did, drawn (people who came and went, coins on the desk)
-        let mark = std::time::Instant::now();
-        self.show_bodies(view, world, renderer, scene);
-        self.sim.tick_stages.push(("bodies", mark.elapsed().as_secs_f64() * 1000.0));
+        self.sim.tick_inner(dt, &*world.data(), bus, traffic.map(|t| &t.sim))
+    }
+
+    /// The end of a step begun `started` with [`Humans::tick`], whose people who came and
+    /// went were shown in `bodies_ms` (see `PeopleSim::tick_done`).
+    pub fn tick_done(&mut self, dt: f32, world: &World, started: std::time::Instant, bodies_ms: f64) {
+        self.sim.tick_stages.push(("bodies", bodies_ms));
         let ms = started.elapsed().as_secs_f64() * 1000.0;
-        self.sim.tick_done(dt, world, ms);
-        took
+        self.sim.tick_done(dt, &*world.data(), ms);
     }
 
     /// Put people at the bus stops near `center` (see `PeopleSim::populate`).
-    pub fn populate(&mut self, view: &mut PeopleView, world: &World, renderer: &Renderer, scene: &mut Scene, center: DVec3) {
-        self.sim.populate(world, center);
-        self.show_bodies(view, world, renderer, scene);
+    pub fn populate(&mut self, world: &World, center: DVec3) {
+        self.sim.populate(&*world.data(), center);
     }
 
     /// Put avatar `key` where `cmd` says (see `PeopleSim::avatar`).
-    #[allow(clippy::too_many_arguments)]
-    pub fn avatar(&mut self, view: &mut PeopleView, key: u32, world: &World, renderer: &Renderer, scene: &mut Scene, cmd: AvatarCmd, kind: u64) {
-        self.sim.avatar(key, world, cmd, kind);
-        self.show_bodies(view, world, renderer, scene);
+    pub fn avatar(&mut self, key: u32, world: &World, cmd: AvatarCmd, kind: u64) {
+        self.sim.avatar(key, &*world.data(), cmd, kind);
     }
 
     /// One of the host's people appears here (client; see `PeopleSim::mirror_add`).
-    #[allow(clippy::too_many_arguments)]
-    pub fn mirror_add(&mut self, view: &mut PeopleView, world: &World, renderer: &Renderer, scene: &mut Scene, id: u32, ty: usize, pose: &MirrorPose) -> bool {
-        let added = self.sim.mirror_add(world, id, ty, pose);
-        self.show_bodies(view, world, renderer, scene);
-        added
+    pub fn mirror_add(&mut self, world: &World, id: u32, ty: usize, pose: &MirrorPose) -> bool {
+        self.sim.mirror_add(&*world.data(), id, ty, pose)
     }
 
     /// `--riders n` (see `PeopleSim::seed_riders`).
-    pub fn seed_riders(&mut self, view: &mut PeopleView, n: usize, bus: &VehicleInstance, world: &World, renderer: &Renderer, scene: &mut Scene) {
-        self.sim.seed_riders(n, bus, world);
-        self.show_bodies(view, world, renderer, scene);
+    pub fn seed_riders(&mut self, n: usize, bus: &VehicleInstance, world: &World) {
+        self.sim.seed_riders(n, bus, &*world.data());
     }
 
     /// OMSI's `change_take`: the driver takes back the coins lying on the change tray.
@@ -135,7 +120,7 @@ impl Humans {
 
     /// Bus `bus` is gone (the player removed it; see `PeopleSim::evict`).
     pub fn evict(&mut self, bus: BusId, world: &World) {
-        self.sim.evict(bus, world);
+        self.sim.evict(bus, &*world.data());
     }
 
     /// The stop the player's duty is due at next (see `PeopleSim::set_player_next_stop`).

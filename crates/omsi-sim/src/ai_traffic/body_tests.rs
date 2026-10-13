@@ -47,6 +47,37 @@ pub(super) fn car(t: &TrafficSim, id: u64) -> &AiCar {
     t.cars.iter().find(|c| c.id == id).expect("the car is there")
 }
 
+#[test]
+fn traffic_pedals_drive_script_engine_load_and_braking() {
+    let mut f = Fixture::new();
+    let scripted = crate::timetable_run::tests::script_test_vehicle(
+        "{frame}\n(L.L.Throttle) (S.L.engine_throttle_injection)\n(L.L.Brake) (S.L.brake_seen)\n{end}\n",
+        "Throttle\nBrake\nengine_throttle_injection\nbrake_seen\n",
+        "",
+    );
+    Arc::get_mut(&mut f.ty).unwrap().program = scripted.ty.program.clone();
+    let lane = LaneBuilder::arc(DVec3::ZERO, 0.0, 1000.0, 0.0, 0.0, LaneKind::Street, 3.0);
+    let mut t = traffic(&f, Network { lanes: vec![lane], ..Default::default() });
+    let id = add_car(&mut t, &f, 0, 10.0, 42, Some(0.0));
+    for _ in 0..250 {
+        t.advance(0.02, None);
+    }
+    let c = car(&t, id);
+    assert!(c.state.speed > 0.5, "speed {} cmd {} held {} why {:?}", c.state.speed, c.state.cmd, c.state.held, c.why);
+    assert!(c.vehicle.var("engine_throttle_injection").unwrap() > 0.0);
+    assert_eq!(c.vehicle.var("brake_seen"), Some(0.0));
+
+    t.net.lanes[0].speed_limit_kmh = 3.0;
+    for _ in 0..10 {
+        t.advance(0.02, None);
+    }
+    let c = car(&t, id);
+    assert!(c.state.cmd < 0.0);
+    assert_eq!(c.vehicle.var("engine_throttle_injection"), Some(0.0));
+    assert!(c.vehicle.var("brake_seen").unwrap() > 0.0);
+    assert!((0.0..=1.0).contains(&c.vehicle.physics.controls.brake));
+}
+
 /// 120 m north, a right turn of radius `r` over 90°, 200 m east.
 pub(super) fn turn(r: f64) -> Network {
     let a = LaneBuilder::arc(DVec3::ZERO, 0.0, 120.0, 0.0, 0.0, LaneKind::Street, 3.0);

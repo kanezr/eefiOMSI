@@ -1,4 +1,4 @@
-//! Updates from the project's GitHub releases (github.com/kanezr/eefiOMSI).
+//! Updates from the project's GitHub releases (github.com/openOMSI-org/openOMSI).
 //!
 //! Every push to main publishes a release `v<MAJOR.MINOR.COMMIT>` with one archive per
 //! platform (see .github/workflows/release.yml). The launcher asks the GitHub API for the
@@ -43,9 +43,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// The project on GitHub.
-pub const REPO: &str = "kanezr/eefiOMSI";
-pub const REPO_URL: &str = "https://github.com/kanezr/eefiOMSI";
-const LATEST_API: &str = "https://api.github.com/repos/kanezr/eefiOMSI/releases/latest";
+pub const REPO: &str = "kanezr/eefiomsi";
+pub const REPO_URL: &str = "https://github.com/kanezr/eefiomsi";
+const LATEST_API: &str = "https://api.github.com/repos/kanezr/eefiomsi/releases/latest";
+const RELEASES_API: &str = "https://api.github.com/repos/kanezr/eefiomsi/releases?per_page=50";
+pub const FIRST_SELF_TESTED: &str = "0.2.32";
 
 /// A build the App Store delivers (every iPhone and iPad build, and a Mac build made with
 /// `OPENOMSI_STORE=1`): the store installs its updates, and a store app may not fetch and run
@@ -236,11 +238,15 @@ pub fn is_test_build(version: &str) -> bool {
 
 /// Whether `candidate` is a newer version than `current`.
 pub fn newer(candidate: &str, current: &str) -> bool {
-    let (mut a, mut b) = (version_parts(candidate), version_parts(current));
+    !version_parts(candidate).is_empty() && compare(candidate, current).is_gt()
+}
+
+fn compare(a: &str, b: &str) -> std::cmp::Ordering {
+    let (mut a, mut b) = (version_parts(a), version_parts(b));
     let n = a.len().max(b.len());
     a.resize(n, 0);
     b.resize(n, 0);
-    !a.is_empty() && a > b
+    a.cmp(&b)
 }
 
 /// The release file for this platform, as `release.yml` names it.
@@ -394,12 +400,19 @@ fn parse_release(v: &serde_json::Value, current: &str) -> anyhow::Result<Option<
         log::info!("update check: {version} failed on this computer before and is not offered again");
         return Ok(None);
     }
-    let Some(want) = asset_name(&version) else { return Ok(None) };
-    let Some(a) = v["assets"].as_array().and_then(|a| a.iter().find(|a| a["name"].as_str() == Some(want.as_str()))) else {
+    let found = release_of(v)?;
+    if let (None, Some(want)) = (&found, asset_name(&version)) {
         // (the release is still being built: its files come a few minutes after the tag)
         log::info!("update check: {version} has no {want} (yet)");
-        return Ok(None);
-    };
+    }
+    Ok(found)
+}
+
+fn release_of(v: &serde_json::Value) -> anyhow::Result<Option<Release>> {
+    let tag = v["tag_name"].as_str().ok_or_else(|| anyhow::anyhow!("the release has no tag"))?;
+    let version = tag.trim_start_matches(['v', 'V']).to_string();
+    let Some(want) = asset_name(&version) else { return Ok(None) };
+    let Some(a) = v["assets"].as_array().and_then(|a| a.iter().find(|a| a["name"].as_str() == Some(want.as_str()))) else { return Ok(None) };
     Ok(Some(Release {
         version,
         page: v["html_url"].as_str().map(str::to_string).unwrap_or_else(|| format!("{REPO_URL}/releases/tag/{tag}")),
@@ -409,6 +422,38 @@ fn parse_release(v: &serde_json::Value, current: &str) -> anyhow::Result<Option<
         size: a["size"].as_u64().unwrap_or(0),
         sha256: a["digest"].as_str().and_then(|d| d.strip_prefix("sha256:")).map(|h| h.to_ascii_lowercase()),
     }))
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Listed {
+    pub release: Release,
+    pub published: String,
+}
+
+pub fn releases() -> anyhow::Result<Vec<Listed>> {
+    if STORE_BUILD {
+        return Ok(Vec::new());
+    }
+    let text = fetch_text(RELEASES_API)?;
+    Ok(releases_of(&serde_json::from_str(&text)?))
+}
+
+fn releases_of(v: &serde_json::Value) -> Vec<Listed> {
+    let mut list: Vec<Listed> = v
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| r["draft"].as_bool() != Some(true) && r["prerelease"].as_bool() != Some(true))
+        .filter_map(|r| {
+            let release = release_of(r).ok().flatten()?;
+            let published = r["published_at"].as_str().and_then(|d| d.get(..10)).unwrap_or("").to_string();
+            Some(Listed { release, published })
+        })
+        .filter(|l| !is_test_build(&l.release.version) && !newer(FIRST_SELF_TESTED, &l.release.version))
+        .collect();
+    list.sort_by(|a, b| compare(&b.release.version, &a.release.version));
+    list.dedup_by(|a, b| compare(&a.release.version, &b.release.version).is_eq());
+    list
 }
 
 /// Where downloads wait (the data folder: the program's own folder is only written when the
@@ -461,8 +506,11 @@ fn download(r: &Release, to: &Path, status: &Mutex<Status>) -> anyhow::Result<()
     if downloaded(r) {
         return Ok(());
     }
-    let _ = std::fs::remove_file(checked_note(to));
     let part = to.with_extension("part");
+    if std::fs::metadata(&part).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age < std::time::Duration::from_secs(15)) {
+        anyhow::bail!("another download of openOMSI {} is under way; try again in a moment", r.version);
+    }
+    let _ = std::fs::remove_file(checked_note(to));
     let mut hasher = sha2::Sha256::new();
     let mut out = std::fs::File::create(&part)?;
     let mut buf = vec![0u8; 256 * 1024];
@@ -671,7 +719,15 @@ pub fn is_dev_build(exe: &Path) -> bool {
     let text = exe.to_string_lossy().to_ascii_lowercase();
     let parts: Vec<&str> = text.split(['/', '\\']).filter(|p| !p.is_empty()).collect();
     let profile = |s: &str| s == "release" || s == "debug";
-    parts.windows(2).any(|w| w[0] == "target" && profile(w[1])) || parts.windows(3).any(|w| w[0] == "target" && profile(w[2]))
+    parts.windows(2).any(|w| w[0] == "target" && profile(w[1])) || parts.windows(3).any(|w| w[0] == "target" && profile(w[2])) || in_cargo_target_dir(exe)
+}
+
+/// Whether `exe` was built into a Cargo target directory of any name (`CARGO_TARGET_DIR`):
+/// Cargo marks its root with a `CACHEDIR.TAG`, one or two folders above the program. A build
+/// in a folder not called `target` was taken for an installed game, so the start guard
+/// "updated" it from the releases and opened its dialog over the desktop.
+fn in_cargo_target_dir(exe: &Path) -> bool {
+    exe.ancestors().skip(2).take(2).any(|d| std::fs::read_to_string(d.join("CACHEDIR.TAG")).is_ok_and(|t| t.contains("cargo")))
 }
 
 const STAGING: &str = ".openomsi-update";
@@ -874,11 +930,10 @@ fn remove_any(p: &Path) {
 
 /// Start the new launcher (after `install_archive`): the program file at the same place -
 /// on macOS inside the bundle, which makes it the app with its icon - with this process's
-/// environment. (A script driving this launcher - `OMSI_LAUNCHER_INPUT` - is not handed on:
-/// it was meant for this one.)
+/// environment.
 pub fn relaunch(place: &Place) -> anyhow::Result<()> {
     let mut cmd = std::process::Command::new(&place.exe);
-    cmd.current_dir(&place.dir).env_remove("OMSI_LAUNCHER_INPUT");
+    cmd.current_dir(&place.dir);
     cmd.spawn()?;
     Ok(())
 }
@@ -1006,6 +1061,51 @@ mod tests {
         assert!(is_test_build("0.1.1313-pr1192") && !is_test_build("0.1.1313"));
     }
 
+    #[test]
+    fn the_releases_to_choose_from_newest_first() {
+        let release = |tag: &str, date: &str| {
+            let version = tag.trim_start_matches('v');
+            serde_json::json!({
+                "tag_name": tag, "published_at": date, "html_url": format!("https://x/{tag}"),
+                "assets": [{"name": asset_name(version).unwrap(), "browser_download_url": format!("https://x/{tag}.zip"), "size": 7}]
+            })
+        };
+        let mut draft = release("v0.2.40", "2026-10-13T01:00:00Z");
+        draft["draft"] = serde_json::json!(true);
+        let mut pre = release("v0.2.39", "2026-10-13T00:00:00Z");
+        pre["prerelease"] = serde_json::json!(true);
+        let mut bare = release("v0.2.35", "2026-10-11T23:00:00Z");
+        bare["assets"] = serde_json::json!([]);
+        let v = serde_json::json!([
+            release("v0.2.33", "2026-10-11T20:15:13Z"),
+            release("v0.2.38", "2026-10-12T13:55:06Z"),
+            draft,
+            pre,
+            bare,
+            release("v0.2.31", "2026-10-11T19:00:00Z"),
+            release("v0.2.10", "2026-10-10T19:00:00Z"),
+            release("v0.2.32", "2026-10-11T20:00:00Z"),
+            release("v0.2.37", "2026-10-12T04:12:02Z"),
+            release("v0.2.37", "2026-10-12T04:12:02Z"),
+            {"tag_name": "v0.2.36-pr12", "assets": []},
+            {"name": "no tag"}
+        ]);
+        let list = releases_of(&v);
+        let versions: Vec<&str> = list.iter().map(|l| l.release.version.as_str()).collect();
+        assert_eq!(versions, ["0.2.38", "0.2.37", "0.2.33", "0.2.32"]);
+        assert_eq!(list[0].published, "2026-10-12");
+        assert_eq!((list[0].release.asset_url.as_str(), list[0].release.size), ("https://x/v0.2.38.zip", 7));
+        assert!(releases_of(&serde_json::json!({"message": "rate limited"})).is_empty());
+    }
+
+    #[test]
+    fn versions_are_ordered_by_number() {
+        assert!(compare("0.2.10", "0.2.9").is_gt());
+        assert!(compare("v0.2.32", "0.2.32").is_eq());
+        assert!(compare("0.2", "0.2.0").is_eq());
+        assert!(compare("0.1.800", "0.2.0").is_lt());
+    }
+
     /// A server on this computer that cuts the first answer off half way (as a connection
     /// that times out does) and then answers range requests: the download goes on where it
     /// stopped, the file comes out whole and its SHA-256 checks.
@@ -1051,7 +1151,7 @@ mod tests {
             version: "9.9.9".into(),
             page: String::new(),
             notes: String::new(),
-            asset_name: format!("openOMSI-test-{}.zip", std::process::id()),
+            asset_name: format!("eefi-test-{}.zip", std::process::id()),
             asset_url: format!("http://127.0.0.1:{port}/file.zip"),
             size: data.len() as u64,
             sha256: Some(sha),
@@ -1083,6 +1183,11 @@ mod tests {
         assert!(is_dev_build(Path::new("C:\\src\\target\\x86_64-pc-windows-msvc\\release\\openomsi.exe")));
         assert!(!is_dev_build(Path::new("/Applications/openOMSI.app/Contents/MacOS/openomsi")));
         assert!(!is_dev_build(Path::new("/home/me/Games/openOMSI/openomsi")));
+        let dir = std::env::temp_dir().join(format!("openomsi-dev-build-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("builds/release")).unwrap();
+        std::fs::write(dir.join("builds/CACHEDIR.TAG"), "Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by cargo.\n").unwrap();
+        assert!(is_dev_build(&dir.join("builds/release/openomsi")));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// The whole swap on a folder: the program files replaced, a file only the old version

@@ -39,11 +39,17 @@ Plain cargo works too: `cargo build --release -p omsi-app` builds `target/releas
 
 ## The programs
 
-* `openomsi` (`crates/omsi-app`) - the game. Started with no arguments it opens the launcher
-  window; with arguments it starts a session directly (see [USER_GUIDE.md](USER_GUIDE.md));
-  with `--server server.cfg` it is the dedicated server.
+* `openomsi` (`crates/omsi-app`) - the game. Started with no arguments it opens the desktop
+  launcher beside it, `openomsi-launcher-app` (`launcher/`, see its README), and says so
+  where that is missing; with arguments it starts a session directly (see
+  [USER_GUIDE.md](USER_GUIDE.md)); with `--server server.cfg` it is the dedicated server.
+* `openomsi-launcher-app` (`launcher/src-tauri`, a workspace of its own) - the launcher. A
+  development build finds it when it is built into the same target folder as the game:
+  `CARGO_TARGET_DIR=target cargo build --manifest-path launcher/src-tauri/Cargo.toml` puts it
+  into `target/debug` beside `openomsi` (`--release` for `target/release`).
 * `openomsi-launcher` (`crates/omsi-launcher-core`) - the launcher's commands for a terminal
-  (`openomsi-launcher --cli maps`, `--cli install '{"path":"mod.zip"}'` …).
+  (`openomsi-launcher --cli maps`, `--cli install '{"path":"mod.zip"}'` …); without `--cli`
+  it starts the game beside it with the same arguments.
 * `omsi-check` (`tools/omsi-check`) - loads every content file of an installation and reports
   what failed: `cargo run --release -p omsi-check -- "/path/to/OMSI 2"`.
 

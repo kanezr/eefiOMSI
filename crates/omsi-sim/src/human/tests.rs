@@ -66,6 +66,8 @@ fn rig_is_sane() {
 fn standing_is_rest_like_and_finite() {
     let r = rig();
     let mut p = Pose::new(7);
+    // (the arms hanging: the other ways of standing are tried below)
+    (p.idle_from, p.idle_to) = (Idle::Hang, Idle::Hang);
     let input = PoseInput::default();
     for _ in 0..200 {
         p.advance(&r, &input, 1.0 / 60.0);
@@ -516,4 +518,63 @@ fn feet_come_off_the_bus_floor() {
         "a foot stayed {worst:.2} m up a second after stepping off ({})",
         p.describe()
     );
+}
+
+/// A person standing whose heading turns at once by 90 degrees (the sim turns them round to
+/// a door or a seat): the hips stay over the feet while the feet step round - turned at
+/// once over feet that stayed, the legs ran diagonally and the person seemed to slide.
+#[test]
+fn a_sudden_turn_keeps_the_legs_under_the_hips() {
+    let r = rig();
+    let mut p = Pose::new(5);
+    let stand = PoseInput::default();
+    for _ in 0..120 {
+        p.advance(&r, &stand, 1.0 / 60.0);
+    }
+    let turned = PoseInput { heading: 90.0, ..PoseInput::default() };
+    let mut worst = 0.0f32;
+    for _ in 0..90 {
+        p.advance(&r, &turned, 1.0 / 60.0);
+        let posed = p.bones(&r);
+        let hips = posed.bones[HIP].transform_vector3(Vec3::Y).truncate().normalize();
+        for side in 0..2 {
+            let foot = posed.bones[FOOT[side]].transform_vector3(Vec3::Y).truncate().normalize();
+            worst = worst.max(hips.dot(foot).clamp(-1.0, 1.0).acos().to_degrees());
+        }
+    }
+    assert!(worst < 50.0, "a foot {worst:.0} degrees off the hips' way");
+}
+
+/// Every way of standing gives a finite pose with the hands where that way puts them: in
+/// front for clasped hands, the crossed arms and the phone, behind for the hands behind
+/// the back, out at the side for a hand on the hip - and the feet stay on the floor.
+#[test]
+fn every_way_of_standing_puts_the_hands_where_it_should() {
+    let r = rig();
+    for (way, check) in [
+        (Idle::Clasped, (|w: Vec3, _s: f32| w.y > 0.08) as fn(Vec3, f32) -> bool),
+        (Idle::Behind, |w, _| w.y < -0.05),
+        (Idle::Crossed, |w, _| w.y > 0.1 && w.z > 1.1),
+        (Idle::Phone, |w, _| w.y > 0.1 && w.z > 1.0),
+    ] {
+        let mut p = Pose::new(3);
+        (p.idle_from, p.idle_to, p.idle_t) = (way, way, 1e9);
+        for _ in 0..120 {
+            p.advance(&r, &PoseInput::default(), 1.0 / 60.0);
+        }
+        let posed = p.bones(&r);
+        assert!(posed.ok && posed.bones.iter().all(|b| b.is_finite()), "{way:?}");
+        for side in 0..2 {
+            assert!(check(posed.wrist[side], SIDE[side]), "{way:?}: wrist {side} at {:?}", posed.wrist[side]);
+            assert!(posed.sole[side].abs() < 0.02, "{way:?}: sole {}", posed.sole[side]);
+        }
+    }
+    let mut p = Pose::new(3);
+    (p.idle_from, p.idle_to, p.idle_t) = (Idle::HandOnHip, Idle::HandOnHip, 1e9);
+    for _ in 0..120 {
+        p.advance(&r, &PoseInput::default(), 1.0 / 60.0);
+    }
+    let posed = p.bones(&r);
+    let side = if p.style[2] > 0.0 { 1 } else { 0 };
+    assert!(posed.wrist[side].x * SIDE[side] > 0.2 && posed.wrist[side].z > 0.85, "hand on the hip at {:?}", posed.wrist[side]);
 }

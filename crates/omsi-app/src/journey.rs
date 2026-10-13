@@ -217,7 +217,7 @@ impl Journey {
             .map(|r| {
                 let (plan, real) = if r.first { (r.plan.1, r.left) } else { (r.plan.0, r.arrived) };
                 let [p, a, d] = times(plan, real);
-                [r.name.clone(), p, a, d, r.odo.map(|k| format!("{k:.1} km")).unwrap_or_default()]
+                [r.name.clone(), p, a, d, r.odo.map(|k| crate::units::Units::now().long_distance(k as f64, 1)).unwrap_or_default()]
             })
             .collect();
         let served = rows.iter().filter(|r| r.served()).count();
@@ -255,10 +255,6 @@ impl Journey {
     /// The summary of the last trip that ended.
     pub(crate) fn last_summary(&self) -> Option<TripSummary> {
         self.last.clone()
-    }
-
-    pub(crate) fn has_summary(&self) -> bool {
-        self.last.is_some()
     }
 
     /// The bus arrived at stop `at` (trip, stop) `late` s after its time (negative: early).
@@ -535,7 +531,7 @@ mod tests {
         j.odometer((0, 3), 1236.5);
         j.trip_ended(0, None);
         let s = j.take_summary().expect("a summary");
-        assert!(j.take_summary().is_none() && j.has_summary());
+        assert!(j.take_summary().is_none() && j.last_summary().is_some());
         assert_eq!(s.rows.len(), 4);
         assert_eq!(s.rows[0], ["Metro Mlociny".to_string(), "08:00:00".into(), "08:00:57".into(), "+00:00:57".into(), "1234.0 km".into()]);
         assert_eq!(s.rows[2][2], "", "passed by");

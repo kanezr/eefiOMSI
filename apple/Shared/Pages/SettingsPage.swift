@@ -259,7 +259,6 @@ struct SettingsPage: View {
             if !languages.isEmpty {
                 SettingSelect(label: "Language", key: "language", options: languages)
             }
-            LauncherChoice()
             if !phone {
                 SettingToggle(label: "The launcher rests while a game runs", key: "launcher_rest", fallback: true)
                 SettingToggle(label: "Discord Rich Presence", key: "discord_status", fallback: true)
@@ -268,6 +267,7 @@ struct SettingsPage: View {
             SettingSlider(label: "Interface opacity", key: "ui_opacity", range: 0.2 ... 1, step: 0.05, fallback: 0.85) { "\(Int($0 * 100))%" }
             if !phone { SettingToggle(label: "Name of the button under the mouse", key: "tooltips", fallback: true) }
             SettingToggle(label: "Frame rate in the corner", key: "show_fps")
+            SettingSelect(label: "Performance details", key: "perf_overlay", options: [("off", "Off"), ("compact", "Compact"), ("detailed", "Detailed")])
             SettingToggle(label: "Notes in the top-left corner", key: "notes", fallback: true)
             SettingToggle(label: "Chat in online games", key: "chat", fallback: true)
             SettingToggle(label: "Other players' names above their buses", key: "name_tags", fallback: true)
@@ -286,7 +286,6 @@ struct SettingsPage: View {
                 SettingToggle(label: "Install updates without asking", key: "update_auto")
                 SettingToggle(label: "Tell me about a new version during a session", key: "update_notify", fallback: true)
             }
-            SettingToggle(label: "Count me in the website's \"playing now\" (anonymous)", key: "presence", fallback: true)
             HStack {
                 Button("Export diagnostics") {
                     if let path = (try? JSONSerialization.jsonObject(with: Bridge.call("act", ["do": "diagnostics"]), options: [.fragmentsAllowed])) as? String {
@@ -298,24 +297,6 @@ struct SettingsPage: View {
                 Spacer()
             }
             Text("openOMSI \(store.version) (\(store.build))").font(.inter(12)).foregroundStyle(Theme.muted)
-        }
-    }
-}
-
-/// "Cross-Platform Launcher": the launcher the game draws, as on Windows, Linux and Android,
-/// in place of this one.
-struct LauncherChoice: View {
-    @Environment(LauncherStore.self) private var store
-
-    var body: some View {
-        LabeledRow("Cross-Platform Launcher", detail: String(localized: "The launcher of the other systems, drawn by the game, in place of this one")) {
-            Toggle("", isOn: Binding(get: { store.flag("cross_platform_launcher") }, set: { on in
-                store.set("cross_platform_launcher", on)
-                store.act("save_settings")
-                Platform.setCrossPlatform(on)
-            }))
-            .labelsHidden()
-            .toggleStyle(.launcher)
         }
     }
 }

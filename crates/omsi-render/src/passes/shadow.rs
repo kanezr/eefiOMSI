@@ -131,9 +131,12 @@ impl Renderer {
                     pass.draw(0..3, 0..1);
                     pass.set_bind_group(0, scene.shadow_bind_group.as_ref().unwrap(), &[]);
                 }
-                encode_batches(&mut pass, scene, &shadow_batches[2], |pipe| {
-                    &self.shadows.shadow_pipelines[4 + pipe as usize]
-                });
+                // Tree shadows in the near cascade (alpha-tested leaf cards): skip if disabled
+                if self.options.tree_shadows {
+                    encode_batches(&mut pass, scene, &shadow_batches[2], |pipe| {
+                        &self.shadows.shadow_pipelines[4 + pipe as usize]
+                    });
+                }
             } else {
                 let sz = self.options.shadow_size as f32;
                 pass.set_viewport(0.0, 0.0, sz, sz, 0.0, 1.0);

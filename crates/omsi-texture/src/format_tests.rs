@@ -471,3 +471,59 @@ fn files_are_read_by_content_not_by_name() {
     assert_eq!(px(&dec(&t, "x.png"), 0, 0), [3, 2, 1, 4]);
     assert_eq!(px(&dec(&t, "x.dds"), 0, 0), [3, 2, 1, 4]);
 }
+
+/// The picture formats beyond OMSI's: each read by content, even named as something else.
+#[test]
+fn modern_picture_formats_are_read_by_content() {
+    use image::{ImageFormat as F, RgbaImage};
+    let src = RgbaImage::from_fn(3, 2, |x, y| image::Rgba([x as u8 * 80, y as u8 * 100, 50, 255]));
+    for f in [F::WebP, F::Gif, F::Tiff, F::Qoi, F::Pnm, F::OpenExr, F::Ico, F::Png] {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        let dynimg = if matches!(f, F::Pnm) {
+            image::DynamicImage::ImageRgb8(image::DynamicImage::ImageRgba8(src.clone()).to_rgb8())
+        } else if matches!(f, F::OpenExr) {
+            image::DynamicImage::ImageRgba32F(image::DynamicImage::ImageRgba8(src.clone()).to_rgba32f())
+        } else {
+            image::DynamicImage::ImageRgba8(src.clone())
+        };
+        dynimg.write_to(&mut bytes, f).unwrap_or_else(|e| panic!("{f:?}: {e}"));
+        let img = crate::decode_bytes(bytes.get_ref(), std::path::Path::new("misnamed.bmp")).unwrap_or_else(|e| panic!("{f:?}: {e}"));
+        assert_eq!((img.width, img.height), (3, 2), "{f:?}");
+        // (GIF has a palette, EXR is linear floats: near enough)
+        let p = &img.rgba[(1 * 3 + 2) * 4..][..3];
+        assert!((p[0] as i32 - 160).abs() <= 3 && (p[1] as i32 - 100).abs() <= 3, "{f:?}: {p:?}");
+    }
+}
+
+/// A 16-bit PNG (photos and height maps of today's tools) comes in at 8 bits per channel.
+#[test]
+fn a_16_bit_png_is_read() {
+    let src = image::ImageBuffer::<image::Rgba<u16>, Vec<u16>>::from_fn(2, 2, |x, _| image::Rgba([x as u16 * 65535, 32768, 0, 65535]));
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba16(src).write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+    let img = crate::decode_bytes(bytes.get_ref(), std::path::Path::new("h.png")).unwrap();
+    assert_eq!(&img.rgba[4..8], &[255, 128, 0, 255]);
+}
+
+/// The DX10 header's BC7 and 10-bit formats.
+#[test]
+fn dx10_bc7_and_r10g10b10a2() {
+    let dds = |dxgi: u32, w: u32, h: u32, data: &[u8]| {
+        let mut b = vec![0u8; 148];
+        b[..4].copy_from_slice(b"DDS ");
+        b[12..16].copy_from_slice(&h.to_le_bytes());
+        b[16..20].copy_from_slice(&w.to_le_bytes());
+        b[80..84].copy_from_slice(&4u32.to_le_bytes());
+        b[84..88].copy_from_slice(b"DX10");
+        b[128..132].copy_from_slice(&dxgi.to_le_bytes());
+        b.extend_from_slice(data);
+        b
+    };
+    let img = crate::dds::decode(&dds(98, 4, 4, &[0u8; 16])).unwrap();
+    assert_eq!(img.width, 4);
+    // R10G10B10A2: r = 1023, g = 0, b = 512, a = 3
+    let v: u32 = 1023 | (512 << 20) | (3 << 30);
+    let img = crate::dds::decode(&dds(24, 1, 1, &v.to_le_bytes())).unwrap();
+    assert_eq!(img.rgba, [255, 0, 127, 255]);
+    assert!(crate::dds::decode(&dds(83, 4, 4, &[0u8; 16])).is_ok(), "BC5");
+}

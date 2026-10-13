@@ -213,6 +213,12 @@ pub struct HtmlTextureDef {
     pub width: i32,
     pub height: i32,
     pub path: String,
+    /// `lit`, the word on the line after the page's path: the page is a **surface** - shaded
+    /// by the world's light like every other material - rather than the display such a page
+    /// is by default, drawn unlit at its own brightness, which is what a bus's own panel is.
+    /// The slots that take their picture from this page are drawn lit with it. An openOMSI
+    /// extension: Omsi.exe knows neither part, and draws such a slot unlit.
+    pub lit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -574,6 +580,27 @@ impl Model {
         mesh.materials.get_mut(k)
     }
 
+    /// `lit`, the word on the line after a page's path (see `HtmlTextureDef::lit`): taken
+    /// when it is there, and only that word - a next line holding anything else (a blank,
+    /// another keyword) leaves the reader where it was.
+    fn take_lit_flag(r: &mut CfgReader<'_>) -> bool {
+        let mut ahead = r.clone();
+        if ahead.word().eq_ignore_ascii_case("lit") {
+            *r = ahead;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// A text texture's full colour flag: Omsi.exe reads it with StrToInt into a byte and
+    /// tests that for non-zero (0x5f0919), so the `255` some add-ons write is set - read as
+    /// "not 1" the glyphs were filled with the RGB that follows (yellow on those fonts).
+    fn text_full_color(r: &mut CfgReader<'_>) -> bool {
+        let w = r.word();
+        w.eq_ignore_ascii_case("true") || omsi_cfg::parse_i32(w) != 0
+    }
+
     /// Handle one model.cfg keyword. Returns `false` when the keyword is not part of the
     /// model vocabulary (so the caller can try its own).
     pub fn handle_keyword(&mut self, k: &str, r: &mut CfgReader) -> bool {
@@ -637,16 +664,17 @@ impl Model {
                 let width = r.i32();
                 let height = r.i32();
                 let path = r.str().to_string();
+                let lit = Self::take_lit_flag(r);
                 let script_index = self.script_textures.len();
                 self.script_textures.push((width, height));
-                self.html_textures.push(HtmlTextureDef { script_index, width, height, path });
+                self.html_textures.push(HtmlTextureDef { script_index, width, height, path, lit });
             }
             "texttexture" => {
                 let variable = r.str().to_string();
                 let font = r.str().to_string();
                 let width = r.i32();
                 let height = r.i32();
-                let full_color = r.bool();
+                let full_color = Self::text_full_color(r);
                 let color = r.f32s::<3>();
                 self.text_textures.push(TextTexture { variable, font, width, height, full_color, color, orientation: 0, grid: 1 });
             }
@@ -661,7 +689,7 @@ impl Model {
                 let font = r.str().to_string();
                 let width = r.i32();
                 let height = r.i32();
-                let full_color = r.bool();
+                let full_color = Self::text_full_color(r);
                 let color = r.f32s::<3>();
                 let extra: Vec<String> = (0..2).map(|_| r.str().to_string()).collect();
                 let orientation = omsi_cfg::parse_i32(&extra[0]);
@@ -1356,6 +1384,20 @@ mod tests {
         assert_eq!(m.set_vars, vec![("lost".to_string(), 1.0)]);
     }
 
+    /// A text texture's full colour flag is set by any non-zero number, as Omsi.exe tests it:
+    /// add-ons that write 255 there drew their texts in the yellow that follows.
+    #[test]
+    fn text_texture_full_colour_flag_is_any_non_zero_value() {
+        let text = |flag: &str| {
+            format!("[texttexture]\nnr\nArial\n256\n32\n{flag}\n255\n255\n0\n[texttexture_enh]\nnr\nArial\n256\n32\n{flag}\n255\n255\n0\n1\n1\n")
+        };
+        for (flag, want) in [("255", true), ("1", true), ("true", true), ("0", false)] {
+            let m = Model::parse(&CfgFile::from_str("model.cfg", &text(flag)));
+            assert!(m.text_textures.iter().all(|t| t.full_color == want), "{flag}");
+            assert_eq!(m.text_textures.len(), 2);
+        }
+    }
+
     /// A `[matl_item]` is a copy of the material before it: the SD77's lit roller blind
     /// keeps its free texture, scrolling and border (#1419).
     #[test]
@@ -1380,6 +1422,24 @@ mod tests {
         assert_eq!(m.html_textures[0].script_index, 1);
         assert_eq!(m.html_textures[0].path, "html\\demo.html");
         assert_eq!(m.meshes[0].materials[0].use_script_texture, Some(1));
+    }
+
+    /// `lit` after a page's path: the page is a surface rather than a display, and the
+    /// keyword after it is still read as a keyword.
+    #[test]
+    fn a_page_can_be_declared_lit() {
+        let text = "[htmltexture]\n800\n480\nhtml\\demo.html\nlit\n\n[mesh]\nx.o3d\n\n[matl]\nx.dds\n0\n[useHtmlTexture]\n0\n";
+        let m = Model::parse(&omsi_cfg::CfgFile::from_str("model.cfg", text));
+        assert_eq!(m.html_textures.len(), 1);
+        assert!(m.html_textures[0].lit, "the word after the path");
+        assert_eq!(m.meshes[0].materials[0].use_script_texture, Some(0), "the slots still bind the page");
+        let text = "[htmltexture]\n800\n480\nhtml\\demo.html\n\n[mesh]\nx.o3d\n\n[matl]\nx.dds\n0\n[useHtmlTexture]\n0\n";
+        let m = Model::parse(&omsi_cfg::CfgFile::from_str("model.cfg", text));
+        assert!(!m.html_textures[0].lit, "without the word it stays a display");
+        assert_eq!(m.meshes[0].materials[0].use_script_texture, Some(0));
+        let text = "[htmltexture]\n64\n32\nsign.html\nlit\n\n[htmltexture]\n64\n32\nother.html\n\n[mesh]\nx.o3d\n";
+        let m = Model::parse(&omsi_cfg::CfgFile::from_str("model.cfg", text));
+        assert!(m.html_textures[0].lit && !m.html_textures[1].lit, "each page has its own word");
     }
 
     /// A tab-indented block (the stock F90 lorry's second rear axle, whose mesh does not

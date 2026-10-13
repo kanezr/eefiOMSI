@@ -8,8 +8,9 @@
 // instead of jittered rays that need frames to settle) and what it meets is
 // - on the screen and seen there: the picture's own colour at that place (lit, fogged,
 //   reflections and all, exactly as drawn);
-// - off the screen or hidden: the hit mesh's mean colour (its texture's and its
-//   material's) lit by the sun (a shadow ray from there) and the sky;
+// - off the screen or hidden: the hit mesh's texel there (its texture's small copy in the
+//   atlas, rt_tex.rs; the texture's mean colour until that is made) times its material's
+//   colour, lit by the sun (a shadow ray from there) and the sky;
 // - nothing: the sky probe.
 // The composite then adds it, times the weight, to the picture.
 
@@ -24,6 +25,61 @@ override REFL_DIV: i32 = 1;
 @group(0) @binding(10) var t_probe: texture_cube<f32>;
 @group(0) @binding(11) var<uniform> enh: Enhanced;
 @group(0) @binding(12) var t_hist: texture_2d<f32>;
+// per traced triangle its texture coordinates (rt_uv.wgsl), and the textures' tiles
+@group(0) @binding(13) var<storage, read> tri_uv: array<vec4<u32>>;
+@group(0) @binding(14) var t_atlas: texture_2d<f32>;
+
+// the alpha test's threshold (the main pass's `ALPHA_REF`)
+const ALPHA_REF: f32 = 128.5 / 255.0;
+
+// Texture `t`'s texel at `uv`, from its tile in the atlas, addressed by `mode` (0 repeat,
+// 1 mirror, 2 clamp, 3 mirror once); w < 0 while the texture has no tile.
+fn tile_texel(t: u32, uv: vec2<f32>, mode: u32) -> vec4<f32> {
+    let tile = tex_avg[t].tile;
+    if (tile.z < 0.5) {
+        return vec4<f32>(-1.0);
+    }
+    var w = fract(uv);
+    if (mode != 0u) {
+        // (kept off the border, which repeats the other edge: these do not)
+        w = select(select(abs(uv), uv, mode == 2u), 1.0 - abs(fract(uv * 0.5) * 2.0 - 1.0), mode == 1u);
+        w = clamp(w, vec2<f32>(1.0 / 60.0), vec2<f32>(59.0 / 60.0));
+    }
+    let at = (tile.xy + vec2<f32>(1.0) + w * 30.0) / vec2<f32>(textureDimensions(t_atlas));
+    return textureSampleLevel(t_atlas, s_lin, at, 0.0);
+}
+
+// What a hit shows of its textures: rgb the diffuse texture's colour there (white without
+// one), a the coverage the alpha test takes; a < 0 while that is not known yet (no
+// coordinates or no tile: the mean colour then).
+fn hit_texel(r: Record, prim: u32, bary: vec2<f32>) -> vec4<f32> {
+    if (r.uvs == 0xffffffffu) {
+        return vec4<f32>(-1.0);
+    }
+    let q = tri_uv[r.uvs + prim];
+    let base = vec2<f32>(f32(i32(q.w << 16u) >> 16u), f32(i32(q.w) >> 16u));
+    let uv = base + unpack2x16float(q.x) * (1.0 - bary.x - bary.y) + unpack2x16float(q.y) * bary.x + unpack2x16float(q.z) * bary.y;
+    let mode = (r.flags >> 3u) & 3u;
+    var c = vec4<f32>(1.0);
+    if (r.tex != 0xffffffffu) {
+        c = tile_texel(r.tex, (uv + r.uvt.yz) * r.uvt.x, mode);
+        if (c.a < 0.0) {
+            return c;
+        }
+    }
+    if ((r.flags & 4u) != 0u && r.trans != 0xffffffffu) {
+        // (the transmap without the offset and the ground's repeat, as the main pass reads it)
+        let m = tile_texel(r.trans, uv, mode);
+        if (m.a < 0.0) {
+            return m;
+        }
+        c.a = m.a;
+    }
+    if ((r.flags & 32u) != 0u) {
+        c.a = 1.0;
+    }
+    return c;
+}
 
 fn sh_irradiance(n: vec3<f32>) -> vec3<f32> {
     let c = enh.sh;
@@ -62,29 +118,39 @@ fn ggx_normal(n: vec3<f32>, rough: f32, u: vec2<f32>) -> vec3<f32> {
     return normalize(basis(n) * vec3<f32>(st * cos(phi), st * sin(phi), ct));
 }
 
-// Where a point is on the screen: x 1 there and seen (the picture's colour is its own),
-// 2 there but the picture shows something further (a gap: the ray went through a cut-out
-// texel), 3 there behind something nearer, 0 off the screen; yz its place.
-fn on_screen(pt: vec3<f32>) -> vec3<f32> {
+// Where a point a ray along `d` meets is on the screen: x 1 there and seen (the picture's
+// colour is its own), 2 there but the picture shows something further (a gap: the ray went
+// through a cut-out texel), 3 there behind something nearer - or the picture shows the other
+// face of it - 0 off the screen; yz its place.
+fn on_screen(pt: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
     let c = p.view_proj * vec4<f32>(pt, 1.0);
     if (c.w > 0.05) {
         let uv = vec2<f32>(c.x / c.w * 0.5 + 0.5, 0.5 - c.y / c.w * 0.5);
         if (all(uv > vec2<f32>(0.002)) && all(uv < vec2<f32>(0.998))) {
             let q = vec2<i32>(uv * p.size.xy);
-            let d = textureLoad(t_depth, q, 0);
-            let seen = select(1e9, linear_depth(d), d > 0.0);
-            let tol = 0.04 * c.w + 0.15;
-            return vec3<f32>(select(select(3.0, 2.0, seen > c.w + tol), 1.0, abs(seen - c.w) < tol), uv);
+            let dq = textureLoad(t_depth, q, 0);
+            let seen = select(1e9, linear_depth(dq), dq > 0.0);
+            let tol = 0.02 * c.w + 0.08;
+            if (abs(seen - c.w) < tol) {
+                // (the picture shows the face turned to the camera: a ray that met the
+                // other one - a car's reflection that went in through the bus's window and
+                // met the back of a seat, or the bus's side from outside next to the seat
+                // the camera sees from inside - is not lit as the picture there is; taken
+                // as it was, every car beside the bus mirrored its red seats)
+                let qc = (vec2<f32>(q) + vec2<f32>(0.5)) * p.size.zw;
+                let ns = depth_normal(q, world_pos(qc, dq), dq);
+                return vec3<f32>(select(3.0, 1.0, dot(ns, d) < 0.0), uv);
+            }
+            return vec3<f32>(select(3.0, 2.0, seen > c.w + tol), uv);
         }
     }
     return vec3<f32>(0.0);
 }
 
-// The light a reflected ray brings back from where it meets the scene: the picture's own
-// colour there, else the mesh's mean colour in the sun and the sky's light.
-fn hit_light(o: vec3<f32>, d: vec3<f32>, h: Hit, rough: f32) -> vec3<f32> {
+// The light a reflected ray brings back from where it meets the scene (`sc` its place on
+// the screen): the picture's own colour there, else the mesh's in the sun and the sky's light.
+fn hit_light(o: vec3<f32>, d: vec3<f32>, h: Hit, sc: vec3<f32>, texel: vec4<f32>) -> vec3<f32> {
     let pt = o + d * h.t;
-    let sc = on_screen(pt);
     // (a cut-out mesh - leaves - seen through a gap shows what lies behind it there: the
     // picture's colour all the same, the same for the rays beside it; deciding leaf or gap
     // one ray at a time sprinkled the glass with light and dark specks, #1907)
@@ -99,19 +165,21 @@ fn hit_light(o: vec3<f32>, d: vec3<f32>, h: Hit, rough: f32) -> vec3<f32> {
         if (k >= 0.999) {
             return seen;
         }
-        return mix(mesh_light(pt, d, h), seen, k);
+        return mix(mesh_light(pt, d, h, texel), seen, k);
     }
-    return mesh_light(pt, d, h);
+    return mesh_light(pt, d, h, texel);
 }
 
-// What a ray finds off the screen or hidden there: the hit mesh's mean colour (its
-// texture's and its material's) lit by the sun (a shadow ray from there) and the sky, and
-// the air along the way.
-fn mesh_light(pt: vec3<f32>, d: vec3<f32>, h: Hit) -> vec3<f32> {
+// What a ray finds off the screen or hidden there: the hit mesh's colour (its texel there,
+// `hit_texel`, or its texture's mean colour, times its material's) lit by the sun (a shadow
+// ray from there) and the sky, and the air along the way.
+fn mesh_light(pt: vec3<f32>, d: vec3<f32>, h: Hit, texel: vec4<f32>) -> vec3<f32> {
     let o = pt - d * h.t;
     let r = records[h.record];
     var albedo = r.color.rgb;
-    if (r.tex != 0xffffffffu) {
+    if (texel.a >= 0.0) {
+        albedo = albedo * texel.rgb;
+    } else if (r.tex != 0xffffffffu) {
         albedo = albedo * tex_avg[r.tex].c.rgb;
     }
     if ((r.flags & 2u) != 0u) {
@@ -197,6 +265,18 @@ fn cs_reflect(@builtin(global_invocation_id) gid: vec3<u32>) {
         // its texels are: where it shows a gap there, the ray goes on)
         var start = 0.0;
         l = sky_probe(d, rough);
+        // A pane first: what it mirrors itself (glass at the slant a reflection meets it
+        // takes about a tenth) and the inside behind it, seen through its tint. The inside
+        // is lit only through the panes as well: where the picture does not show it, the
+        // mean colour lit as if outdoors is dimmed by the tint once more.
+        var through = 1.0;
+        var pane = vec3<f32>(0.0);
+        let gh = ray_hit(RT_FORCE_OPAQUE, MASK_SEEN | MASK_GLASS_SEEN, 0.0, 400.0, o, d);
+        if (gh.kind != RAY_QUERY_INTERSECTION_NONE && (records[gh.instance_custom_data + gh.geometry_index].flags & 64u) != 0u) {
+            pane = sky_probe(d, rough) * 0.1;
+            through = 0.45;
+            start = gh.t + 0.01;
+        }
         for (var k = 0; k < 4; k++) {
             let ch = ray_hit(RT_FORCE_OPAQUE, MASK_SEEN, start, 400.0, o, d);
             if (ch.kind == RAY_QUERY_INTERSECTION_NONE) {
@@ -205,17 +285,28 @@ fn cs_reflect(@builtin(global_invocation_id) gid: vec3<u32>) {
             var h: Hit;
             h.t = ch.t;
             h.record = ch.instance_custom_data + ch.geometry_index;
-            let cut = (records[h.record].flags & 1u) != 0u;
-            l = hit_light(o, d, h, rough);
-            if (cut) {
-                // (off the screen or hidden: as much of the sky through it as its texels leave)
-                let sc = on_screen(o + d * h.t).x;
-                if (sc != 1.0 && sc != 2.0) {
-                    l = mix(sky_probe(d, rough), l, mix(coverage(records[h.record]), 1.0, 0.5));
-                }
+            let rec = records[h.record];
+            let cut = (rec.flags & 1u) != 0u;
+            let sc = on_screen(o + d * h.t, d);
+            let texel = hit_texel(rec, ch.primitive_index, ch.barycentrics);
+            let hidden = sc.x != 1.0 && sc.x != 2.0;
+            // (off the screen or hidden, a cut-out texel lets the ray through, as the main
+            // pass's alpha test does)
+            if (cut && hidden && texel.a >= 0.0 && texel.a < ALPHA_REF) {
+                start = ch.t + 0.002;
+                continue;
+            }
+            l = hit_light(o, d, h, sc, texel);
+            if (cut && hidden && texel.a < 0.0) {
+                // (its texels not known yet: as much of the sky through it as they leave)
+                l = mix(sky_probe(d, rough), l, mix(coverage(rec), 1.0, 0.5));
+            }
+            if (through < 1.0 && sc.x != 1.0) {
+                l = l * through;
             }
             break;
         }
+        l = pane + l * through * select(1.0, 0.9, through < 1.0);
     }
     // (no single ray brighter than the sky's brightest: the sun's own glint on the surface
     // is the main pass's, and a ray that found the sun's disc was a speck of light)

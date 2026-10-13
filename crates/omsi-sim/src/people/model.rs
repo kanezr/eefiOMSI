@@ -105,8 +105,6 @@ pub struct Person {
     pub ty: Arc<HumanType>,
     /// Clothing variant (`HumanType::variant_texture`).
     pub variant: usize,
-    /// The renderer's meshes and instances of the person (the view gives them).
-    pub meshes: Vec<(usize, usize)>,
     pub position: DVec3,
     pub heading: f64,
     /// Heading in the bus frame while inside one.
@@ -118,23 +116,11 @@ pub struct Person {
     pub activity: Activity,
     /// The animation: Omsi.exe's walk phase and joint angles (sub_626ae8).
     pub anim: OmsiAnim,
-    /// Optional earlier IK/foot-planted animation, allocated only for experimental rendering.
-    pub procedural: Option<crate::human::Pose>,
     pub state: State,
     /// Seconds in the current state.
     pub t_state: f32,
-    /// Skinned positions and normals, per mesh.
-    pub skins: Vec<(Vec<Vec3>, Vec<Vec3>)>,
-    /// The bones the skins were made with, and whether this frame's pose changed them
-    /// (somebody standing still keeps the mesh of the frame before: skinning and uploading
-    /// thirty waiting people every frame took 2 ms of the frame at a bus station).
-    pub skin_bones: Option<[glam::Affine3A; crate::human::SLOTS]>,
-    pub pose_changed: bool,
     /// Interior light of the bus the person is in (0 outside).
     pub interior: f32,
-    /// The interior light as drawn: it follows `interior` over a moment (stepping through
-    /// the door, people lit up and went dark again from one frame to the next).
-    pub lit: f32,
     /// The tilt of the floor the person stands on (a bus pitching under the brakes and
     /// leaning in a bend), without its heading: riders are drawn with it. Upright on the
     /// ground; drawn upright in a tilted bus, their feet sank through the floor on one side.
@@ -156,14 +142,6 @@ pub struct Person {
     pub detour_side: f64,
     /// Why the person is standing, for `OMSI_DEBUG_PAX`.
     pub why: &'static str,
-    /// Whether this person has ever been posed (an unposed model is the file's T-pose).
-    pub skinned: bool,
-    /// Frames since the last pose and where the person stood then (the
-    /// feet of a mesh posed a frame ago stay on the floor when it is drawn there).
-    pub since_posed: u32,
-    pub posed_at: (DVec3, f64),
-    /// Ankles of the last pose (model frame), for `OMSI_TRACE_PAX`.
-    pub ankles: [Vec3; 2],
     /// A scripted test person (`OMSI_PAX_GALLERY`).
     pub puppet: Option<Puppet>,
     /// LAN play: one of the host's people, drawn where the host says (`mirror_set`).
@@ -522,6 +500,8 @@ pub struct Footfall {
 /// A line a passenger says: the sample and where they stand.
 pub struct VoiceLine {
     pub position: DVec3,
+    /// Who says it (the person's id): their lips move with it.
+    pub speaker: u32,
     pub path: std::path::PathBuf,
 }
 

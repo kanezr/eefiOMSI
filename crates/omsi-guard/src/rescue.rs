@@ -58,7 +58,7 @@ fn program() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
 fn relaunch(safe: bool) -> bool {
     let Some((exe, dir)) = program() else { return false };
     let mut cmd = std::process::Command::new(&exe);
-    cmd.current_dir(&dir).env_remove("OMSI_LAUNCHER_INPUT").env_remove("OMSI_GUARD_STATE");
+    cmd.current_dir(&dir).env_remove("OMSI_GUARD_STATE");
     if safe {
         cmd.env("OMSI_SAFE_MODE", "1");
     } else {

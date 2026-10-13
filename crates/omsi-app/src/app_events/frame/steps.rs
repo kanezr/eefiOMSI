@@ -17,8 +17,8 @@ use crate::view_sync::traffic::TrafficView;
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn traffic_tick(
     t: &mut traffic::Traffic,
-    view: &mut TrafficView,
     world: &World,
+    scenery: &mut omsi_sim::scenery::SceneryState,
     dt: f32,
     paused: bool,
     player: Option<&Player>,
@@ -35,10 +35,10 @@ pub(crate) fn traffic_tick(
         // `omsi_net::vars`, for a copy of the same vehicle files)
         t.other_priority = remotes.remotes.iter().filter(|(_, r)| r.vehicle().var("TrafficPriority").is_some_and(|v| v > 0.5)).map(|(id, _)| *id).collect();
         t.player_blinker = player.map(|p| lan::indicator(&p.vehicle)).unwrap_or(0);
-        t.tick(view, dt, player.map(|p| player_outline(p)));
+        t.tick(dt, player.map(|p| player_outline(p)));
         let t0 = Instant::now();
-        world.set_switches(&t.switch_requests());
-        world.set_signals(&t.signal_aspects(&world.signal_routes, player_rail));
+        world.set_switches(scenery, &t.switch_requests());
+        world.set_signals(scenery, &t.signal_aspects(&world.signal_routes, player_rail));
         return t0.elapsed().as_secs_f64();
     }
     0.0
@@ -218,21 +218,39 @@ pub(crate) fn tick_humans(
     view: &mut PeopleView,
     dt: f32,
     world: &World,
-    mut player: Option<&mut Player>,
+    player: Option<&mut Player>,
     traffic: Option<&mut traffic::Traffic>,
     r: &Renderer,
     scene: &mut Scene,
 ) -> bool {
+    let started = Instant::now();
+    // (what the step reads of the player's bus, read off it now: see `PlayerBusView`)
+    let bus = player.as_deref().map(|p| h.player_bus_view(&p.vehicle));
+    let took = h.tick(dt, world, bus.as_ref(), traffic.as_deref());
+    humans_after_step(h, view, dt, world, player, traffic, r, scene, started);
+    took
+}
+
+/// What follows the people's step `started` then (here, or on the sim thread with
+/// `OMSI_SIM_THREAD`): the people who came and went drawn, the step closed, the validators'
+/// sound in the buses, and what the people want of the traffic (stops, boarding, doors).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn humans_after_step(
+    h: &mut humans::Humans,
+    view: &mut PeopleView,
+    dt: f32,
+    world: &World,
+    mut player: Option<&mut Player>,
+    traffic: Option<&mut traffic::Traffic>,
+    r: &Renderer,
+    scene: &mut Scene,
+    started: Instant,
+) {
     let mut traffic = traffic;
-    let took = h.tick(
-        view,
-        dt,
-        world,
-        player.as_deref().map(|p| &p.vehicle),
-        traffic.as_deref(),
-        r,
-        scene,
-    );
+    // what the step did, drawn (people who came and went, coins on the desk)
+    let mark = Instant::now();
+    crate::view_sync::apply_people(h, view, world, r, scene);
+    h.tick_done(dt, world, started, mark.elapsed().as_secs_f64() * 1000.0);
     // validators used: the bus's `ev_Stamper` sound
     for bus in h.take_stamped() {
         match bus {
@@ -259,7 +277,6 @@ pub(crate) fn tick_humans(
             t.set_pax_requests(id, &doors);
         }
     }
-    took
 }
 
 /// The people's counts in the personnel file.
@@ -300,7 +317,7 @@ pub(crate) fn duty_step(
         }
     }
     if learn_loaded {
-        d.learn_loaded(&world.object_positions.lock());
+        d.learn_loaded(&world.data.peek().objects);
     }
     let due = (d.trip_index, d.next_stop);
     let served = d.update(&mut p.vehicle, time);

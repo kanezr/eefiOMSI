@@ -43,7 +43,7 @@ impl App {
             self.shell.clear();
             return;
         };
-        // (the photo mode draws its own panel, `frame_photo_panel`)
+        // (the photo mode draws its own panel, `photo::panel`)
         if self.photo.is_some() {
             return;
         }
@@ -95,24 +95,10 @@ impl App {
         self.shell.finish();
     }
 
-    /// What the pause menu's home page sums up of the session.
+    /// What the pause menu's sidebar shows of the session: the bus and the driver.
     fn pause_summary(&self) -> crate::shell::pause::Summary {
-        let map = self.world.as_ref().map(|w| if w.global.friendly_name.trim().is_empty() { w.global.name.trim().to_string() } else { w.global.friendly_name.trim().to_string() }).unwrap_or_default();
-        let t = self.clock.time;
-        let time = format!("{:02}:{:02}", ((t / 3600.0) as i64).rem_euclid(24), ((t % 3600.0) / 60.0) as i64);
         let bus = self.player.as_ref().map(|p| format!("{} {}", p.vehicle.ty.def.manufacturer.trim(), p.vehicle.ty.def.type_name.trim()).trim().to_string()).unwrap_or_default();
-        let duty = self.session.duty.as_ref();
-        let trip = duty.and_then(|d| d.trips.get(d.trip_index));
-        crate::shell::pause::Summary {
-            map,
-            time,
-            bus,
-            line: duty.map(|d| trip.map(|t| t.line.trim()).filter(|l| !l.is_empty()).unwrap_or(d.line.trim()).to_string()),
-            terminus: trip.map(|t| t.terminus.trim().to_string()),
-            tour: duty.map(|d| d.tour.trim().to_string()),
-            next_stop: duty.zip(trip).and_then(|(d, t)| t.stops.get(d.next_stop)).map(|s| s.name.trim().to_string()),
-            driver: self.args.lan_name.trim().to_string(),
-        }
+        crate::shell::pause::Summary { bus, driver: self.args.lan_name.trim().to_string() }
     }
 
     /// What the clicks on the screens asked for, done (at the start of a frame, with the

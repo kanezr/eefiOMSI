@@ -14,8 +14,6 @@ extern "C" {
     fn openomsi_swift_detach_window(view: *mut c_void);
     /// A game is starting: the Swift launcher steps back (and stops its timers).
     fn openomsi_swift_game_started();
-    /// The cross-platform launcher was switched off: the Swift one is shown again.
-    fn openomsi_swift_show_launcher();
     fn openomsi_swift_tilt(on: i32);
     /// The latest turn of the device (-1 .. 1) into `out`; 0 while there is none yet.
     fn openomsi_swift_tilt_value(out: *mut f32) -> i32;
@@ -52,11 +50,6 @@ pub(crate) fn detach_window(window: &Arc<Window>) {
 pub(crate) fn game_started() {
     // SAFETY: a plain call into the app
     unsafe { openomsi_swift_game_started() }
-}
-
-pub(crate) fn show_native_launcher() {
-    // SAFETY: a plain call into the app
-    unsafe { openomsi_swift_show_launcher() }
 }
 
 pub(crate) fn set_tilt(on: bool) {

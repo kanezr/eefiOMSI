@@ -109,7 +109,7 @@ run_launcher() { # <dir> <home> [VAR=value ...]
   local dir="$1" home="$2"; shift 2
   mkdir -p "$home/.openomsi"
   env -i PATH="$PATH" HOME="$home" TMPDIR="${TMPDIR:-/tmp}" \
-    OMSI_ROOT="${OMSI_ROOT:-/nonexistent}" OMSI_BACKGROUND=1 OMSI_HIDDEN_WINDOW=1 OMSI_LAUNCHER_EXIT=8 \
+    OMSI_ROOT="${OMSI_ROOT:-/nonexistent}" OMSI_BACKGROUND=1 OMSI_HIDDEN_WINDOW=1 \
     OMSI_GUARD_TEST_BREAK=1 OMSI_GUARD_DIALOG_FILE="$home/messages.txt" OMSI_HEALTH_URL="file://$WORK/health-empty.json" \
     "$@" "$(prog "$dir")" > "$home/first-start.log" 2>&1 &
   local t=0

@@ -22,7 +22,7 @@ use crate::scene::World;
 use crate::traffic::Traffic;
 use crate::view_sync::people::PeopleView;
 use crate::view_sync::SimView;
-use crate::Args;
+use omsi_lan::config::LanConfig;
 use glam::{DVec2, DVec3, Vec3};
 use hashbrown::{HashMap, HashSet};
 use omsi_net::world::{
@@ -73,7 +73,7 @@ struct View {
 
 
 
-pub(crate) use omsi_lan::mirror::{relative_to_roots, PlayClock};
+pub(crate) use omsi_lan::mirror::PlayClock;
 use omsi_lan::mirror::{fnv, lerp_angle, local_file, net_activity, quant, relative_file, sim_activity, Track};
 
 /// A client's copy of the host's world.
@@ -196,7 +196,7 @@ impl LanWorld {
         &mut self,
         lan: &mut LanSession,
         dt: f32,
-        args: &Args,
+        args: &LanConfig,
         world: Option<&World>,
         renderer: Option<&Renderer>,
         scene: Option<&mut Scene>,
@@ -427,7 +427,9 @@ impl LanWorld {
                 }
                 let local = self.next_up_id;
                 self.next_up_id += 1;
-                if h.mirror_add(view, world, renderer, scene, local, ty, &pose) {
+                let added = h.mirror_add(world, local, ty, &pose);
+                crate::view_sync::apply_people(h, view, world, renderer, scene);
+                if added {
                     up.ids.insert(*pid, local);
                 }
             }
@@ -442,7 +444,7 @@ impl LanWorld {
         &mut self,
         lan: &mut LanSession,
         dt: f32,
-        args: &Args,
+        args: &LanConfig,
         mut traffic: Option<&mut Traffic>,
         mut humans: Option<&mut Humans>,
         me: Option<DVec3>,
@@ -674,7 +676,7 @@ impl LanWorld {
         &mut self,
         lan: &mut LanSession,
         dt: f32,
-        args: &Args,
+        args: &LanConfig,
         world: Option<&World>,
         renderer: Option<&Renderer>,
         scene: Option<&mut Scene>,
@@ -773,7 +775,8 @@ impl Mirror {
         if want_on != m.on {
             m.on = want_on;
             if let Some(t) = traffic.as_deref_mut() {
-                t.set_mirror(&mut view.traffic, world, renderer, scene, want_on);
+                t.set_mirror(want_on);
+                crate::view_sync::apply_traffic(t, &mut view.traffic, world, renderer, scene);
             }
             if let Some(h) = humans.as_deref_mut() {
                 h.set_mirror(want_on);
@@ -926,7 +929,7 @@ impl Mirror {
     /// The host's cars that are gone taken away, the new ones made (their types loaded in
     /// the background first).
     #[allow(clippy::too_many_arguments)]
-    fn add_and_remove_cars(&mut self, t: &mut Traffic, view: &mut SimView, args: &Args, world: &World, renderer: &Renderer, scene: &mut Scene) {
+    fn add_and_remove_cars(&mut self, t: &mut Traffic, view: &mut SimView, args: &LanConfig, world: &World, renderer: &Renderer, scene: &mut Scene) {
         let m = self;
         let gone: Vec<u32> = m
             .drawn_cars
@@ -935,7 +938,8 @@ impl Mirror {
             .filter(|id| !m.cars.contains_key(id))
             .collect();
         for id in gone {
-            t.remove_car(&mut view.traffic, world, renderer, scene, id as u64);
+            t.remove_car(id as u64);
+            crate::view_sync::apply_traffic(t, &mut view.traffic, world, renderer, scene);
             m.drawn_cars.remove(&id);
             m.shown.remove(&id);
             m.odometer.remove(&id);
@@ -989,10 +993,7 @@ impl Mirror {
                 continue;
             };
             t.add_mirror_car(
-                &mut view.traffic,
                 world,
-                renderer,
-                scene,
                 id as u64,
                 ty,
                 scheme.map(|s| s as usize),
@@ -1000,6 +1001,7 @@ impl Mirror {
                 DVec3::new(first.x, first.y, first.z),
                 first.heading as f64,
             );
+            crate::view_sync::apply_traffic(t, &mut view.traffic, world, renderer, scene);
             m.drawn_cars.insert(id);
         }
     }
@@ -1112,7 +1114,7 @@ impl Mirror {
     }
 
     /// The timetable buses' displays.
-    fn show_destinations(&mut self, t: &mut Traffic, shown: Vec<(usize, u32)>, args: &Args, world: &World) {
+    fn show_destinations(&mut self, t: &mut Traffic, shown: Vec<(usize, u32)>, args: &LanConfig, world: &World) {
         let m = self;
         for (i, id) in shown {
             let Some(Desc::Car {
@@ -1133,7 +1135,7 @@ impl Mirror {
             let hof = m
                 .hofs
                 .entry(path)
-                .or_insert_with(|| crate::find_hof(args, world, &car.vehicle.ty))
+                .or_insert_with(|| crate::find_hof_named(args.hof.as_deref(), world, &car.vehicle.ty))
                 .clone();
             if let Some(k) = car.vehicle.ty.program.str_var("Linie") {
                 car.vehicle.state.str_vars[k as usize] = line.clone();
@@ -1202,7 +1204,9 @@ impl Mirror {
             let Some(ty) = h.type_by_file(file) else {
                 continue;
             };
-            if h.mirror_add(&mut view.people, world, renderer, scene, *id, ty, &pose) {
+            let added = h.mirror_add(world, *id, ty, &pose);
+            crate::view_sync::apply_people(h, &mut view.people, world, renderer, scene);
+            if added {
                 m.drawn_people.insert(*id);
             }
         }
@@ -1227,7 +1231,7 @@ struct Gather {
 
 /// The host's cars within `CAR_RADIUS` of a client at `at`: those moved (or standing too
 /// long unsent) go into the frame, new or changed descriptions are sent along.
-fn gather_cars(view: &mut View, t: &Traffic, at: DVec3, args: &Args, g: &mut Gather) {
+fn gather_cars(view: &mut View, t: &Traffic, at: DVec3, args: &LanConfig, g: &mut Gather) {
     for c in &t.cars {
         let p = c.vehicle.position;
         if (p - at).truncate().length() > CAR_RADIUS || c.id > nw::MAX_ID as u64 {
@@ -1432,7 +1436,7 @@ fn person_pose(a: &PersonState, b: &PersonState, k: f64) -> MirrorPose {
     }
 }
 
-fn describe_car(args: &Args, c: &crate::traffic::AiCar) -> Desc {
+fn describe_car(args: &LanConfig, c: &crate::traffic::AiCar) -> Desc {
     let (line, destination) = if c.is_bus() {
         car_display(&c.vehicle)
     } else {
@@ -1450,7 +1454,7 @@ fn describe_car(args: &Args, c: &crate::traffic::AiCar) -> Desc {
 }
 
 fn describe(
-    args: &Args,
+    args: &LanConfig,
     traffic: Option<&Traffic>,
     humans: Option<&Humans>,
     r: EntityRef,

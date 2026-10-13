@@ -72,7 +72,7 @@ pub fn sync_vehicle_part(
         &part.ty,
         part.position,
         part.body_rotation(),
-        |n| main.var(n),
+        |li| interior_lamp_on(&part.ty, li, |n| main.var(n)),
         render,
     );
     sync_materials(renderer, scene, main, render);
@@ -146,10 +146,54 @@ fn freetex_key_is(key: Option<&str>, name: &str, mask: Option<u32>) -> bool {
     }
 }
 
-pub(super) fn sync_materials(
+/// What a vehicle's materials and lamps are switched by: its variables by name. The player's
+/// vehicle is read in place; an AI car through its copy in the frame's snapshot ([`CarVars`]).
+pub(crate) trait LookVars {
+    fn var(&self, name: &str) -> Option<f32>;
+    /// String variable `name`, trimmed ("" if there is none).
+    fn str_var(&self, name: &str) -> &str;
+}
+
+impl LookVars for omsi_sim::VehicleInstance {
+    fn var(&self, name: &str) -> Option<f32> {
+        omsi_sim::VehicleInstance::var(self, name)
+    }
+
+    fn str_var(&self, name: &str) -> &str {
+        self.ty.program.str_var(name).and_then(|i| self.state.str_vars.get(i as usize)).map_or("", |s| s.trim())
+    }
+}
+
+/// An AI car's variables as the snapshot has them (`omsi_sim::view_events::CarLooks`), with
+/// the string variables the view keeps of it (`CarRender::strs`).
+pub(crate) struct CarVars<'a> {
+    pub(crate) ty: &'a omsi_sim::VehicleType,
+    pub(crate) index: &'a hashbrown::HashMap<String, omsi_script::VarId>,
+    pub(crate) vars: &'a [f32],
+    pub(crate) strs: &'a [String],
+}
+
+impl LookVars for CarVars<'_> {
+    fn var(&self, name: &str) -> Option<f32> {
+        omsi_script::compile::with_lower(name, |k| self.index.get(k).copied()).and_then(|i| self.vars.get(i as usize).copied())
+    }
+
+    fn str_var(&self, name: &str) -> &str {
+        self.ty.program.str_var(name).and_then(|i| self.strs.get(i as usize)).map_or("", |s| s.trim())
+    }
+}
+
+/// Whether `[interiorlight]` `li` of `ty` is on: OMSI enables the lamp when its variable is
+/// 0.5 or more, there is no dimming.
+pub(crate) fn interior_lamp_on(ty: &omsi_sim::VehicleType, li: usize, var: impl Fn(&str) -> Option<f32>) -> bool {
+    let il = &ty.model.interior_lights[li];
+    il.variable.trim().parse::<f32>().ok().or_else(|| var(&il.variable)).unwrap_or(0.0) >= 0.5
+}
+
+pub(crate) fn sync_materials(
     renderer: &Renderer,
     scene: &mut Scene,
-    vehicle: &omsi_sim::VehicleInstance,
+    vehicle: &impl LookVars,
     render: &mut VehicleRender,
 ) {
     for v in &mut render.variants {
@@ -176,12 +220,7 @@ pub(super) fn sync_materials(
             // (the string read in place and compared with the key it made last time: the
             // name was copied, lower-cased and formatted for every free texture of every
             // vehicle each frame, though it changes only when a display does)
-            let current = vehicle
-                .ty
-                .program
-                .str_var(&f.var)
-                .and_then(|i| vehicle.state.str_vars.get(i as usize))
-                .map_or("", |s| s.trim());
+            let current = vehicle.str_var(&f.var);
             if freetex_key_is(f.current.as_deref(), current, mask) {
                 continue;
             }
@@ -291,13 +330,13 @@ pub(super) fn sync_materials(
 /// (the LiAZ 5292 has 32 lamps; only the first eight were drawn, and its saloon stayed dark).
 /// The seats' sets (`PassPos::illumination`, the lamps that light a person sitting there)
 /// get theirs too: see [`VehicleRender::seat_lamps`].
-pub(super) fn sync_interior_lamps(
+pub(crate) fn sync_interior_lamps(
     renderer: &Renderer,
     scene: &mut Scene,
     ty: &omsi_sim::VehicleType,
     position: DVec3,
     rotation: Mat4,
-    var: impl Fn(&str) -> Option<f32>,
+    on: impl Fn(usize) -> bool,
     render: &VehicleRender,
 ) {
     let n = ty.model.interior_lights.len();
@@ -352,16 +391,8 @@ pub(super) fn sync_interior_lamps(
     for (first, set) in blocks {
         for (k, &li) in set.iter().enumerate() {
             let il = &ty.model.interior_lights[li];
-            // on or off: OMSI enables the lamp when its variable is 0.5 or more
-            //, there is no dimming
-            let on = il
-                .variable
-                .trim()
-                .parse::<f32>()
-                .ok()
-                .or_else(|| var(&il.variable))
-                .unwrap_or(0.0)
-                >= 0.5;
+            // on or off (`interior_lamp_on`)
+            let on = on(li);
             let at = rotation.transform_vector3(glam::Vec3::from(il.pos));
             renderer.set_interior_light(
                 scene,
@@ -396,7 +427,7 @@ pub fn sync_vehicle_textures(
         &vehicle.ty,
         vehicle.position,
         vehicle.body_rotation(),
-        |n| vehicle.var(n),
+        |li| interior_lamp_on(&vehicle.ty, li, |n| vehicle.var(n)),
         render,
     );
     for i in vehicle.update_text_textures() {

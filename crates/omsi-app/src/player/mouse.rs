@@ -22,16 +22,18 @@ impl Player {
         Some(i)
     }
 
-    /// The page (`[htmltexture]`) under a ray and where it lands on it: the script texture
-    /// index and `u`/`v` from 0 to 1 across the page, `v` down from the top.
-    pub(crate) fn html_hit(&self, origin: DVec3, dir: Vec3) -> Option<(usize, f32, f32)> {
-        pick_html_in(&self.vehicle, origin, dir)
+    /// The page (`[htmltexture]`, or a script texture an `.opl` plugin draws) under a ray and
+    /// where it lands on it: the script texture index and `u`/`v` from 0 to 1, `v` down.
+    pub(crate) fn html_hit(&self, origin: DVec3, dir: Vec3, plugins: &omsi_plugin::TexturePointer) -> Option<(usize, f32, f32)> {
+        pick_html_in(&self.vehicle, origin, dir, &plugins.pages)
     }
 
     /// A press, release or move on a page. What the page does with it (`omsi.setVar`,
-    /// `omsi.trigger`) reaches the bus at once.
-    pub(crate) fn html_pointer(&mut self, page: usize, u: f32, v: f32, kind: omsi_sim::htmltex::PointerKind) -> bool {
-        self.vehicle.html_pointer(page, u, v, kind)
+    /// `omsi.trigger`) reaches the bus at once; on a plugin's texture it waits for the plugin.
+    pub(crate) fn html_pointer(&mut self, page: usize, u: f32, v: f32, kind: omsi_sim::htmltex::PointerKind, plugins: &mut omsi_plugin::TexturePointer) -> bool {
+        use omsi_sim::htmltex::PointerKind as K;
+        let k = match kind { K::Down => omsi_plugin::POINTER_DOWN, K::Move => omsi_plugin::POINTER_MOVE, K::Up => omsi_plugin::POINTER_UP };
+        plugins.push(page, k, u, v) || self.vehicle.html_pointer(page, u, v, kind)
     }
 
     /// The same forgiving pick as `pick`, for the coupled sections of an articulated bus.

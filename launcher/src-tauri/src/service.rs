@@ -79,25 +79,22 @@ pub fn ask(mut req: Value, wait: Duration) -> Result<(Value, Vec<u8>), String> {
     let (tx, rx) = channel();
     {
         let mut s = SERVICE.lock().unwrap_or_else(|e| e.into_inner());
-         if drawing && PLAYING.load(Ordering::Relaxed) {
+        if drawing && PLAYING.load(Ordering::Relaxed) {
             if look {
                 *LOOK.lock().unwrap_or_else(|e| e.into_inner()) = Some(req);
             }
             return Ok((json!({ "ok": true, "busy": false, "failed": false, "moving": false, "picture": true }), Vec::new()));
         }
-
         if s.as_mut().is_some_and(|r| r.child.try_wait().ok().flatten().is_some()) {
             *s = None;
         }
         if s.is_none() {
-            *s = Some(start()?);
             let mut r = start()?;
             if let Some(last) = LOOK.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
                 let _ = writeln!(r.stdin, "{last}");
             }
             *s = Some(r);
         }
-
         if look {
             *LOOK.lock().unwrap_or_else(|e| e.into_inner()) = Some(req.clone());
         }
@@ -120,8 +117,24 @@ pub fn stop() {
     if let Some(mut r) = SERVICE.lock().unwrap_or_else(|e| e.into_inner()).take() {
         let _ = writeln!(r.stdin, "{}", json!({ "cmd": "quit" }));
         let _ = r.stdin.flush();
-        std::thread::sleep(Duration::from_millis(100));
-        let _ = r.child.kill();
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_millis(500) && matches!(r.child.try_wait(), Ok(None)) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        end(&mut r.child);
+    }
+}
+
+/// Kill the service if it has not ended. One ended while it placed a bus's preview leaves
+/// that bus marked as the one it was placing, which its next start takes for a preview that
+/// hung it and leaves out for good: a big bus that takes seconds to read (the EN92, the
+/// GN92) lost its preview whenever the launcher was closed or a game started meanwhile.
+/// The launcher ended it, so the mark is no news and goes.
+fn end(child: &mut Child) {
+    if matches!(child.try_wait(), Ok(None)) {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_file(omsi_launcher_lib::data_dir().join(format!("showroom-placing-{}.txt", omsi_platform::VERSION)));
     }
 }
 
@@ -148,7 +161,6 @@ pub fn release() {
         while t.elapsed() < Duration::from_secs(20) && matches!(r.child.try_wait(), Ok(None)) {
             std::thread::sleep(Duration::from_millis(50));
         }
-        let _ = r.child.kill();
-        let _ = r.child.wait();
+        end(&mut r.child);
     });
 }

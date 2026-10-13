@@ -14,6 +14,12 @@ ab_glyph.workspace = true
 resvg = { version = "0.45", default-features = false }
 hashbrown.workspace = true
 pollster.workspace = true
+# (the widget kit's key codes and cursor shapes)
+winit.workspace = true
+
+[features]
+# what an app's tests see of the widget kit: every clickable thing's place (`kit::Ui::drawn`)
+test-support = []
 
 [dev-dependencies]
 naga = { workspace = true, features = ["wgsl-in"] }

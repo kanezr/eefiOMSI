@@ -44,7 +44,7 @@ impl World {
         let mut seen: hashbrown::HashSet<*const ObjectType> = hashbrown::HashSet::new();
         for o in &p.objects {
             if let Some(inst) = &o.script {
-                let selection = scenery_texture_selection(&o.ot, inst);
+                let selection = scenery_texture_selection(&o.ot, &|n| inst.var(n));
                 for (group, &index) in o.ot.dynamic_textures.iter().zip(&selection) {
                     for (_, file, dir) in group.choices.get(index).into_iter().flatten() {
                         let mut dirs = o.ot.texture_dirs(&self.root);

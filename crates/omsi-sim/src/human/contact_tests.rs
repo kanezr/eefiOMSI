@@ -25,6 +25,7 @@ fn character_with_knee(scale: f32, knee_height: f32) -> (Rig, HumanMesh) {
         bones: vec![],
         skin: vec![],
         alpha: vec![],
+        morphs: vec![],
     };
     for side in 0..2 {
         for x in [-0.035, 0.035] {

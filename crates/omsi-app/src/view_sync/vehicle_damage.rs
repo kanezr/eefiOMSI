@@ -320,13 +320,23 @@ pub fn sync_vehicle_damage(
     vehicle: &mut omsi_sim::VehicleInstance,
     render: &mut VehicleRender,
 ) {
+    place_cracks(renderer, scene, render, vehicle.position, |m| vehicle.mesh_local_transform(m));
+    for glass in vehicle.take_broken_glass() {
+        let Some(transform) = vehicle.mesh_transforms.get(glass.mesh) else { continue };
+        let impact = transform.inverse().transform_point3(glass.point);
+        let local = vehicle.mesh_local_transform(glass.mesh);
+        add_crack(renderer, scene, render, &vehicle.ty, vehicle.position, glass.mesh, impact, glass.energy, local);
+    }
+    for dent in vehicle.take_damage_dents() {
+        add_dent(renderer, scene, render, &vehicle.ty, &dent);
+    }
+}
+
+/// The glass cracks a vehicle has, where its panes are (`local`: a mesh's transform
+/// relative to `position`) and shown with them.
+pub(crate) fn place_cracks(renderer: &Renderer, scene: &mut Scene, render: &VehicleRender, position: glam::DVec3, local: impl Fn(usize) -> glam::Mat4) {
     for &(mesh, instance, _) in &render.glass_cracks {
-        renderer.set_transform(
-            scene,
-            instance,
-            vehicle.position,
-            vehicle.mesh_local_transform(mesh),
-        );
+        renderer.set_transform(scene, instance, position, local(mesh));
         // shown with the pane it lies on: a bus's inner and outer window meshes (one for the
         // cab view, one for outside) both crack, and drawn always, both crack stars showed
         let visible = render.instances.get(mesh).is_none_or(|&i| scene.instances[i].visible);
@@ -343,79 +353,87 @@ pub fn sync_vehicle_damage(
             renderer.set_params(scene, instance, &alpha, visible, &[]);
         }
     }
-    for glass in vehicle.take_broken_glass() {
-        let Some(transform) = vehicle.mesh_transforms.get(glass.mesh) else { continue };
-        let impact = transform.inverse().transform_point3(glass.point);
-        let Some(pane) = vehicle.ty.mesh_data(glass.mesh) else { continue };
-        let data = glass_crack_mesh(&pane, glass.mesh, impact, glass.energy);
-        if data.indices.is_empty() {
-            continue;
-        }
-        // (lit, as the pane they lie on: a crack shows by the light it scatters, and drawn
-        // unlit its pale lines glowed at night)
-        let dark = renderer.add_material(
-            scene,
-            None,
-            omsi_render::AlphaMode::Blend,
-            [0.025, 0.095, 0.13, 1.0],
-            false,
-        );
-        let bright = renderer.add_material(
-            scene,
-            None,
-            omsi_render::AlphaMode::Blend,
-            [0.72, 0.94, 1.0, 1.0],
-            false,
-        );
-        render.own_materials.extend([dark, bright]);
-        let mesh = renderer.add_mesh(scene, &data);
-        let instance = renderer.add_instance(
-            scene,
-            mesh,
-            vehicle.position,
-            vehicle.mesh_local_transform(glass.mesh),
-            vec![dark, bright],
-        );
-        render.glass_cracks.push((glass.mesh, instance, mesh));
+}
+
+/// A pane of mesh `mesh` cracked at `impact` (in the mesh's frame) with `energy`: its crack
+/// overlay made (`local`: the mesh's transform relative to `position`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_crack(
+    renderer: &Renderer,
+    scene: &mut Scene,
+    render: &mut VehicleRender,
+    ty: &omsi_sim::VehicleType,
+    position: glam::DVec3,
+    mesh: usize,
+    impact: glam::Vec3,
+    energy: f32,
+    local: glam::Mat4,
+) {
+    let Some(pane) = ty.mesh_data(mesh) else { return };
+    let data = glass_crack_mesh(&pane, mesh, impact, energy);
+    if data.indices.is_empty() {
+        return;
     }
+    // (lit, as the pane they lie on: a crack shows by the light it scatters, and drawn
+    // unlit its pale lines glowed at night)
+    let dark = renderer.add_material(
+        scene,
+        None,
+        omsi_render::AlphaMode::Blend,
+        [0.025, 0.095, 0.13, 1.0],
+        false,
+    );
+    let bright = renderer.add_material(
+        scene,
+        None,
+        omsi_render::AlphaMode::Blend,
+        [0.72, 0.94, 1.0, 1.0],
+        false,
+    );
+    render.own_materials.extend([dark, bright]);
+    let id = renderer.add_mesh(scene, &data);
+    let instance = renderer.add_instance(scene, id, position, local, vec![dark, bright]);
+    render.glass_cracks.push((mesh, instance, id));
+}
 
-    for dent in vehicle.take_damage_dents() {
-        let Some(vm) = vehicle.ty.meshes.get(dent.mesh) else { continue };
-        if !vm.skin.is_empty() {
-            continue;
+/// A dent taken: the mesh it is in pushed in round its point (a copy of the mesh of this
+/// vehicle's own, made at its first dent).
+pub(crate) fn add_dent(renderer: &Renderer, scene: &mut Scene, render: &mut VehicleRender, ty: &omsi_sim::VehicleType, dent: &omsi_sim::vehicle::VehicleDent) {
+    let Some(vm) = ty.meshes.get(dent.mesh) else { return };
+    if !vm.skin.is_empty() {
+        return;
+    }
+    let owned = render.damaged.iter().position(|(i, _, _)| *i == dent.mesh);
+    let (id, data) = if let Some(k) = owned {
+        let (_, id, data) = &mut render.damaged[k];
+        (*id, data)
+    } else {
+        let Some(&instance) = render.instances.get(dent.mesh) else { return };
+        let Some(data) = ty.mesh_data(dent.mesh) else { return };
+        let data = data.into_owned();
+        if data.positions.is_empty() {
+            return;
         }
-        let owned = render.damaged.iter().position(|(i, _, _)| *i == dent.mesh);
-        let (id, data) = if let Some(k) = owned {
-            let (_, id, data) = &mut render.damaged[k];
-            (*id, data)
-        } else {
-            let Some(&instance) = render.instances.get(dent.mesh) else { continue };
-            let Some(data) = vehicle.ty.mesh_data(dent.mesh) else { continue };
-            let data = data.into_owned();
-            if data.positions.is_empty() {
-                continue;
-            }
-            let id = renderer.add_mesh(scene, &data);
-            renderer.set_instance_mesh(scene, instance, id);
-            render.damaged.push((dent.mesh, id, data));
-            let (_, id, data) = render.damaged.last_mut().expect("just inserted damage mesh");
-            (*id, data)
-        };
+        let id = renderer.add_mesh(scene, &data);
+        renderer.set_instance_mesh(scene, instance, id);
+        render.damaged.push((dent.mesh, id, data));
+        let (_, id, data) = render.damaged.last_mut().expect("just inserted damage mesh");
+        (*id, data)
+    };
 
-        let radius = 0.55 + dent.depth;
-        let mut changed = false;
-        for p in &mut data.positions {
-            let distance = p.distance(dent.point);
-            if distance < radius {
-                let weight = (1.0 - distance / radius).powi(2);
-                *p += dent.push * (dent.depth * weight);
-                changed = true;
-            }
+    let radius = 0.55 + dent.depth;
+    let mut changed = false;
+    for p in &mut data.positions {
+        let distance = p.distance(dent.point);
+        if distance < radius {
+            let weight = (1.0 - distance / radius).powi(2);
+            *p += dent.push * (dent.depth * weight);
+            changed = true;
         }
-        if changed {
-            omsi_geometry::compute_normals_d3d(data);
-            renderer.update_mesh(scene, id, &data.positions, &data.normals, &data.uvs);
-        }
+    }
+    if changed {
+        omsi_geometry::compute_normals_d3d(data);
+        renderer.update_mesh(scene, id, &data.positions, &data.normals, &data.uvs);
     }
 }
 

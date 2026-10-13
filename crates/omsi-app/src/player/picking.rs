@@ -128,12 +128,12 @@ mod mouseevent_pick_tests {
 /// The page of an `[htmltexture]` a ray lands on: its script texture index and the place on it
 /// (`u`/`v` from 0 to 1, `v` down from the top), for the nearest such surface. The nearest
 /// triangle of a mesh decides: a bezel of the same mesh in front of the screen takes the click
-/// away from it.
-pub(crate) fn pick_html_in(vehicle: &omsi_sim::VehicleInstance, origin: DVec3, dir: Vec3) -> Option<(usize, f32, f32)> {
-    if vehicle.html_textures.is_empty() {
+/// away from it. `also`: script textures clicked like pages (those `.opl` plugins draw).
+pub(crate) fn pick_html_in(vehicle: &omsi_sim::VehicleInstance, origin: DVec3, dir: Vec3, also: &[usize]) -> Option<(usize, f32, f32)> {
+    let pages: Vec<usize> = vehicle.html_textures.iter().map(|t| t.script_index).chain(also.iter().copied()).collect();
+    if pages.is_empty() {
         return None;
     }
-    let pages: Vec<usize> = vehicle.html_textures.iter().map(|t| t.script_index).collect();
     let o = (origin - vehicle.position).as_vec3();
     let mut best: Option<(f32, usize, f32, f32)> = None;
     for (i, vm) in vehicle.ty.meshes.iter().enumerate() {

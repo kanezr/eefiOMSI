@@ -17,11 +17,17 @@ export function SetupPage() {
     setBusy(true);
     try {
       const r = await call('config_save', { root, game });
+      if (!r.saved) {
+        const what = r.missing.slice(0, 6).join(', ') + (r.missing.length > 6 ? ` (+${r.missing.length - 6})` : '');
+        toast(t('Not saved: {folder} is not a complete OMSI 2 installation, it lacks {what}', { folder: r.chosen, what }), 'error');
+        setBusy(false);
+        return;
+      }
       set({ config: r.config, boot: { ...S.boot, root: r.root, root_error: r.root_error, game: r.game } });
-      if (r.root) {
-        toast(t('OMSI 2 was found.'), 'ok');
-        loadContent();
-      } else toast(r.root_error || t('This is not a complete OMSI 2 installation.'), 'error');
+      if (r.used_other) toast(t('Saved, but the OMSI 2 folder used is {folder}', { folder: r.used_other }), 'error');
+      else if (r.root) toast(t('OMSI 2 was found.'), 'ok');
+      else toast(r.root_error || t('This is not a complete OMSI 2 installation.'), 'error');
+      if (r.root) loadContent();
     } catch (e) {
       toast(e.message, 'error');
     }
@@ -62,12 +68,6 @@ export function SetupPage() {
           <${Button} small icon="folder" label="Open the settings folder" onClick=${() => call('open_path', { path: b.data_dir })} />
         </div>
       </${Card}>
-      ${!onPhone && html`<${Card} title="The game's own launcher">
-        <div class="row">
-          <p class="muted grow">${t('The launcher drawn by the game itself, as before: for a computer where this window has trouble.')}</p>
-          <${Button} icon="external" label="Open it" onClick=${() => call('classic_launcher').catch((e) => toast(e.message, 'error'))} />
-        </div>
-      </${Card}>`}
     </div>
   `;
 }

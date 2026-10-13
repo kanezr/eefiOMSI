@@ -5,13 +5,14 @@ use super::*;
 impl Player {
     /// `inside`: the camera is one of the vehicle's interior cameras. `[viewpoint]` bits:
     /// 1 = visible from outside, 2 = visible from inside, 4 = visible on AI vehicles; 0 = always.
-    pub(crate) fn sync_transforms(&mut self, renderer: &Renderer, scene: &mut Scene, inside: bool) {
+    /// `rain_quality`: the rain's (see `rain::quality_of`), for the films on the panes.
+    pub(crate) fn sync_transforms(&mut self, renderer: &Renderer, scene: &mut Scene, inside: bool, rain_quality: u8) {
         sync_vehicle_transforms(renderer, scene, &mut self.vehicle, &mut self.render, &mut self.trailer_renders, inside);
         if self.render.window_wipers.is_none() {
             self.render.window_wipers = Some(crate::window_wipers::WindowWipers::new(renderer, scene, &self.vehicle, &self.render));
         }
         let wipers = self.render.window_wipers.as_mut().unwrap();
-        wipers.update(renderer, scene, &self.vehicle, &self.render.instances);
+        wipers.update(renderer, scene, &self.vehicle, &self.render.instances, rain_quality);
     }
 
     /// Pose and place the driver at the wheel; `show` false hides the figure (the `driver`

@@ -3,7 +3,6 @@
 
 use super::*;
 use crate::scene::World;
-use omsi_render::{Renderer, Scene};
 
 impl Traffic {
     /// Now and then a car near the player parks: a space at the kerb that a parked car has
@@ -83,7 +82,7 @@ impl Traffic {
     /// goes (its space stays empty) and the AI car of the same folder takes its place, in
     /// the parking position, indicating, and pulls out into its lane once the road behind
     /// it is clear. Called with every population pass (about every two seconds).
-    pub fn pull_out_parked(&mut self, view: &mut TrafficView, world: &World, renderer: &Renderer, scene: &mut Scene, center: DVec3) {
+    pub fn pull_out_parked(&mut self, world: &World, center: DVec3) {
         let forced = omsi_cfg::flags::OMSI_PARKED_PULL_OUT.parse::<f64>();
         // about one car a minute
         if self.rand_f() >= forced.unwrap_or(0.035) {
@@ -149,9 +148,11 @@ impl Traffic {
                 why.push("road not clear".into());
                 continue;
             }
-            if depart_parked(world, renderer, scene, key).is_none() {
+            // (the world's side now; the object hidden by the view: `TrafficEvent::ParkedDeparted`)
+            let Some(gone) = world.take_departing_parked(key) else {
                 continue;
-            }
+            };
+            self.events.push(TrafficEvent::ParkedDeparted { instances: gone.instances });
             if let Some(list) = self.sim.parked.get_mut(&l) {
                 if let Some(j) = (0..list.len()).min_by(|&a, &b| (list[a].0 - s).abs().total_cmp(&(list[b].0 - s).abs())) {
                     if (list[j].0 - s).abs() < 3.0 {
@@ -160,7 +161,7 @@ impl Traffic {
                 }
             }
             let seed = self.rand();
-            let id = self.create_car(view, world, renderer, scene, center, LaneKind::Street, l, s, ty.clone(), seed, None, None, Some(0.0), None);
+            let id = self.create_car(world, center, LaneKind::Street, l, s, ty.clone(), seed, None, None, Some(0.0), None);
             let net = &self.sim.net;
             if let Some(car) = self.sim.cars.iter_mut().find(|c| c.id == id) {
                 car.state.lateral = lat;
@@ -177,6 +178,24 @@ impl Traffic {
         }
         if debug && !why.is_empty() {
             log::info!("parked pull-out: none this time ({})", why.join("; "));
+        }
+    }
+
+    /// The cars that have finished parking (the simulation takes them off, see
+    /// `TrafficSim::take_parked`): the parked object stands in their place from now on
+    /// (shown by the view: `TrafficEvent::ParkedReturned`), and their renders go back to the
+    /// world at the next sync.
+    pub(crate) fn settle_parked(&mut self, world: &World) {
+        while let Some((c, p)) = self.sim.take_parked() {
+            if let Some(instances) = world.take_returning_parked(p.key) {
+                self.events.push(TrafficEvent::ParkedReturned { instances });
+                self.sim.space_taken_back(&p);
+            }
+            if omsi_cfg::flags::OMSI_DEBUG_TRAFFIC.is_set() {
+                log::info!("car {} has parked (space {})", c.id, p.key);
+            }
+            self.drop_sounds(c.id);
+            self.events.push(TrafficEvent::Retired { id: c.id });
         }
     }
 }

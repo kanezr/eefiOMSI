@@ -23,13 +23,12 @@ impl<'a> Offscreen<'a> {
             .unwrap_or((1600, 900));
         let view_aspect = w as f32 / h.max(1) as f32;
         let settings = settings::Settings::load();
-        crate::rain::set_quality(&settings.rain_quality);
         let instance = graphics_instance();
         let mut renderer = pollster::block_on(Renderer::new_with(
             &instance,
             None,
             Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-            settings.render_options(),
+            args.session_settings.render_options(&settings),
         ))?;
         log::info!("adapter: {}", renderer.adapter_name);
         crate::lights::load_smoke_texture(&mut renderer, &args.root);
@@ -98,7 +97,7 @@ impl<'a> Offscreen<'a> {
         let player_ref: Option<Player> = None;
         let envir = omsi_content::Envir::load(&args.root.join("envir.cfg")).ok();
         let (weather, model) = crate::weather_setup::load_weather_run(args);
-        let mut sky = crate::weather_setup::SkyState { clouds: None, model };
+        let mut sky = crate::weather_setup::SkyState { clouds: None, model, look: args.session_settings };
         setup_sky(args, &renderer, &mut scene, envir.as_ref(), Some(&weather), &mut sky.clouds);
         if let Some(p) = player.as_mut() {
             apply_weather(&mut p.vehicle, &weather, initial_wetness(&weather));
@@ -125,11 +124,11 @@ impl<'a> Offscreen<'a> {
         }
         // one simulation loop for everything: traffic, the player's vehicle (test profile and
         // timed triggers) and the passengers, so that they see each other every frame
-        let dt = 1.0 / 30.0;
+        let dt = super::run_dt();
         let drive_frames = args.drive.map(|s| (s / dt) as usize).unwrap_or(0);
         let wheel_worst: Option<(DVec3, f64)> = None;
         let total_frames = drive_frames
-            .max(if humans_off.is_some() { 30 } else { 0 })
+            .max(if humans_off.is_some() { super::steps_in(1.0) } else { 0 })
             .max(if traffic.is_some() { 1 } else { 0 });
         // a dedicated server runs until it is told to stop (SIGTERM, Ctrl+C)
         let server = args.server.is_some();
@@ -191,23 +190,20 @@ impl<'a> Offscreen<'a> {
                     .as_ref(),
             );
             steps::set_ai_daylight(t, daylight, steps::gloomy_weather(Some(&weather)));
-            t.populate(&mut sim_view.traffic, &world, &renderer, &mut scene, center);
+            t.populate(&world, center);
+            crate::view_sync::apply_traffic(t, &mut sim_view.traffic, &world, &renderer, &mut scene);
         }
         ground_sample(&world, traffic.as_ref(), center)?;
         // LAN in an offscreen run too, so that one game's view of another can be rendered
         // (`OMSI_LAN_AUDIO=1`: with the other buses' sounds, heard at the camera - for the logs)
         let lan_audio = (lan_off.is_some() && omsi_cfg::flags::OMSI_LAN_AUDIO.is_set())
-            .then(omsi_audio::AudioEngine::new);
+            .then(|| {
+                let a = omsi_audio::AudioEngine::new();
+                a.set_doppler(settings.doppler);
+                a
+            });
         if let (Some(l), Some(p)) = (lan_off.as_mut(), player.as_mut()) {
-            lan::settle_spawn(
-                l,
-                &mut remotes_off,
-                p,
-                args,
-                &world,
-                traffic.as_ref().map(|t| &t.net),
-                lan::WELCOME_WAIT,
-            );
+            lan::settle_spawn(l, &mut remotes_off, p, args, &world, traffic.as_ref().map(|t| &t.net), lan::WELCOME_WAIT);
         }
         let mut run_clock = start_clock(args);
         run_clock.advance(service_seconds as f32);
@@ -236,11 +232,12 @@ impl<'a> Offscreen<'a> {
             crate::ground_gap::check_lanes(&world, t);
         }
         // the tyres' spray (see `puddles`), from roads as wet as the weather left them
-        let spray = puddles::Spray::new();
+        let mut spray = puddles::Spray::new();
+        spray.graphics = args.session_settings.graphics();
         let wetness = initial_wetness(&weather);
         let cabin_air = crate::condensation::CabinAir::new();
         let real_time = RealTime::default();
-        let recorder = record::Recorder::new(out, player.as_mut(), &args.root);
+        let recorder = record::Recorder::new(out, player.as_mut(), &args.root, settings.doppler);
         Ok(Offscreen {
             args,
             out,
@@ -255,6 +252,7 @@ impl<'a> Offscreen<'a> {
             traffic,
             schedule,
             player,
+            scenery: Default::default(),
             spawn_z,
             center,
             duty,
@@ -282,6 +280,7 @@ impl<'a> Offscreen<'a> {
             lan_audio,
             lan_off,
             remotes_off,
+            lan_world_off: Default::default(),
             run_clock,
             wetness,
             cabin_air,
@@ -440,10 +439,12 @@ fn new_humans(
         h.stop_names = schedule.as_ref().map(|s| s.stop_names());
         // (the trips due at the stops soon, as in the window: #1415)
         h.due_dests = schedule.as_ref().map(|s| s.due_destinations(parse_time(&args.time)));
-        h.populate(view, world, renderer, scene, center);
+        h.populate(world, center);
+        crate::view_sync::apply_people(&mut h, view, world, renderer, scene);
         if let Some(p) = player.as_ref() {
             if args.riders > 0 {
-                h.seed_riders(view, args.riders, &p.vehicle, world, renderer, scene);
+                h.seed_riders(args.riders, &p.vehicle, world);
+                crate::view_sync::apply_people(&mut h, view, world, renderer, scene);
             }
         }
         Some(h)
@@ -460,7 +461,7 @@ fn ground_sample(world: &World, traffic: Option<&traffic::Traffic>, center: DVec
     if let (Some(path), Some(t)) = (omsi_cfg::flags::OMSI_GROUND_SAMPLE.var(), traffic.as_ref()) {
         use std::io::Write;
         let Ok(mut f) = std::fs::File::create(&path) else { return Err(anyhow::anyhow!("OMSI_GROUND_SAMPLE: cannot write {path}")) };
-        let collision = world.collision.lock().clone();
+        let collision = world.data.peek().lists.collision.clone();
         for (li, l) in t.net.lanes.iter().enumerate() {
             if l.kind != omsi_sim::traffic::LaneKind::Street { continue; }
             let len = l.length();
@@ -468,7 +469,7 @@ fn ground_sample(world: &World, traffic: Option<&traffic::Traffic>, center: DVec
             while s < len {
                 let (p, _) = l.at(s);
                 if (p.truncate() - center.truncate()).length() < 400.0 {
-                    let g = crate::scene::drive_probe(&world.terrains, &world.surfaces, p.x, p.y, p.z + 0.5);
+                    let g = world.data.peek().drive_probe(p.x, p.y, p.z + 0.5);
                     // and a wall there: a 2 m box from 0.3 m to 3 m over the ground, against
                     // the objects' collision meshes (the id of the first one it touches)
                     let base = g.below.unwrap_or(p.z);
@@ -484,7 +485,7 @@ fn ground_sample(world: &World, traffic: Option<&traffic::Traffic>, center: DVec
                         .iter()
                         .map(|&d| {
                             let w = p.truncate() + glam::DVec2::new(dir.y, -dir.x) * d;
-                            crate::scene::drive_probe(&world.terrains, &world.surfaces, w.x, w.y, p.z + 0.5).below.map(|z| format!("{z:.4}")).unwrap_or_default()
+                            world.data.peek().drive_probe(w.x, w.y, p.z + 0.5).below.map(|z| format!("{z:.4}")).unwrap_or_default()
                         })
                         .collect();
                     let _ = writeln!(f, "{li},{s:.1},{:.2},{:.2},{:.3},{},{},{}", p.x, p.y, p.z, g.below.map(|z| format!("{z:.4}")).unwrap_or_default(), wall.map(|w| w.to_string()).unwrap_or_default(), side.join(","));

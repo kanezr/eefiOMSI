@@ -132,8 +132,8 @@ impl GroundGap {
             let tyre = centre.z - r as f64;
             // what is drawn under the tyre, from 2 m over its hub: a tyre sunk into the road
             // is under the road, and asked from the hub that found the ground below it
-            let drawn = crate::scene::drawn_ground(&world.terrains, &world.surfaces, centre.x, centre.y, centre.z + 2.0);
-            let wheel = crate::scene::drive_probe(&world.terrains, &world.surfaces, centre.x, centre.y, centre.z).below;
+            let drawn = world.data.peek().drawn_ground(centre.x, centre.y, centre.z + 2.0);
+            let wheel = world.data.peek().drive_probe(centre.x, centre.y, centre.z).below;
             let stats = if ai { &mut self.ai } else { &mut self.player };
             match drawn {
                 Some(d) => stats.add(tyre - d, DVec3::new(centre.x, centre.y, tyre), t),
@@ -238,7 +238,7 @@ pub fn check_lanes(world: &World, traffic: &crate::traffic::Traffic) {
         while s < len {
             let (p, _) = l.at(s);
             s += 1.0;
-            let Some(d) = crate::scene::drawn_ground(&world.terrains, &world.surfaces, p.x, p.y, p.z + 3.0) else {
+            let Some(d) = world.data.peek().drawn_ground(p.x, p.y, p.z + 3.0) else {
                 none += 1;
                 continue;
             };
@@ -246,7 +246,7 @@ pub fn check_lanes(world: &World, traffic: &crate::traffic::Traffic) {
             // and what the wheels stand on there (the faces under 3 m over the lane, as
             // Omsi.exe asks), against the window an AI car looks in (0.6 m over its lane,
             // 0.1 m under it)
-            if let Some(w) = crate::scene::drive_probe(&world.terrains, &world.surfaces, p.x, p.y, p.z + 3.0).below {
+            if let Some(w) = world.data.peek().drive_probe(p.x, p.y, p.z + 3.0).below {
                 let off = w - p.z;
                 let k = edges.iter().position(|e| off < *e).unwrap_or(edges.len());
                 wheel_hist[k] += 1;
@@ -305,7 +305,7 @@ pub fn check_lanes(world: &World, traffic: &crate::traffic::Traffic) {
             for side in [-1.0, 1.0] {
                 let w = p + right * side;
                 tried += 1;
-                let g = |x: f64, y: f64| crate::scene::drive_probe(&world.terrains, &world.surfaces, x, y, p.z + 1.0).below;
+                let g = |x: f64, y: f64| world.data.peek().drive_probe(x, y, p.z + 1.0).below;
                 let Some(here) = g(w.x, w.y) else { continue };
                 let around: Vec<f64> = [(0.03, 0.0), (-0.03, 0.0), (0.0, 0.03), (0.0, -0.03)].iter().filter_map(|(dx, dy)| g(w.x + dx, w.y + dy)).collect();
                 if around.len() == 4 {

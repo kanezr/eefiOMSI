@@ -3,13 +3,12 @@
 
 use super::*;
 use crate::scene::World;
-use omsi_render::{Renderer, Scene};
 
 impl Traffic {
     /// Draw the host's traffic from now on (`on`), or simulate our own again: either way
     /// every car there is now goes (ours make room for the host's, the host's copies
     /// cannot drive on by themselves).
-    pub fn set_mirror(&mut self, view: &mut TrafficView, world: &World, renderer: &Renderer, scene: &mut Scene, on: bool) {
+    pub fn set_mirror(&mut self, on: bool) {
         if self.sim.mirror == on {
             return;
         }
@@ -22,7 +21,7 @@ impl Traffic {
         }
         let ids: Vec<u64> = self.sim.cars.iter().map(|c| c.id).collect();
         for id in ids {
-            self.remove_car(view, world, renderer, scene, id);
+            self.remove_car(id);
         }
         self.sim.initial = !on;
         log::info!(
@@ -39,10 +38,7 @@ impl Traffic {
     #[allow(clippy::too_many_arguments)]
     pub fn add_mirror_car(
         &mut self,
-        view: &mut TrafficView,
         world: &World,
-        renderer: &Renderer,
-        scene: &mut Scene,
         id: u64,
         ty: Arc<VehicleType>,
         scheme: Option<usize>,
@@ -58,7 +54,7 @@ impl Traffic {
         // (the host's poses say where it stands; nothing here pulls it onto the ground)
         vehicle.ground = None;
         vehicle.apply_paint_vars(scheme);
-        let render = self.new_car_render(world, renderer, scene, &mut vehicle, &ty, scheme);
+        let trailers = self.attach_trailers(&mut vehicle, scheme);
         if !ty.model.text_textures.is_empty() {
             vehicle.init_text_textures(&mut world.fonts.lock(), &|p| {
                 omsi_texture::decode_file(p)
@@ -128,7 +124,8 @@ impl Traffic {
             park: None,
             guard: Default::default(),
         });
-        view.insert(id, render);
+        self.looks.forget(id);
+        self.events.push(TrafficEvent::Spawned { id, ty: ty.clone(), scheme, trailers });
         self.sim.cars.len() - 1
     }
 

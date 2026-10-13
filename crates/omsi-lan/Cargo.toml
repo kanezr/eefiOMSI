@@ -21,6 +21,8 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 ring.workspace = true
+# the chat's word filter
+rustrict = "0.7"
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

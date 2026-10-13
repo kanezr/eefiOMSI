@@ -38,13 +38,14 @@
 //! the gear lever the lone hand pushes the wheel round as far as it can and then takes it again
 //! further back (palming it), rather than letting the rim slide through it.
 
-use glam::{Mat4, Vec3};
+use glam::{DVec3, Mat4, Vec3};
 use omsi_render::{AlphaMode, MeshId, Renderer, Scene};
 use omsi_sim::human::{curl_hands, grip_centres, hand_slot, skin_from, Activity, HumanType, Pose, PoseInput};
-use omsi_sim::VehicleInstance;
 use std::sync::Arc;
 
+mod car;
 mod rig;
+pub use car::{DriverCar, SnapshotBus};
 
 use rig::*;
 
@@ -386,7 +387,7 @@ impl DriverFigure {
         world: &crate::World,
         renderer: &Renderer,
         scene: &mut Scene,
-        v: &VehicleInstance,
+        v: &impl DriverCar,
         pick: u64,
     ) -> Option<DriverFigure> {
         let ty = driver_type(world, pick)?;
@@ -400,7 +401,7 @@ impl DriverFigure {
         world: &crate::World,
         renderer: &Renderer,
         scene: &mut Scene,
-        v: &VehicleInstance,
+        v: &impl DriverCar,
         hum: Option<&str>,
         pick: u64,
     ) -> Option<DriverFigure> {
@@ -416,7 +417,7 @@ impl DriverFigure {
         world: &crate::World,
         renderer: &Renderer,
         scene: &mut Scene,
-        v: &VehicleInstance,
+        v: &impl DriverCar,
         ty: Arc<HumanType>,
     ) -> Option<DriverFigure> {
         let seat = seat_of(v)?;
@@ -442,7 +443,7 @@ impl DriverFigure {
                 mats.push(renderer.add_material(scene, tex, alpha, [1.0; 4], false));
             }
             let id = renderer.add_mesh(scene, &hm.data);
-            let inst = renderer.add_instance(scene, id, v.position, Mat4::IDENTITY, mats);
+            let inst = renderer.add_instance(scene, id, v.position(), Mat4::IDENTITY, mats);
             // (hidden until `update` has posed and placed it: drawn as loaded, the figure
             // stood in the file's T-pose at the bus's origin, in the middle of the aisle)
             renderer.set_params(scene, inst, &[], false, &[]);
@@ -533,7 +534,7 @@ impl DriverFigure {
 
     /// Put the figure into (another) vehicle's driver's seat: `false` when it has none.
     /// The traffic keeps a few figures and moves them from bus to bus.
-    pub fn attach(&mut self, v: &VehicleInstance) -> bool {
+    pub fn attach(&mut self, v: &impl DriverCar) -> bool {
         match seat_of(v) {
             Some(seat) => {
                 self.seat_in(v, seat);
@@ -543,7 +544,7 @@ impl DriverFigure {
         }
     }
 
-    fn seat_in(&mut self, v: &VehicleInstance, seat: omsi_vehicle::cabin::PassPos) {
+    fn seat_in(&mut self, v: &impl DriverCar, seat: omsi_vehicle::cabin::PassPos) {
         let hip = Vec3::from(seat.pos);
         let r = seat.rot.to_radians();
         self.hip = hip;
@@ -603,10 +604,23 @@ impl DriverFigure {
         self.shown = false;
     }
 
+    pub fn follow(&self, renderer: &Renderer, scene: &mut Scene, position: DVec3, body: Mat4) {
+        if !self.shown || !self.settled {
+            return;
+        }
+        let h = self.heading.to_radians();
+        let floor = self.floor + Vec3::new(h.sin(), h.cos(), 0.0) * self.slide;
+        let at = position + body.transform_point3(floor).as_dvec3();
+        let xf = body * Mat4::from_rotation_z(-h);
+        for (_, inst) in &self.meshes {
+            renderer.set_transform(scene, *inst, at, xf);
+        }
+    }
+
     /// Turn the hands with the wheel, pose, skin and place the figure; `show` false hides it,
     /// `mirror_only` keeps it out of the window's picture but in the mirrors (the driver's
     /// own view: OMSI shows the driver in the mirrors while one looks from his seat).
-    pub fn update(&mut self, renderer: &Renderer, scene: &mut Scene, v: &VehicleInstance, render: &crate::VehicleRender, dt: f32, show: bool, mirror_only: bool) {
+    pub fn update(&mut self, renderer: &Renderer, scene: &mut Scene, v: &impl DriverCar, render: &crate::VehicleRender, dt: f32, show: bool, mirror_only: bool) {
         if show != self.shown {
             for (_, inst) in &self.meshes {
                 renderer.set_params(scene, *inst, &[], show, &[]);
@@ -831,13 +845,13 @@ impl DriverFigure {
             renderer.update_mesh(scene, self.meshes[k].0, pos, nrm, &m.data.uvs);
         }
         let body = v.body_rotation();
-        let at = v.position + body.transform_point3(floor).as_dvec3();
+        let at = v.position() + body.transform_point3(floor).as_dvec3();
         let xf = body * Mat4::from_rotation_z(-h);
         // lit by the seat's four lamps as Omsi.exe lights a seated person (0x62f7b8 enables
         // them as Direct3D lights for the figure): the bus meshes' point lights, coloured,
         // falling off with distance and only on the side facing them. (A flat warm term of
         // the lamps' sum lit the figure evenly on every side, glowing in the dark cab.)
-        let (first, count) = render.seat_lamps(v.ty.model.interior_lights.len(), &self.lamps).unwrap_or((0, 0));
+        let (first, count) = render.seat_lamps(v.ty().model.interior_lights.len(), &self.lamps).unwrap_or((0, 0));
         for (_, inst) in &self.meshes {
             renderer.set_transform(scene, *inst, at, xf);
             renderer.set_interior(scene, *inst, 0.0);
@@ -850,8 +864,8 @@ impl DriverFigure {
     /// The wheel's frame as it stands now (model frame): centre, axis towards the driver, up
     /// and right in its plane. An adjustable column (the SD202's) tilts the whole wheel, and
     /// holds reckoned in the resting frame put the fists beside the tilted rim.
-    fn wheel_frame(w: &Wheel, v: &VehicleInstance) -> (Mat4, Vec3, Vec3, Vec3, Vec3) {
-        let turn = v.mesh_transforms.get(w.mesh).copied().unwrap_or(Mat4::IDENTITY);
+    fn wheel_frame(w: &Wheel, v: &impl DriverCar) -> (Mat4, Vec3, Vec3, Vec3, Vec3) {
+        let turn = v.mesh_transform(w.mesh).unwrap_or(Mat4::IDENTITY);
         let centre = turn.transform_point3(w.centre);
         let axis = turn.transform_vector3(w.axis).normalize_or(w.axis);
         let mut up = (Vec3::Z - axis * axis.dot(Vec3::Z)).normalize_or_zero();
@@ -866,7 +880,7 @@ impl DriverFigure {
     /// How far the wheel is turned, seen from the driver (degrees clockwise): from its
     /// variable (all the turns of a lock to lock), its sign found from the mesh as turned now
     /// (within one turn).
-    fn wheel_angle(&mut self, v: &VehicleInstance) -> Option<f32> {
+    fn wheel_angle(&mut self, v: &impl DriverCar) -> Option<f32> {
         let w = self.wheel.as_ref()?;
         let (turn, _, _, up, right) = Self::wheel_frame(w, v);
         let up_now = turn.transform_vector3(w.up).normalize_or(w.up);
@@ -1002,7 +1016,7 @@ impl DriverFigure {
     /// its hand is at, the wrist continuing the forearm; a hand on its way to a new hold
     /// lifted off the rim towards the driver.
     /// `dt` eases each hand's frame towards the one its hold asks for (0 takes it at once).
-    fn hand_targets(&mut self, v: &VehicleInstance, dt: f32) -> Option<Targets> {
+    fn hand_targets(&mut self, v: &impl DriverCar, dt: f32) -> Option<Targets> {
         let w = self.wheel.as_ref()?;
         let (_, centre, axis, up, right) = Self::wheel_frame(w, v);
         let h = self.heading.to_radians();
@@ -1188,14 +1202,14 @@ impl DriverFigure {
 
     /// Watches the lever, the clutch and the bus's speed and moves the shifting hand between
     /// the rim and the knob: `Away` -> `Reach` -> `Hold` -> `Back` -> `Away`.
-    fn update_shift(&mut self, v: &VehicleInstance, dt: f32) {
+    fn update_shift(&mut self, v: &impl DriverCar, dt: f32) {
         let Some(sh) = self.shifter.as_ref() else { return };
         if !(dt > 0.0) {
             return;
         }
         let dt = dt.min(0.1);
         let (hand, grab) = (sh.hand, sh.grab);
-        let turn = v.mesh_transforms.get(sh.mesh).copied().unwrap_or(Mat4::IDENTITY);
+        let turn = v.mesh_transform(sh.mesh).unwrap_or(Mat4::IDENTITY);
         let knob = turn.transform_point3(grab);
         let vars: Vec<f32> = sh.vars.iter().map(|n| v.var(n).unwrap_or(0.0)).collect();
         let clutch = sh.clutch.as_ref().and_then(|n| v.var(n)).unwrap_or(0.0);
@@ -1215,8 +1229,8 @@ impl DriverFigure {
         let st = &mut self.shift;
 
         // Speed from the position: stopped for a while / moving again (with hysteresis).
-        let speed = st.last_pos.map(|p| ((v.position - p).length() / dt as f64) as f32).unwrap_or(0.0);
-        st.last_pos = Some(v.position);
+        let speed = st.last_pos.map(|p| ((v.position() - p).length() / dt as f64) as f32).unwrap_or(0.0);
+        st.last_pos = Some(v.position());
         if speed < STOP_SPEED {
             st.still_for += dt;
         } else if speed > GO_SPEED {
@@ -1333,13 +1347,13 @@ impl DriverFigure {
     /// Where the shifting hand is headed: its side, how far it has got (0..1, eased), the
     /// knob now, and the hand's frame there (wrist to knuckles, palm), or `None` with the
     /// hand on the rim.
-    fn lever_target(&self, v: &VehicleInstance, fwd: Vec3) -> Option<(usize, f32, Vec3, Vec3, Vec3)> {
+    fn lever_target(&self, v: &impl DriverCar, fwd: Vec3) -> Option<(usize, f32, Vec3, Vec3, Vec3)> {
         let sh = self.shifter.as_ref()?;
         let st = &self.shift;
         if st.w <= 0.0 {
             return None;
         }
-        let turn = v.mesh_transforms.get(sh.mesh).copied().unwrap_or(Mat4::IDENTITY);
+        let turn = v.mesh_transform(sh.mesh).unwrap_or(Mat4::IDENTITY);
         let mut knob = turn.transform_point3(sh.grab);
         let axis = turn.transform_vector3(sh.axis).normalize_or(sh.axis);
         if st.stroke < 1.0 {
@@ -1368,8 +1382,8 @@ fn frame_quat(d: Vec3, p: Vec3) -> glam::Quat {
 
 /// The vehicle's first `[drivpos]`.
 
-fn seat_of(v: &VehicleInstance) -> Option<omsi_vehicle::cabin::PassPos> {
-    cabin_of(&v.ty.def)?.driver_positions.first().cloned()
+fn seat_of(v: &impl DriverCar) -> Option<omsi_vehicle::cabin::PassPos> {
+    cabin_of(&v.ty().def)?.driver_positions.first().cloned()
 }
 
 /// A vehicle type's passenger cabin, read once per type.

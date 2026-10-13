@@ -13,7 +13,7 @@ fn main() {
     };
     let mut input = BufReader::new(std::io::stdin().lock());
     let mut out = BufWriter::new(std::io::stdout().lock());
-    let lib = match Library::load(std::path::Path::new(&path)) {
+    let mut lib = match Library::load(std::path::Path::new(&path)) {
         Ok(l) => Some(l),
         Err(e) => {
             eprintln!("omsi-plugin-host: {path}: {e}");
@@ -22,21 +22,27 @@ fn main() {
     };
     loop {
         let Ok(op) = wire::get_u8(&mut input) else { return };
-        let res = match (op, &lib) {
+        let res = match (op, &mut lib) {
             (wire::START, Some(lib)) => {
                 lib.start();
-                let p = lib.procs();
-                let flags = p.variable as u8 | (p.trigger as u8) << 1 | (p.system as u8) << 2 | (p.string as u8) << 3;
-                wire::put_u8(&mut out, 1).and_then(|_| wire::put_u8(&mut out, flags))
+                wire::put_u8(&mut out, 1).and_then(|_| wire::put_u8(&mut out, lib.procs().flags()))
             }
             (wire::START, None) => {
                 let _ = wire::put_u8(&mut out, 0).and_then(|_| wire::put_u8(&mut out, 0)).and_then(|_| out.flush());
                 return;
             }
-            (wire::FRAME, Some(lib)) => match wire::get_frame(&mut input) {
-                Ok(f) => wire::put_reply(&mut out, &lib.frame(&f)),
-                Err(_) => return,
-            },
+            (wire::FRAME, Some(lib)) => {
+                // (the script textures travel only for a library with AccessScriptTexture,
+                // as the game knows from the flags of START)
+                let textures = lib.procs().texture;
+                match wire::get_frame(&mut input, textures, lib.procs().pointer) {
+                    Ok(f) => {
+                        let reply = lib.frame(&f);
+                        wire::put_reply(&mut out, &reply, textures)
+                    }
+                    Err(_) => return,
+                }
+            }
             (wire::FINALIZE, Some(lib)) => {
                 lib.finalize();
                 let _ = wire::put_u8(&mut out, 1).and_then(|_| out.flush());

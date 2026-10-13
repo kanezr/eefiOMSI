@@ -8,9 +8,6 @@
 //! game opens its window on the same scene, in front of the launcher's, and when the session
 //! ends (the menu's Quit) that window goes and the launcher is there again.
 //!
-//! With the setting "Cross-Platform Launcher" the launcher is the one every other system has
-//! (drawn by the game, laid out for fingers as on Android) and the Swift one stays hidden.
-//!
 //! What lives where on the device: the app's own data (settings, profiles, sessions, logs)
 //! in `Library/Application Support/openOMSI` (`HOME` for the rest of the program); the
 //! original game, the mods and the screenshots in the app's Documents, which the Files app
@@ -24,11 +21,7 @@ use winit::platform::ios::WindowAttributesExtIOS;
 
 /// The scene the Swift app connected (its windows are where the game's window goes).
 static SCENE_READY: AtomicBool = AtomicBool::new(false);
-/// The launcher drawn by the game (the setting "Cross-Platform Launcher") instead of the
-/// Swift one; changed while the app runs from either launcher's settings.
-static CROSS_PLATFORM: AtomicBool = AtomicBool::new(false);
-/// Wakes the event loop from the Swift side (a scene connected, a game asked for, the
-/// launcher switched).
+/// Wakes the event loop from the Swift side (a scene connected, a game asked for).
 static PROXY: Mutex<Option<EventLoopProxy<()>>> = Mutex::new(None);
 
 /// Where the original game, the mods and the screenshots go: the app's Documents.
@@ -40,19 +33,6 @@ pub fn documents() -> PathBuf {
 pub(crate) fn wake() {
     if let Some(p) = PROXY.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
         let _ = p.send_event(());
-    }
-}
-
-/// Whether the launcher drawn by the game is the one shown.
-pub(crate) fn cross_platform_launcher() -> bool {
-    CROSS_PLATFORM.load(Ordering::Relaxed)
-}
-
-/// Switch between the two launchers (the settings of either).
-pub(crate) fn set_cross_platform_launcher(on: bool) {
-    if CROSS_PLATFORM.swap(on, Ordering::Relaxed) != on {
-        log::info!("launcher: {}", if on { "the cross-platform one" } else { "the system's own" });
-        wake();
     }
 }
 
@@ -102,10 +82,8 @@ pub extern "C" fn openomsi_ios_main() {
     omsi_cfg::migrate_legacy_data_dir();
     let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1) % 1_000_000_000;
     omsi_script::set_session_seed(seed);
-    let settings = omsi_launcher_lib::get_settings().unwrap_or_else(|_| omsi_launcher_lib::settings_from_text(None));
-    CROSS_PLATFORM.store(settings.get("cross_platform_launcher").and_then(|v| v.as_bool()).unwrap_or(false), Ordering::Relaxed);
-    // the original installation and the content roots, as a bare start finds them (both
-    // launchers read them; the Swift one through `apple_bridge`)
+    // the original installation and the content roots, as a bare start finds them (the Swift
+    // launcher reads them through `apple_bridge`)
     crate::apple_bridge::prepare_once();
 
     let event_loop = match EventLoop::new() {
@@ -116,7 +94,7 @@ pub extern "C" fn openomsi_ios_main() {
         }
     };
     *PROXY.lock().unwrap_or_else(|e| e.into_inner()) = Some(event_loop.create_proxy());
-    let mut shell = Shell { launcher: None, game: None, active: false };
+    let mut shell = Shell { game: None };
     // (UIApplicationMain: the scene delegate of the Swift app connects its scene from here)
     if let Err(e) = event_loop.run_app(&mut shell) {
         log::error!("{e}");
@@ -128,12 +106,6 @@ pub extern "C" fn openomsi_ios_main() {
 pub extern "C" fn openomsi_ios_scene_ready() {
     SCENE_READY.store(true, Ordering::Relaxed);
     wake();
-}
-
-/// The Swift launcher switched to the cross-platform one (its settings) or back.
-#[no_mangle]
-pub extern "C" fn openomsi_ios_set_cross_platform_launcher(on: i32) {
-    set_cross_platform_launcher(on != 0);
 }
 
 // --- the log ---------------------------------------------------------------------------
@@ -218,18 +190,13 @@ Mods: copy them into openOMSI/Mods (they are installed when the launcher opens),
 folder or a .zip, .7z or .rar from the launcher's Mods page. Screenshots are written to\n\
 openOMSI/Screenshots.\n";
 
-// --- the launcher, or the game in front of it --------------------------------------------
+// --- the Swift launcher, or the game in front of it -----------------------------------------
 
 struct Shell {
-    /// The launcher drawn by the game (only with "Cross-Platform Launcher").
-    launcher: Option<Box<launcher::Launcher>>,
     game: Option<Box<App>>,
-    /// The app is in front (between winit's `resumed` and `suspended`).
-    active: bool,
 }
 
-/// A window for the game or the launcher drawn by it, put on the Swift app's scene in front
-/// of the Swift launcher.
+/// A window for the game, put on the Swift app's scene in front of the Swift launcher.
 fn new_window(event_loop: &ActiveEventLoop) -> Option<Arc<Window>> {
     let attrs = Window::default_attributes()
         .with_title("openOMSI")
@@ -250,17 +217,8 @@ fn new_window(event_loop: &ActiveEventLoop) -> Option<Arc<Window>> {
 }
 
 impl Shell {
-    fn launcher(&mut self) -> &mut launcher::Launcher {
-        if self.launcher.is_none() {
-            crate::apple_bridge::prepare_once();
-            launcher_statics();
-            self.launcher = Some(Box::new(launcher::Launcher::new(graphics_instance())));
-        }
-        self.launcher.as_mut().unwrap()
-    }
-
-    /// After every event: the launcher drawn by the game comes or goes with the setting, a
-    /// game the launcher asked for starts, a game that ended gives the screen back.
+    /// After every event: a game the launcher asked for starts, a game that ended gives the
+    /// screen back.
     fn switch(&mut self, event_loop: &ActiveEventLoop) {
         if !SCENE_READY.load(Ordering::Relaxed) {
             return;
@@ -275,40 +233,11 @@ impl Shell {
             lan_mods::clean_up();
             log::info!("session ended: back to the launcher");
             crate::apple_bridge::game_ended();
-            if cross_platform_launcher() {
-                let l = self.launcher();
-                if let Some(w) = window {
-                    l.adopt_window(w);
-                }
-                l.resumed(event_loop);
-            } else if let Some(w) = window {
+            if let Some(w) = window {
                 crate::apple::detach_window(&w);
                 drop(w);
             }
             return;
-        }
-        // the setting changed: the launcher drawn by the game opens, or goes and the Swift
-        // one is shown again
-        match (cross_platform_launcher(), self.launcher.is_some()) {
-            (true, false) => {
-                if let Some(w) = new_window(event_loop) {
-                    let active = self.active;
-                    let l = self.launcher();
-                    l.adopt_window(w);
-                    if active {
-                        l.resumed(event_loop);
-                    }
-                }
-            }
-            (false, true) => {
-                if let Some(mut l) = self.launcher.take() {
-                    if let Some(w) = l.release_window() {
-                        crate::apple::detach_window(&w);
-                    }
-                }
-                crate::apple::show_native_launcher();
-            }
-            _ => {}
         }
         let Some(line) = omsi_launcher_lib::take_in_process_launch() else { return };
         log::info!("starting the game: {}", line.join(" "));
@@ -343,11 +272,7 @@ impl Shell {
                 return;
             }
         };
-        let window = match self.launcher.as_mut().and_then(|l| l.release_window()) {
-            Some(w) => Some(w),
-            None => new_window(event_loop),
-        };
-        let Some(window) = window else {
+        let Some(window) = new_window(event_loop) else {
             crate::apple_bridge::game_ended();
             return;
         };
@@ -360,11 +285,8 @@ impl Shell {
 impl ApplicationHandler for Shell {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         log::info!("app in front");
-        self.active = true;
         if let Some(g) = self.game.as_mut() {
             g.resumed(event_loop);
-        } else if let Some(l) = self.launcher.as_mut() {
-            l.resumed(event_loop);
         }
         self.switch(event_loop);
     }
@@ -372,11 +294,8 @@ impl ApplicationHandler for Shell {
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
         // (iOS may end an app in the background without a word: see `previous_run_crash`)
         log::info!("app in the background");
-        self.active = false;
         if let Some(g) = self.game.as_mut() {
             g.suspended(event_loop);
-        } else if let Some(l) = self.launcher.as_mut() {
-            l.suspended(event_loop);
         }
     }
 
@@ -387,8 +306,6 @@ impl ApplicationHandler for Shell {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if let Some(g) = self.game.as_mut() {
             g.window_event(event_loop, id, event);
-        } else if let Some(l) = self.launcher.as_mut() {
-            l.window_event(event_loop, id, event);
         }
         self.switch(event_loop);
     }
@@ -403,8 +320,6 @@ impl ApplicationHandler for Shell {
         if let Some(g) = self.game.as_mut() {
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
             g.about_to_wait(event_loop);
-        } else if let Some(l) = self.launcher.as_mut() {
-            l.about_to_wait(event_loop);
         } else {
             // (the Swift launcher draws itself: nothing to do here until it asks)
             event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);

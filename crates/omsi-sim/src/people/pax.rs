@@ -538,7 +538,7 @@ pub enum AtStop {
 /// and taking `takes` does at stop `id`.
 pub fn at_stop(id: i64, stop: &PaxStop, terminus: Option<&str>, takes: &Takes) -> AtStop {
     let Some(t) = terminus else { return AtStop::Empties };
-    if stop.is_named(t) {
+    if stop.is_named(t) || without_route(t).is_some_and(|t| stop.is_named(t)) {
         return AtStop::Empties;
     }
     match takes {
@@ -551,6 +551,17 @@ pub fn at_stop(id: i64, stop: &PaxStop, terminus: Option<&str>, takes: &Takes) -
         }
         _ => AtStop::Serves,
     }
+}
+
+/// A depot file's destination without the route in front of it: many British depot files
+/// name a row `402 Apsley Station` or `B2 Apsley Bus Station` where the timetable says
+/// `Apsley Station`. The first word is taken for a route when it is letters and digits
+/// with a digit among them. (Omsi.exe compares the whole name, and nobody got on such a
+/// bus driven without a duty.)
+fn without_route(terminus: &str) -> Option<&str> {
+    let (first, rest) = terminus.trim().split_once(char::is_whitespace)?;
+    let route = first.chars().all(|c| c.is_ascii_alphanumeric()) && first.chars().any(|c| c.is_ascii_digit());
+    Some(rest.trim()).filter(|r| route && !r.is_empty())
 }
 
 /// Why somebody waiting takes a bus (`fit`); the better first.
@@ -580,7 +591,7 @@ pub fn best_bus(buses: impl Iterator<Item = (BusId, Fit, f64)>) -> Option<(BusId
 /// map) left the people at every stop of a duty waiting for another bus. The duty knows
 /// the trip: whoever it takes where they are going gets on.
 pub fn fit(id: i64, stop: &PaxStop, dest: Option<&str>, termini: &HashSet<String>, terminus: &str, takes: &Takes) -> Option<Fit> {
-    if termini.contains(terminus.trim()) {
+    if termini.contains(terminus.trim()) || without_route(terminus).is_some_and(|t| termini.contains(t)) {
         return Some(Fit::Terminus);
     }
     let Takes::Duty { trip, next, done: false } = takes else { return None };

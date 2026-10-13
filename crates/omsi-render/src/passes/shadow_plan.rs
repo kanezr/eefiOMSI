@@ -85,13 +85,7 @@ impl Renderer {
         let near_wanted = light_matrix(SHADOW_RANGE, self.options.shadow_size);
         let (near_m, frames, near_origin, near_sun) = self.shadows.shadow_near_cache.get();
         let phase = ShadowPhase(frames);
-        // (the cascade's box snaps to whole texels of its own map - 0.034 m a side at the top
-        // setting - so a still caster stays on the same texels while the camera moves; the
-        // wanted matrix is the unsnapped one, and this measures how far the camera has drifted
-        // from the last snap. A tenth of a metre - three texels, invisible - is enough that
-        // a drive along a street does not redraw this, the costliest shadow pass, a third of
-        // it the trees' leaf cards, on every small nudge)
-        let near_jumped = (near_m.project_point3(cam_rel) - near_wanted.project_point3(cam_rel)).length() > 0.1;
+        let near_jumped = (near_m.project_point3(cam_rel) - near_wanted.project_point3(cam_rel)).length() > 0.10;
         let redraw_near = draw_shadows
             && (phase.near_due()
                 || near_jumped
@@ -199,7 +193,6 @@ impl Renderer {
             .unwrap_or(3.0);
         // (a copy: the casters are gathered on the worker pool, the renderer is not shared)
         let omsi_shadow_casters = self.options.omsi_shadow_casters;
-        let tree_shadows = self.options.tree_shadows;
         // (the lists are filled in place, block after block of the instances: a fresh list
         // per block was a few hundred small allocations a frame and every item copied twice)
         // (what each street lamp's tile draws, summed up: the tile is kept while it stays the
@@ -320,11 +313,6 @@ impl Renderer {
                         } else {
                             kind
                         };
-                        // Skip alpha-tested materials (trees, fences) in the near cascade when tree_shadows is off.
-                        // The near cascade is the costliest shadow pass; trees' leaf cards are just card silhouettes.
-                        if cascade == 0 && kind == PIPE_ALPHA_TEST && !tree_shadows {
-                            continue;
-                        }
                         // (after the remap: a traced-opaque one is drawn as the opaque it is)
                         let (material, look) = depth_only_material(kind, mat_id, look);
                         out[cascade].push(DrawItem {

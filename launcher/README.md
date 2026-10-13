@@ -3,17 +3,17 @@
 openOMSI's launcher for Windows, macOS and Linux: a [Tauri 2](https://tauri.app) window whose
 page (`ui/`) puts the duty together - map, bus, line and tour or a free drive, start time,
 date, season, weather and traffic - and keeps the driver's profile, the settings, the key
-bindings, the mods and the running games. iPhone, iPad and Android keep the launcher the game
-draws itself (`crates/omsi-launcher-ui`), which also stays on the desktop for computers
-whose webview cannot start.
+bindings, the mods and the running games. Android shows the same page in a web view over the
+game's window; iPhone, iPad and the Mac app have a SwiftUI launcher (`apple/`) over the
+window-free model `crates/omsi-launcher-model`. The game has no launcher window of its own.
 
 * `src-tauri/` - the program. Its commands (`src/commands.rs`) call `omsi-launcher-core`
   directly, the same functions `openomsi-launcher --cli` offers a terminal; `src/protocol.rs`
   serves the content's pictures to the page as `omsi://localhost/…`; `src/service.rs` keeps
   the game program running beside it as a helper with no window (`openomsi
   --launcher-service`, `crates/omsi-app/src/launcher/service.rs`), which draws the bus preview
-  with the game's own renderer - the same showroom the game's launcher window draws, sent as
-  JPEG pictures while it turns - and reads the city map with a trip's route the way the
+  with the game's own renderer - the game's showroom, sent as JPEG pictures while it turns -
+  and reads the city map with a trip's route the way the
   navigator does (`mapview::export`), which the page draws;
   `src/i18n.rs` hands the page the game's translation tables
   (`crates/omsi-app/locales/app.yml`, the English text is the key).
@@ -28,13 +28,14 @@ whose webview cannot start.
 
 ## How the game and the launcher find each other
 
-A plain start of `openomsi` (a double click) opens `openomsi-launcher-app` when it lies beside
-the game (or in `launcher/src-tauri/target/{release,debug}` of a source tree);
-`OMSI_CLASSIC_LAUNCHER=1` or `openomsi --launcher` open the game's own launcher window
-instead. The launcher starts each duty as `openomsi` with a full command line, the way the old
-launcher did, and rests out of sight while a game it started runs when the setting
-"The launcher rests while a game runs" is on. The duty chosen is kept in
-`~/.openomsi/launcher-duty.json`, which both launchers read.
+A plain start of `openomsi` (a double click) opens `openomsi-launcher-app` beside it; where it
+is missing, or its window cannot open (no WebView2 on an old Windows - the game offers
+Microsoft's installer -, no WebKitGTK 4.1 on Linux), the game says so and ends. A development
+build finds it when the launcher is built into the game's target folder
+(`CARGO_TARGET_DIR=target cargo build --manifest-path launcher/src-tauri/Cargo.toml`). The
+launcher starts each duty as `openomsi` with a full command line, and rests out of sight
+while a game it started runs when the setting "The launcher rests while a game runs" is on. The duty chosen is kept in
+`~/.openomsi/launcher-duty.json`, which the Swift launcher reads as well.
 
 ## Building
 

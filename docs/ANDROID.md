@@ -8,10 +8,11 @@ maps, buses and mods. Only the way it is worked is new:
   launcher, the game plays in its window, and ending the session (the menu's Quit, or the
   back key and Quit) goes back to the launcher, which is kept as it was
   (`crates/omsi-app/src/android.rs`);
-- **the launcher for fingers**: a rail of icons, pages that scroll as a whole, a tap is a
-  click, a drag scrolls (a list under the finger, else the page), a drag over the bus turns
-  it and a pinch zooms, the keyboard comes up for a text field; Browse opens a browser of the
-  phone's storage (`launcher/mobile.rs`);
+- **the launcher for fingers**: the desktop launcher's page (`launcher/ui`, its phone layout
+  `js/mobile`) in a web view over the game's window (`LauncherBridge.java`,
+  `crates/omsi-app/src/android_launcher.rs`), its commands answered by the same code as on a
+  computer (`omsi-launcher-api`); the bus preview and the city map are drawn by the game in
+  the same process;
 - **on-screen controls** in the game (`crates/omsi-app/src/touch.rs`), all Material Symbols:
 
 | Where | What |
@@ -91,8 +92,7 @@ The touch controls can be looked at on the computer: `OMSI_TOUCH=1` shows them i
 window, and `OMSI_INPUT` drives them with `touch down|move|up x,y[,finger]` (logical pixels),
 e.g. `OMSI_TOUCH=1 OMSI_INPUT="t=8 touch down 1500,700; t=10 touch up 1500,700; t=11 shot
 touch.png"` presses the accelerator for two seconds and writes the picture with the controls
-on it. `OMSI_MOBILE=1` lays the launcher out as on a phone (with `OMSI_LAUNCHER_SIZE=873x393`
-the size of one).
+on it. `OMSI_MOBILE=1` gives the game the phone's screen cut-outs.
 
 ## Releases
 
@@ -104,8 +104,9 @@ installs over the previous one.
 
 ## Updates
 
-The launcher looks for a newer GitHub release when it starts (Settings → General → Updates) and offers
-it; **Update now** downloads the APK and hands it to Android's package installer. The first
+(The launcher page has no update page yet: the game's old launcher, which offered updates, is
+gone. What follows is how an update is installed once it is offered.) The launcher looks for a
+newer GitHub release when it starts (Settings → General → Updates) and offers it; **Update now** downloads the APK and hands it to Android's package installer. The first
 time Android asks to allow openOMSI to install apps. Then Android asks "Do you want to update
 this app?": **Update** replaces openOMSI and starts it again, **Cancel** comes back to the
 launcher as "not updated". The APK must be signed with the same key as the installed app

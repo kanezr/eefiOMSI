@@ -145,7 +145,7 @@ impl App {
     /// steering's point stands in it.
     pub(super) fn cursor_moved_to(&mut self, x: f32, y: f32) {
         // a plugin's slider or panel being dragged follows the cursor
-        if self.plugin_drag_move(x, y) || self.game_panel_drag(x) {
+        if self.integrations.plugin_drag_move(x, y) || self.game_panel_drag(x) {
             self.input.cursor = (x, y);
             return;
         }
@@ -166,11 +166,17 @@ impl App {
     }
 
     fn html_move(&mut self) {
+        let sim = self.player_to_drawn_pose();
+        self.html_move_now();
+        self.player_back_to_sim_pose(sim);
+    }
+
+    fn html_move_now(&mut self) {
         if let Some((id, page, ..)) = self.input.html_object_pressed {
             let Some((o, d, _)) = self.cursor_ray_now() else { return };
             let Some(w) = self.world.clone() else { return };
             if let Some(h) = w.html_object_hit(o, d, HTML_OBJECT_REACH).filter(|h| h.map_id == id && h.page == page) {
-                w.html_object_pointer(id, page, h.u, h.v, omsi_sim::htmltex::PointerKind::Move);
+                w.html_object_pointer(&mut self.session.scenery, id, page, h.u, h.v, omsi_sim::htmltex::PointerKind::Move);
                 self.input.html_object_pressed = Some((id, page, h.u, h.v));
             }
             return;
@@ -178,8 +184,8 @@ impl App {
         let Some((page, ..)) = self.input.html_pressed else { return };
         let Some((o, d, _)) = self.cursor_ray_now() else { return };
         let Some(p) = self.player.as_mut() else { return };
-        if let Some((pg, u, v)) = p.html_hit(o, d).filter(|h| h.0 == page) {
-            p.html_pointer(pg, u, v, omsi_sim::htmltex::PointerKind::Move);
+        if let Some((pg, u, v)) = p.html_hit(o, d, &self.integrations.plugin_pointer).filter(|h| h.0 == page) {
+            p.html_pointer(pg, u, v, omsi_sim::htmltex::PointerKind::Move, &mut self.integrations.plugin_pointer);
             self.input.html_pressed = Some((pg, u, v));
         }
     }
@@ -395,6 +401,12 @@ impl App {
     }
 
     pub(crate) fn on_left(&mut self, pressed: bool) {
+        let sim = self.player_to_drawn_pose();
+        self.left_now(pressed);
+        self.player_back_to_sim_pose(sim);
+    }
+
+    fn left_now(&mut self, pressed: bool) {
         if self.xr.vr_nav_edit.is_some() { return; }
         // the object editor: the mouse picks and drags
         if self.menus.game_menu.is_none() && self.editor_mouse(pressed) {
@@ -407,9 +419,9 @@ impl App {
         if let Some(n) = self.menus.navigator.as_mut() {
             if n.map_open() {
                 let ctrl = self.input.keys.contains(&KeyCode::ControlLeft) || self.input.keys.contains(&KeyCode::ControlRight);
-                if pressed && (ctrl || self.menus.teleport_pick) {
-                    // Ctrl+click (or a click after Esc → Move the bus): the bus to the street
-                    // nearest that point, as OMSI's map window places vehicles
+                if pressed && ctrl {
+                    // Ctrl+click: the bus to the street nearest that point, as OMSI's map
+                    // window places vehicles
                     if let Some(at) = n.map_point(x, y) {
                         if std::mem::take(&mut self.menus.teleport_pick) {
                             n.toggle_map();
@@ -418,8 +430,16 @@ impl App {
                     }
                 } else if pressed {
                     n.map_press(x, y);
-                } else {
-                    n.map_release();
+                } else if n.map_release() && self.menus.teleport_pick {
+                    // after Esc → Move the bus the map is dragged to the place as ever, and
+                    // the click that lets go where it was pressed puts the bus there (the
+                    // press used to put it at once, so only what the map showed could be
+                    // chosen)
+                    if let Some(at) = n.map_point(x, y) {
+                        self.menus.teleport_pick = false;
+                        n.toggle_map();
+                        self.place_bus_at(at);
+                    }
                 }
                 return;
             }
@@ -506,9 +526,9 @@ impl App {
             let (dx, dy) = std::mem::take(&mut self.input.drag_delta);
             p.occlude_controls = self.view == "outside";
             if pressed {
-                if let Some((page, u, v)) = p.html_hit(o, d) {
+                if let Some((page, u, v)) = p.html_hit(o, d, &self.integrations.plugin_pointer) {
                     p.release();
-                    p.html_pointer(page, u, v, omsi_sim::htmltex::PointerKind::Down);
+                    p.html_pointer(page, u, v, omsi_sim::htmltex::PointerKind::Down, &mut self.integrations.plugin_pointer);
                     self.input.html_pressed = Some((page, u, v));
                     self.input.dragging = false;
                     return;
@@ -525,8 +545,8 @@ impl App {
                     .is_some();
             } else {
                 if let Some((page, u, v)) = self.input.html_pressed.take() {
-                    let (u, v) = p.html_hit(o, d).filter(|h| h.0 == page).map_or((u, v), |h| (h.1, h.2));
-                    p.html_pointer(page, u, v, omsi_sim::htmltex::PointerKind::Up);
+                    let (u, v) = p.html_hit(o, d, &self.integrations.plugin_pointer).filter(|h| h.0 == page).map_or((u, v), |h| (h.1, h.2));
+                    p.html_pointer(page, u, v, omsi_sim::htmltex::PointerKind::Up, &mut self.integrations.plugin_pointer);
                     self.input.dragging = false;
                     return;
                 }
@@ -569,7 +589,7 @@ impl App {
                 .and_then(|(o, d, _)| w.html_object_hit(o, d, HTML_OBJECT_REACH))
                 .filter(|h| h.map_id == id && h.page == page)
                 .map_or((u, v), |h| (h.u, h.v));
-            w.html_object_pointer(id, page, u, v, omsi_sim::htmltex::PointerKind::Up);
+            w.html_object_pointer(&mut self.session.scenery, id, page, u, v, omsi_sim::htmltex::PointerKind::Up);
             self.input.dragging = false;
             return true;
         }
@@ -587,7 +607,7 @@ impl App {
         if let Some(p) = self.player.as_mut() {
             p.release();
         }
-        w.html_object_pointer(h.map_id, h.page, h.u, h.v, omsi_sim::htmltex::PointerKind::Down);
+        w.html_object_pointer(&mut self.session.scenery, h.map_id, h.page, h.u, h.v, omsi_sim::htmltex::PointerKind::Down);
         self.input.html_object_pressed = Some((h.map_id, h.page, h.u, h.v));
         self.input.dragging = false;
         true
@@ -598,7 +618,7 @@ impl App {
         let Some(w) = self.world.as_ref() else { return false };
         if !pressed {
             if let Some((map_id, ev)) = self.input.pressed_scenery_object.take() {
-                w.scenery_object_release(map_id, &ev);
+                w.scenery_object_release(&mut self.session.scenery, map_id, &ev);
                 self.input.dragging = false;
                 return true;
             }
@@ -623,7 +643,7 @@ impl App {
             p.release();
         }
         self.input.drag_delta = (0.0, 0.0);
-        w.scenery_object_click(hit.map_id, &hit.event);
+        w.scenery_object_click(&mut self.session.scenery, hit.map_id, &hit.event);
         self.input.pressed_scenery_object = Some((hit.map_id, hit.event));
         self.input.dragging = true;
         true
@@ -652,7 +672,7 @@ impl App {
         let (dx, dy) = std::mem::take(&mut self.input.drag_delta);
         if let Some((map_id, ref ev)) = self.input.pressed_scenery_object {
             if let Some(w) = self.world.as_ref() {
-                w.scenery_object_drag(map_id, ev, dx, dy);
+                w.scenery_object_drag(&mut self.session.scenery, map_id, ev, dx, dy);
             }
         } else if let Some(p) = self.player.as_mut() {
             p.drag(dx, dy);

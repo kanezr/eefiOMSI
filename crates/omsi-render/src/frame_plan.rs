@@ -198,6 +198,48 @@ pub(crate) fn encode_batches_filtered<'a, E: wgpu::util::RenderEncoder<'a>>(
     }
 }
 
+/// The state changes `encode_batches` makes for `chunks` (each recorded on its own, as the
+/// main pass's bundles are): (pipeline switches, material bind groups set). OMSI_PROFILE.
+pub(crate) fn state_changes(chunks: &[&[Batch]]) -> (usize, usize) {
+    let (mut pipes, mut binds) = (0, 0);
+    for chunk in chunks {
+        let (mut pipe, mut material) = (u8::MAX, u32::MAX);
+        for b in chunk.iter() {
+            pipes += (b.pipe != pipe) as usize;
+            binds += (b.material != material) as usize;
+            (pipe, material) = (b.pipe, b.material);
+        }
+    }
+    (pipes, binds)
+}
+
+/// What `state_changes` would count if each run of opaque and alpha-tested batches (as
+/// `batch_items` sorts them: by pipeline, then look) were ordered by material first, the
+/// cull and bias variants of a kind after it - an estimate for OMSI_PROFILE of what such an
+/// order would save in bind groups and cost in pipeline switches. A run ends where the
+/// pipeline code goes down (the next sorted call) or a blended batch comes.
+pub(crate) fn state_changes_by_material(batches: &[Batch]) -> (usize, usize) {
+    let mut reordered: Vec<Batch> = Vec::with_capacity(batches.len());
+    let mut k = 0;
+    while k < batches.len() {
+        let sortable = |b: &Batch| b.pipe / 4 <= PIPE_ALPHA_TEST;
+        if !sortable(&batches[k]) {
+            reordered.push(batches[k].clone());
+            k += 1;
+            continue;
+        }
+        let start = k;
+        k += 1;
+        while k < batches.len() && sortable(&batches[k]) && batches[k].pipe >= batches[k - 1].pipe {
+            k += 1;
+        }
+        let mut run = batches[start..k].to_vec();
+        run.sort_by_key(|b| (b.pipe / 4, b.material, b.pipe));
+        reordered.extend(run);
+    }
+    state_changes(&[&reordered])
+}
+
 /// Main pass pipeline kinds (`pipe_code`): opaque, alpha-tested, blended, blended
 /// without depth write, depth-only surface coverage, and painted terrain without depth write.
 pub(crate) const PIPE_OPAQUE: u8 = 0;

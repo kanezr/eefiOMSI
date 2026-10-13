@@ -1,7 +1,7 @@
 // Loading the content and keeping the duty: what the pages share.
 
-import { call, on } from './api.js';
-import { S, set, toast } from './store.js';
+import { call, on, onPhone, inTauri } from './api.js';
+import { S, set, toast, remembered } from './store.js';
 import { setLanguage, t, hhmm } from './i18n.js';
 
 /** The duty as the launcher remembers it (`launcher-duty.json`, shared with the game's own
@@ -33,12 +33,25 @@ export async function boot() {
   }
   startPolling();
   on('vehicles-progress', (p) => set({ vehiclesProgress: p }));
+  if (b.updated) toast(t('openOMSI {version} is installed', { version: b.updated }), 'ok', 8000);
+}
+
+export const LAUNCHER_SIZES = [['0.9', 'Smaller'], ['1', 'Normal'], ['1.15', 'Larger'], ['1.3', 'Largest']];
+
+export const launcherSize = () => remembered('launcher_size', '1');
+
+export const LAUNCHER_LAYOUTS = [['cards', 'Modern: everything on one page'], ['classic', 'Classic: in steps, as before']];
+
+export const launcherLayout = () => (remembered('launcher_layout', 'cards') === 'classic' ? 'classic' : 'cards');
+
+export function fitWindow() {
+  if (inTauri) call('fit_zoom', { size: Number(launcherSize()) || 1 }).catch(() => {});
 }
 
 export function applyTheme() {
   const pick = localStorage.getItem('theme') || 'dark';
   const light = pick === 'light' || (pick === 'system' && matchMedia('(prefers-color-scheme: light)').matches);
-  document.documentElement.dataset.theme = light ? 'light' : 'dark';
+  document.documentElement.dataset.layout = launcherLayout();
 }
 
 export async function loadContent() {
@@ -63,6 +76,14 @@ export async function loadContent() {
   loadProfiles();
 }
 
+export const weatherOfItsOwn = (w) => /^(cycle$|metar:|custom:)/i.test(w || '');
+
+export const weatherName = (w, list) =>
+  /^metar:/i.test(w || '') ? `${t('Current weather')}${w.length > 6 ? ` (${w.slice(6)})` : ''}`
+  : /^cycle$/i.test(w || '') ? t('Weather cycle')
+  : /^custom:/i.test(w || '') ? t('Custom weather')
+  : list?.find((x) => x.file === w)?.name || t('Natural weather');
+
 /** A remembered map or bus that is not installed any more gives way to the first one. */
 function fixChoice() {
   const c = { ...S.choice };
@@ -75,11 +96,47 @@ function fixChoice() {
     c.paint = '';
     c.number = '';
   }
-  if (S.weather && c.weather && !S.weather.some((w) => w.file === c.weather)) c.weather = '';
+  if (S.weather && c.weather && !weatherOfItsOwn(c.weather) && !S.weather.some((w) => w.file === c.weather)) c.weather = '';
+  Object.assign(c, allowedBus(c));
   set({ choice: c });
 }
 
 const norm = (f) => (f || '').replace(/\\/g, '/').toLowerCase();
+
+export const busFile = (f) => {
+  const n = norm(f);
+  const at = n.lastIndexOf('vehicles/');
+  return at > 0 ? n.slice(at) : n;
+};
+
+export function serverBuses(c = S.choice) {
+  return c?.lan_mode === 'join' && c.lan_server?.vehicles?.length ? new Set(c.lan_server.vehicles.map(busFile)) : null;
+}
+
+export function allowedBus(c = S.choice) {
+  const allowed = serverBuses(c);
+  if (!allowed || allowed.has(busFile(c.bus))) return {};
+  const own = S.vehicles?.find((v) => allowed.has(busFile(v.file)));
+  return own ? { bus: own.file, paint: '', number: '', hof_manual: false } : {};
+}
+
+export const noServerBus = () => {
+  const allowed = serverBuses();
+  return !!allowed && !!S.vehicles && !S.vehicles.some((v) => allowed.has(busFile(v.file)));
+};
+
+export const serverJoined = (answer) => ({
+  lan_server: { asked: !!answer, name: answer?.name || '', time: answer?.time || '', weather: answer?.weather || '', vehicles: answer?.vehicles || [] },
+});
+
+export async function askJoined() {
+  const c = S.choice;
+  if (c?.lan_mode !== 'join' || c.lan_server?.asked) return;
+  const r = await call('server_query', { address: c.lan_addr.trim() }).catch(() => null);
+  if (!r || S.choice.lan_mode !== 'join' || S.choice.lan_addr !== c.lan_addr) return;
+  choose({ ...serverJoined({ ...r, name: c.lan_server?.name || r.name }), lan_map: c.lan_map || r.map || '' });
+  choose(allowedBus());
+}
 
 /** A bus as people call it (its [friendlyname]), from its file: never "MAN_SD77.bus". */
 export function busName(file) {
@@ -139,6 +196,7 @@ export function choose(patch) {
   }
   if (c.map !== before.map) loadSituations();
   if (c.map !== before.map || c.bus !== before.bus || c.date !== before.date || c.line !== before.line || c.free !== before.free) updateHof();
+  else if (c.hof !== before.hof || c.hof_manual !== before.hof_manual) loadIbis();
 }
 
 export async function loadLines() {
@@ -164,6 +222,25 @@ async function updateHof() {
   const c = S.choice;
   const hof = await call('default_hof', { map: curMap() || null, bus: curBus() || null, date: c.date, line: c.free ? null : c.line }).catch(() => '');
   set({ hof });
+  loadIbis();
+}
+
+export const dutyHof = () => (S.choice.hof_manual ? S.choice.hof : S.hof) || '';
+
+let ibisAsked = '';
+export async function loadIbis() {
+  if (onPhone) return;
+  const c = S.choice;
+  const hof = /\.(bus|ovh)/i.test(dutyHof()) ? '' : dutyHof();
+  const key = c.free || !c.line || !c.bus ? '' : `${c.bus}|${hof}|${c.line}`;
+  if (key === ibisAsked) return;
+  ibisAsked = key;
+  set({ ibis: null });
+  if (!key) return;
+  const ibis = await call('ibis', { bus: c.bus, hof, line: c.line }).then((info) => ({ info }), (e) => ({ error: e.message || String(e) }));
+  if (ibisAsked !== key) return;
+  if ('error' in ibis) ibisAsked = '';
+  set({ ibis });
 }
 
 export async function loadSituations() {
@@ -174,9 +251,10 @@ export async function loadSituations() {
 /** Page data kept between visits: answered at once from what was read last, read again
  * behind it (`fresh` = the command's answer is set into `S.cache[key]`). */
 export function cached(key, cmd, args) {
+  const before = S.cache[key];
   const p = call(cmd, args).then(
-    (v) => (set({ cache: { ...S.cache, [key]: v } }), v),
-    (e) => (set({ cache: { ...S.cache, [key]: { error: e.message } } }), null),
+    (v) => (S.cache[key] === before && set({ cache: { ...S.cache, [key]: v } }), v),
+    (e) => (S.cache[key] === before && set({ cache: { ...S.cache, [key]: { error: e.message } } }), null),
   );
   return S.cache[key] !== undefined ? Promise.resolve(S.cache[key]) : p;
 }
@@ -196,20 +274,45 @@ export async function loadProfiles() {
   if (name) set({ profile: await call('profile', { name }).catch(() => null) });
 }
 
-export async function saveSettings(patch) {
-  const settings = { ...S.settings, ...patch };
-  set({ settings });
-  try {
-    set({ settings: await call('settings_save', { settings }) });
-  } catch (e) {
-    toast(t('The settings could not be saved: {e}', { e: e.message }), 'error');
-  }
-  if ('language' in patch) {
-    const lang = S.boot.languages.find((l) => l.code === S.settings.language);
-    await setLanguage(lang?.iso || 'en');
-    // (the content's names and descriptions are read in the new language)
-    loadContent();
-  }
+let settingsSaved = Promise.resolve();
+let settingsSeq = 0;
+
+export function reloadSettings() {
+  settingsSaved = settingsSaved.then(async () => {
+    const mine = settingsSeq;
+    const now = await call('settings_get').catch(() => null);
+    if (!now || mine !== settingsSeq) return;
+    const before = S.settings?.language;
+    set({ settings: now });
+    if (now.language !== before) await applyLanguage();
+  });
+  return settingsSaved;
+}
+
+async function applyLanguage() {
+  const lang = S.boot.languages.find((l) => l.code === S.settings.language);
+  await setLanguage(lang?.iso || 'en');
+  // (the content's names and descriptions are read in the new language)
+  loadContent();
+}
+
+export async function saveSettings(patch, whole = false) {
+  set({ settings: whole ? patch : { ...S.settings, ...patch } });
+  const mine = ++settingsSeq;
+  let ok = true;
+  settingsSaved = settingsSaved.then(async () => {
+    try {
+      const saved = await call(whole ? 'settings_save' : 'settings_patch', whole ? { settings: patch } : { patch });
+      if (mine === settingsSeq) set({ settings: saved });
+    } catch (e) {
+      ok = false;
+      toast(t('The settings could not be saved: {e}', { e: e.message }), 'error');
+    }
+  });
+  await settingsSaved;
+  if (!ok) return false;
+  if (!whole && 'language' in patch) await applyLanguage();
+  return true;
 }
 
 /** The trip of the tour picked to start with (its place), while the time is still its. */
@@ -226,13 +329,17 @@ export async function duty(extra = {}) {
   const c = S.choice;
   const seasonWord = c.season && c.season !== 'auto' ? (await call('season_date', { season: c.season, phase: c.phase, date: c.date, map: c.map, keep: true }).catch(() => null))?.word : null;
   const trip = pickedTrip();
+  const ask = () => Promise.race([call('server_query', { address: c.lan_addr.trim() }).catch(() => null), new Promise((r) => setTimeout(r, 3000))]);
+  const joined = c.lan_mode === 'join' && !extra.tutorial && !extra.situation ? c.lan_map || (await ask())?.map : '';
+  const hostMap = (joined || '').trim().replace(/\\/g, '/');
+  const installed = S.maps?.find((m) => m.file.toLowerCase() === hostMap.toLowerCase())?.file;
   return {
-    map: c.map,
+    map: /maps\//i.test(hostMap) ? installed || hostMap : c.map,
     bus: c.bus,
     paint: c.paint || null,
     plate: c.plate?.trim() || null,
     number: c.number?.trim() || null,
-    hof: (c.hof_manual ? c.hof : S.hof) || null,
+    hof: dutyHof() || null,
     entry: c.entry,
     line: c.free ? null : c.line,
     tour: c.free ? null : c.tour,
@@ -260,6 +367,8 @@ export async function start(extra) {
   try {
     const d = await duty(extra);
     const r = await call('launch', { duty: d });
+    set({ gameStarted: true });
+    if (d.lan !== 'off' && !d.tutorial) set({ page: 'games' });
     toast(r.others ? t('The game is starting ({n} already running)', { n: r.others }) : t('The game is starting…'), 'ok');
     pollNow();
     return r;
@@ -272,15 +381,43 @@ export async function start(extra) {
 // --- polling: running games, installs, content changes ----------------------------------
 
 let polling = false;
+export const jobRunning = (j) => !!j.state && !['done', 'failed', 'cancelled'].includes(j.state);
+
+export async function installMod(path) {
+  const mode = S.modMode || 'auto';
+  set({ modPath: path, modInfo: null });
+  call('mod_inspect', { path })
+    .then((i) => {
+      if (S.modPath !== path) return;
+      set({ modInfo: i });
+      if (!i.fits && i.in_place_ok && (S.modMode || 'auto') === 'extract') set({ modMode: 'inplace' });
+    })
+    .catch((e) => S.modPath === path && set({ modInfo: { error: e.message } }));
+  try {
+    await call('mod_install', { path, mode });
+    toast(t('Installing {name}…', { name: path.split(/[\\/]/).pop() }));
+    pollNow();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
 export async function pollNow() {
   if (polling) return;
   polling = true;
   try {
     const p = await call('poll');
     const changed = S.poll.stamp && p.stamp !== S.poll.stamp;
-    set({ poll: p });
+    const before = S.poll.jobs || [];
+    const same = (x) => JSON.stringify([x.stamp, x.jobs, x.instances]);
+    if (same(p) !== same(S.poll) || p.started?.length) set({ poll: p });
     for (const s of p.started || []) toast(t('Installing {name}…', { name: s }));
-    if (changed) {
+    const finished = S.poll.stamp ? (p.jobs || []).filter((j) => !jobRunning(j) && !before.some((b) => b.id === j.id && !jobRunning(b))) : [];
+    for (const j of finished) {
+      if (j.state === 'done') toast(j.message || t('{name} installed', { name: j.name }), 'ok');
+      else if (j.state === 'failed') toast(`${j.name}: ${j.message}`, 'error');
+    }
+    if (changed || finished.length) {
       loadContent();
       cached('mods', 'mods_status');
     }
@@ -295,12 +432,18 @@ function startPolling() {
   setInterval(() => {
     followClock();
     // (faster while something happens)
-    const busy = S.poll.jobs.some((j) => !['done', 'failed', 'cancelled'].includes(j.state));
-    if (busy || Date.now() % 4000 < 1000) pollNow();
+    const every = S.poll.instances?.length && !document.hasFocus() ? 20000 : 4000;
+    if (busy || Date.now() % every < 1000) pollNow();
   }, 1000);
   on('games-ended', () => {
+    set({ gameStarted: false });
     pollNow();
     loadProfiles();
     loadSituations();
+    reloadSettings();
+  });
+  window.addEventListener('focus', () => {
+    reloadSettings();
+    pollNow();
   });
 }

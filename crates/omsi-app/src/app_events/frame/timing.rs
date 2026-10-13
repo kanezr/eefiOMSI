@@ -68,12 +68,18 @@ impl App {
         let now = Instant::now();
         let raw_dt = (now - self.last).as_secs_f32();
         self.log_frame(raw_dt);
+        let draws = self.renderer.as_mut().map_or((0, 0), |r| std::mem::take(&mut r.frame_draws));
+        if self.settings.perf_overlay_on() {
+            self.perf.overlay.sample(raw_dt, &self.perf.profile, draws);
+        } else if self.perf.overlay.started() {
+            self.perf.overlay.reset();
+        }
         let profiling = omsi_cfg::flags::OMSI_PROFILE.is_set();
         if profiling && self.perf.profile_mark.is_some() && self.perf.frame_times.len() < crate::perf_report::MAX_FRAMES {
             self.perf.frame_times.push(raw_dt);
         }
-        let waited: f64 = ["acquire", "present", "gpu"].iter()
-            .map(|&k| self.perf.profile.get(k).copied().unwrap_or(0.0))
+        let waited: f64 = [crate::profile_keys::ProfKey::Acquire, crate::profile_keys::ProfKey::Present, crate::profile_keys::ProfKey::Gpu].iter()
+            .map(|&k| self.perf.profile.get(k))
             .sum();
         let wait_this_frame = (waited - self.perf.governor_wait_prev).max(0.0) as f32;
         self.perf.governor_wait_prev = waited;
@@ -88,7 +94,7 @@ impl App {
                         .perf.profile
                         .iter()
                         .map(|(k, v)| {
-                            (*k, v - self.perf.profile_prev.get(k).copied().unwrap_or(0.0))
+                            (k.name(), v - self.perf.profile_prev.get(k))
                         })
                         .collect();
                     let staged: f64 = parts
@@ -137,13 +143,23 @@ impl App {
                     // takes the wait for the card away, and the next reading alone asked
                     // to go up again - a step up and down every 10 s, each one new targets
                     // and a full upload of the instances, a stutter every time)
-                    static UP_READINGS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-                    let ups = if step > 0.0 { UP_READINGS.load(std::sync::atomic::Ordering::Relaxed).saturating_add(1) } else { 0 };
-                    if step > 0.0 && ups < 2 {
+                    // A step up that the next reading takes back doubles the readings the next
+                    // step up waits for (up to two minutes); one that holds brings them back to
+                    // two. A card at its limit went 85-100-85 % every 10 s for minutes (#2295).
+                    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
+                    static UP_READINGS: AtomicU8 = AtomicU8::new(0);
+                    static UP_NEEDED: AtomicU8 = AtomicU8::new(2);
+                    static WENT_UP: AtomicBool = AtomicBool::new(false);
+                    if WENT_UP.load(Relaxed) {
+                        UP_NEEDED.store(if step < 0.0 { UP_NEEDED.load(Relaxed).saturating_mul(2).min(24) } else { 2 }, Relaxed);
+                    }
+                    let ups = if step > 0.0 { UP_READINGS.load(Relaxed).saturating_add(1) } else { 0 };
+                    if step > 0.0 && ups < UP_NEEDED.load(Relaxed) {
                         step = 0.0;
                     }
-                    UP_READINGS.store(if step > 0.0 { 0 } else { ups }, std::sync::atomic::Ordering::Relaxed);
+                    UP_READINGS.store(if step > 0.0 { 0 } else { ups }, Relaxed);
                     r.set_dynamic_scale(s + step);
+                    WENT_UP.store(r.dynamic_scale() > s + 1e-3, Relaxed);
                     if (r.dynamic_scale() - s).abs() > 1e-3 {
                         log::info!("frame rate {fps:.0} fps (presentation wait {:.0}%): the 3D picture is drawn at {:.0} % of the window now", wait_share * 100.0, r.dynamic_scale() * 100.0);
                         self.perf.governor_low = 0;

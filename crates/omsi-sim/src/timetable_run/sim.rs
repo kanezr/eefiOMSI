@@ -17,9 +17,7 @@ mod tours;
 use super::*;
 use crate::ai_traffic::TrafficSim;
 use crate::VehicleType;
-use glam::DVec3;
 use omsi_timetable::TimetableData;
-use parking_lot::MutexGuard;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -28,7 +26,8 @@ pub use dispatch::{tour_entry, TOUR_ENTRY_LANES};
 pub use place::Placing;
 
 /// What the timetable needs of the loaded map: its folders, the AI lists, the tiles, the
-/// date and the places of the stops. omsi-app's `World` gives it.
+/// date and the places of the stops. The world snapshot (`crate::world_data::WorldData`)
+/// gives it.
 pub trait TimetableWorld {
     /// The game's folder.
     fn root(&self) -> &Path;
@@ -45,7 +44,7 @@ pub trait TimetableWorld {
     /// The map's date (yyyymmdd).
     fn date(&self) -> i32;
     /// World position and rotation of every loaded map object by id.
-    fn object_positions(&self) -> MutexGuard<'_, HashMap<i64, (DVec3, [f64; 3])>>;
+    fn object_positions(&self) -> &crate::world_data::ObjectPlaces;
     /// The side stop object `id`'s platform lies on: 0 = right, 1 = the other, 2 = both.
     fn stop_side(&self, id: i64) -> f32;
 }

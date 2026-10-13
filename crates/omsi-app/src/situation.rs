@@ -56,12 +56,21 @@ pub(crate) fn find_hof(
     world: &World,
     vt: &omsi_sim::VehicleType,
 ) -> Option<std::sync::Arc<omsi_vehicle::Hof>> {
+    find_hof_named(args.hof.as_deref(), world, vt)
+}
+
+/// [`find_hof`] with the depot asked for (`--hof`) given alone.
+pub(crate) fn find_hof_named(
+    hof: Option<&str>,
+    world: &World,
+    vt: &omsi_sim::VehicleType,
+) -> Option<std::sync::Arc<omsi_vehicle::Hof>> {
     let dir = vt.def.dir();
     let mut names: Vec<String> = Vec::new();
-    if let Some(h) = &args.hof {
-        names.push(h.clone());
+    if let Some(h) = hof {
+        names.push(h.to_string());
     }
-    names.extend(world.ailists.groups.iter().filter_map(|g| g.hof.clone()));
+    names.extend(world.map().ailists.groups.iter().filter_map(|g| g.hof.clone()));
     // every wanted name in order: the bus's own depot files first (by file name, then by
     // the [name] inside), then the map's depot as another vehicle folder has it (a mod bus
     // brings only the depot of its own map: see `omsi_vehicle::hof::depot_anywhere`)
@@ -101,18 +110,7 @@ pub(crate) fn find_hof(
 }
 
 pub(crate) fn start_clock(args: &Args) -> omsi_sim::SimClock {
-    let mut c = omsi_sim::SimClock::default();
-    if let Some(d) = &args.date {
-        let v: Vec<i32> = d.split('-').filter_map(|x| x.trim().parse().ok()).collect();
-        if v.len() == 3 {
-            c.set_date(v[0], v[1], v[2]);
-        }
-    }
-    if let Some(doy) = args.day_of_year {
-        c.day_of_year = doy.max(1);
-    }
-    c.time = parse_time(&args.time);
-    c
+    omsi_sim::SimClock::starting(args.date.as_deref(), args.day_of_year, &args.time)
 }
 
 /// Fill the arguments from a situation file (`.osn`): the original's saved game state.

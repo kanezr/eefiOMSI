@@ -22,7 +22,7 @@ members = [
     "crates/omsi-ui",
     "crates/omsi-launcher-core",
     "crates/omsi-launcher-api",
-    "crates/omsi-launcher-ui",
+    "crates/omsi-launcher-model",
     "crates/omsi-lan",
     "crates/omsi-platform",
     "crates/omsi-guard",
@@ -36,6 +36,7 @@ members = [
     "crates/omsi-scene",
     "crates/omsi-photo",
     "crates/omsi-app",
+    "crates/omsi-srcscan",
     "tools/omsi-check",
 ]
 exclude = ["launcher/src-tauri"]
@@ -60,6 +61,8 @@ clap = { version = "4", features = ["derive"] }
 hashbrown = "0.17"
 smallvec = "1"
 parking_lot = "0.12"
+# (the world snapshot the simulation reads without a lock: `omsi-sim::world_data`)
+arc-swap = "1.7"
 rand = "0.9"
 wgpu = { version = "29", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "dx12", "gles", "wgsl", "noop"] }
 # wgpu's parts that are used directly: always wgpu's own version, or their types do not
@@ -69,7 +72,8 @@ naga = "29"
 winit = "0.30"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
-image = { version = "0.25", default-features = false, features = ["png", "bmp", "tga", "dds", "jpeg"] }
+# (every picture format a mod or a photo may come in; DDS and TGA have readers of our own)
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "tga", "dds", "jpeg", "webp", "gif", "tiff", "hdr", "exr", "pnm", "qoi", "ico", "ff"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }

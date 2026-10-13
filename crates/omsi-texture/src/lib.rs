@@ -2,8 +2,10 @@
 //!
 //! OMSI looks a texture up by *file name* in a search order: the object's `texture` folder,
 //! then the global `Texture` folder, trying a same-stem DDS first, the exact name, then other supported
-//! extensions (`.dds`, `.bmp`, `.tga`, `.jpg`, `.png`), plus seasonal (`Texture\Spring` …) and
-//! `_LOW` variants. A `<texture>.cfg` sidecar carries per-texture flags.
+//! extensions (OMSI's `.dds`, `.bmp`, `.tga`, `.jpg`, `.png`, and what openOMSI reads besides:
+//! `.jpeg`, `.webp`, `.tif`, `.gif`, `.ktx2`, `.ktx`, `.qoi`, `.hdr`, `.exr`, `.pnm`), plus
+//! seasonal (`Texture\Spring` …) and `_LOW` variants. A `<texture>.cfg` sidecar carries
+//! per-texture flags.
 
 use hashbrown::HashMap;
 use parking_lot::Mutex;
@@ -11,7 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub mod bc;
+pub mod blocks;
 pub mod dds;
+pub mod ktx;
 pub mod gpu;
 pub mod tga;
 
@@ -97,7 +101,8 @@ pub enum TextureError {
     Decode(PathBuf, String),
 }
 
-pub const EXTENSIONS: [&str; 5] = ["dds", "bmp", "tga", "jpg", "png"];
+/// The picture formats a texture is looked for in, OMSI's first.
+pub const EXTENSIONS: [&str; 16] = ["dds", "bmp", "tga", "jpg", "png", "jpeg", "webp", "tif", "tiff", "gif", "ktx2", "ktx", "qoi", "hdr", "exr", "pnm"];
 
 /// Decode an image file into RGBA8.
 pub fn decode_file(path: &Path) -> Result<Image, TextureError> {
@@ -112,6 +117,9 @@ pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
     if bytes.starts_with(b"DDS ") {
         return dds::decode(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e));
     }
+    if ktx::is_ktx(bytes) {
+        return ktx::decode(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e));
+    }
     let is_tga_ext = matches!(ext.as_str(), "tga");
     let looks_tga = bytes.len() > 18 && (1..=3).contains(&(bytes[2] & 7)) && bytes[2] & 0xF0 == 0 && matches!(bytes[16], 8 | 15 | 16 | 24 | 32);
     if is_tga_ext && looks_tga && !bytes.starts_with(b"BM") && !bytes.starts_with(&[0xFF, 0xD8]) {
@@ -123,6 +131,8 @@ pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
         image::ImageFormat::Jpeg
     } else if bytes.starts_with(b"\x89PNG") {
         image::ImageFormat::Png
+    } else if let Some(f) = sniff_other(bytes) {
+        f
     } else if looks_tga {
         // a TGA under another name (NEOMAN's `W_Bader_KR498_disp.png`): D3DX reads it by content
         return tga::decode(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e));
@@ -156,6 +166,33 @@ pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
         has_alpha = bmp32_alpha(bytes, width, height, &mut rgba);
     }
     Ok(Image { width, height, rgba, has_alpha })
+}
+
+/// The formats beyond OMSI's by their signatures (WebP, GIF, TIFF, QOI, OpenEXR, Radiance
+/// HDR, icons, PNM): a picture is read as what it is, whatever its name says.
+fn sniff_other(b: &[u8]) -> Option<image::ImageFormat> {
+    use image::ImageFormat as F;
+    Some(if b.len() > 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        F::WebP
+    } else if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
+        F::Gif
+    } else if b.starts_with(b"II*\0") || b.starts_with(b"MM\0*") {
+        F::Tiff
+    } else if b.starts_with(b"qoif") {
+        F::Qoi
+    } else if b.starts_with(&[0x76, 0x2F, 0x31, 0x01]) {
+        F::OpenExr
+    } else if b.starts_with(b"#?RADIANCE") || b.starts_with(b"#?RGBE") {
+        F::Hdr
+    } else if b.starts_with(&[0, 0, 1, 0]) && b.len() > 6 && b[4] > 0 {
+        F::Ico
+    } else if b.len() > 2 && b[0] == b'P' && (b'1'..=b'7').contains(&b[1]) && b[2].is_ascii_whitespace() {
+        F::Pnm
+    } else if b.starts_with(b"farbfeld") {
+        F::Farbfeld
+    } else {
+        return None;
+    })
 }
 
 /// A copy of a palette bitmap whose colour count (`biClrUsed`, `biClrImportant`) is cut to
@@ -301,7 +338,12 @@ fn find_texture_uncached(name: &str, dirs: &[&Path]) -> Option<PathBuf> {
     // the GG2 gantries with the pack's stock sign, the Grundorf Island `Sign` plates and
     // tunnel signs with the `Road` folder's road textures, the `Generic` objects with a
     // London bus stop's `text.bmp` - so it is not done.
-    find_texture_in_season(name, dirs, season_folder().as_deref())
+    find_texture_in_season(name, dirs, season_folder().as_deref()).or_else(|| {
+        // a picture that came with a glTF / FBX / OBJ model, beside it or packed into it
+        let bare = name.trim().replace('\\', "/");
+        let bare = bare.rsplit('/').next().unwrap_or(&bare);
+        omsi_cfg::model_texture(bare).filter(|p| omsi_cfg::vfs::is_file(p))
+    })
 }
 
 fn find_texture_in_season(name: &str, dirs: &[&Path], season: Option<&str>) -> Option<PathBuf> {

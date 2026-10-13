@@ -2,24 +2,35 @@
 
 use super::*;
 use crate::scene::World;
-use omsi_render::{Renderer, Scene};
 
 impl Traffic {
     /// Attach explicitly listed cars (a `.zug` train): (type, reversed).
     pub fn attach_cars(
         &mut self,
-        view: &mut TrafficView,
-        world: &World,
-        renderer: &Renderer,
-        scene: &mut Scene,
         car: usize,
         cars: &[(Arc<VehicleType>, bool)],
     ) {
         let c = &mut self.sim.cars[car];
         for (t, rev) in cars {
-            view.add_trailer(world, renderer, scene, c.id, t);
+            self.events.push(TrafficEvent::TrailerAdded { id: c.id, ty: t.clone() });
             c.vehicle.attach_trailer_ex(t.clone(), *rev);
         }
+    }
+
+    /// Attach the `[couple_back]` chain of `vehicle` to it; returns the parts' types with
+    /// the paint each is drawn in (`scheme` where the part has it), for its renders.
+    pub(crate) fn attach_trailers(
+        &mut self,
+        vehicle: &mut VehicleInstance,
+        scheme: Option<usize>,
+    ) -> Vec<(Arc<VehicleType>, Option<usize>)> {
+        let mut parts = Vec::new();
+        let ty = vehicle.ty.clone();
+        for (t, rev) in self.trailer_chain(&ty) {
+            parts.push((t.clone(), scheme.filter(|i| *i < t.paint_schemes.len())));
+            vehicle.attach_trailer_ex(t, rev);
+        }
+        parts
     }
 
     /// The cars of car `ci`'s train, front to back, each with whether it is turned round
@@ -30,11 +41,11 @@ impl Traffic {
     }
 
     /// Couple `cars` behind car `ci` instead of the ones it has (a train made up anew).
-    pub(crate) fn set_trailers(&mut self, view: &mut TrafficView, world: &World, renderer: &Renderer, scene: &mut Scene, ci: usize, cars: &[(Arc<VehicleType>, bool)]) {
+    pub(crate) fn set_trailers(&mut self, ci: usize, cars: &[(Arc<VehicleType>, bool)]) {
         let c = &mut self.sim.cars[ci];
-        view.release_trailers(world, renderer, scene, c.id);
+        self.events.push(TrafficEvent::TrailersReleased { id: c.id });
         c.vehicle.trailers.clear();
-        self.attach_cars(view, world, renderer, scene, ci, cars);
+        self.attach_cars(ci, cars);
     }
 
     /// Turn train `ci` round as Omsi.exe does for a trip whose `[trainreverse]` differs from
@@ -44,7 +55,7 @@ impl Traffic {
     /// in the opposite order, each turned round. `behind`: the lanes the train has behind
     /// it now, nearest last, for the track its cars stand on. The car keeps its id and its
     /// service.
-    pub(crate) fn turn_train(&mut self, view: &mut TrafficView, world: &World, renderer: &Renderer, scene: &mut Scene, ci: usize, lane: usize, s: f32, behind: &[usize], reversed: bool) {
+    pub(crate) fn turn_train(&mut self, world: &World, ci: usize, lane: usize, s: f32, behind: &[usize], reversed: bool) {
         let cars: Vec<(Arc<VehicleType>, bool)> = self.consist(ci).into_iter().rev().map(|(t, r)| (t, !r)).collect();
         let Some((lead, lead_turned)) = cars.first().cloned() else { return };
         if lead_turned {
@@ -57,8 +68,8 @@ impl Traffic {
         let center = self.sim.viewer.map(|v| v.pos).unwrap_or_default();
         let kind = self.sim.net.lanes[lane].kind;
         // (the new car takes the id: the old one's renders are let go once it is replaced)
-        let old_render = view.take(id);
-        self.create_car(view, world, renderer, scene, center, kind, lane, s, lead, seed, Some(scheme), Some(id), Some(0.0), None);
+        self.events.push(TrafficEvent::Detached { id });
+        self.create_car(world, center, kind, lane, s, lead, seed, Some(scheme), Some(id), Some(0.0), None);
         let Some(mut new) = self.sim.cars.pop() else { return };
         let old = &mut self.sim.cars[ci];
         // its service goes with it (its line and destination are set for the trip it takes
@@ -75,10 +86,8 @@ impl Traffic {
         new.consist_reversed = reversed;
         let old = std::mem::replace(&mut self.sim.cars[ci], new);
         self.drop_sounds(old.id);
-        if let Some(r) = old_render {
-            release_car_render(world, renderer, scene, r);
-        }
-        self.set_trailers(view, world, renderer, scene, ci, &cars[1..]);
+        self.events.push(TrafficEvent::DetachedReleased { id });
+        self.set_trailers(ci, &cars[1..]);
         self.seed_rail_trail(ci, behind);
         let c = &mut self.sim.cars[ci];
         let trail = &c.rail_trail;

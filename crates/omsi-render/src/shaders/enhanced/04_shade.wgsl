@@ -155,7 +155,8 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     }
     // Leaves and fences transmit light. A terrain road-cut mask only removes ground:
     // its remaining pixels must shade like the uncut ground on terrain-mapped splines.
-    let thin = !terrain && mode > 0.5 && mode < 1.5;
+    // (people's cut-out hair and clothes are bodies: material flag 8)
+    let thin = !terrain && mode > 0.5 && mode < 1.5 && (u32(material.params2.w + 0.5) & 8u) == 0u;
     let has_env = material.params2.y > 0.0;
     // A blended transmap body is a masked paint surface, not glass. Traffic cars often
     // use this material layout for their body; depth-disabled blends remain glass.
@@ -183,7 +184,9 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     // the W123's: its alpha is the transmap's, the envmap's mask the texture's own, as in
     // the vanilla picture; left out, their paint showed no reflection at all while their
     // windows did)
-    let reflective_env = has_env && !thin && !is_water;
+    // (alpha-tested materials with envmaps - foliage, fences - now receive the photographed
+    // environment reflection consistently instead of being excluded)
+    let reflective_env = has_env && !is_water;
     // see-through glass is seen from either side: from inside the bus its normal points
     // away (the vanilla pass takes the angle either way round too); taken as it is, the
     // grazing Fresnel turned the whole windscreen into a milky mirror
@@ -275,8 +278,11 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
         let metal_ok = (u32(material.params2.w + 0.5) & 4u) != 0u;
         metal = select(0.0, smoothstep(0.3, 0.85, refl), masked || metal_ok);
         // (where the mask says nothing reflects - a tyre or a seal on the body's texture -
-        // it is no coat but the rough rubber or plastic of an unpolished surface)
-        let coat_rough = mix(0.8, 0.05, smoothstep(0.0, 0.5, refl));
+        // it is no coat but the rough rubber or plastic of an unpolished surface. Any share
+        // at all is lacquer: the stock bodies' masks hold a few per cent - the MAN NL's
+        // 15 of 255 - which says how much the paint mirrors, not that it is rough; taken
+        // as roughness up to a share of a half, every such body came out matte, #2067)
+        let coat_rough = mix(0.8, 0.06, smoothstep(0.0, 0.04, refl));
         // Where the model says how much it mirrors - a [matl_envmap_mask], or the texture's
         // alpha under a [matl_transmap] (most mod bodies) - Omsi.exe lays the sphere map
         // over the paint by that share at every angle (shader.wgsl's environment stage):
@@ -426,11 +432,16 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
     var direct = vec3<f32>(0.0);
     if (enh.lights.w > 0.0 && max(enh.sun.r, enh.sun.g) > 1e-5) {
         var shadow = 0.0;
+        // (Enhanced+ without a traced shadow for the surface: the far map's as well, below -
+        // one call of it for both cases: two, each inlined, made the scene shader too big for
+        // Apple's M4 compiler, whose service crashed on every scene pipeline)
+        var far = false;
         if (glass && nl > 0.0) {
             // a pane lets nearly all of it through: the sun on it is its glint, for which one
             // compare says enough (the soft filter over a cab's windscreen, doors and side
             // windows was a millisecond of the frame)
             shadow = sun_shadow_hard(in.world, n);
+            far = camera.clouds.w > 1.5;
         } else if (nl > 0.0 || thin) {
             // Enhanced+: the traced shadow where there is one for this surface
             // (whose cut-out leaves and fences the shadow map holds alone: see `render_inner`)
@@ -438,7 +449,12 @@ fn shade_enhanced(in: FsIn, puddle_weight: ptr<function, vec2<f32>>, capture: bo
             shadow = sun_shadow_soft(in.world, n, thin);
             if (traced.w > 0.5 && traced.z >= 0.0) {
                 shadow = shadow * traced.z;
+            } else {
+                far = camera.clouds.w > 1.5 && traced.w < 0.5;
             }
+        }
+        if (far) {
+            shadow = shadow * sun_shadow_far(in.world, n);
         }
         let e_sun = enh.sun.rgb * shadow;
         if (thin) {

@@ -19,13 +19,6 @@ final class GameHost {
     private var tiltValue: Float = 0
     private var tiltSeen = false
 
-    /// The setting as the settings file has it (before the launcher is opened).
-    func crossPlatformSetting() -> Bool {
-        guard let d = try? Bridge.call("cli", ["cmd": "settings", "arg": [:] as [String: Any]]),
-              let s = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return false }
-        return s["cross_platform_launcher"] as? Bool ?? false
-    }
-
     func attach(_ view: UIView) {
         guard let w = view.window else { return }
         if let scene { w.windowScene = scene; w.frame = scene.coordinateSpace.bounds }
@@ -186,10 +179,6 @@ enum Platform {
         var top = GameHost.shared.launcherWindow?.rootViewController
         while let p = top?.presentedViewController { top = p }
         top?.present(picker, animated: true)
-    }
-
-    static func setCrossPlatform(_ on: Bool) {
-        openomsi_ios_set_cross_platform_launcher(on ? 1 : 0)
     }
 
     /// A mod chosen in the picker: read where it lies, through the access the picker gave.

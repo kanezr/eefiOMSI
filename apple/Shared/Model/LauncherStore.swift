@@ -103,8 +103,8 @@ final class LauncherStore {
         debugScript()
     }
 
-    /// Looking at the launcher without a person at it (the Simulator, the CI), as the game's
-    /// launcher has OMSI_LAUNCHER_PAGE: `OMSI_APPLE_PAGE=settings`, `games` (on a phone under
+    /// Looking at the launcher without a person at it (the Simulator, the CI):
+    /// `OMSI_APPLE_PAGE=settings`, `games` (on a phone under
     /// More), `tab:more`, `picker:bus`, `sheet:trip` (a phone's sheet); `OMSI_APPLE_START=<seconds>`
     /// presses Start then.
     private func debugScript() {

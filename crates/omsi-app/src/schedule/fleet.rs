@@ -65,7 +65,7 @@ impl Schedule {
         let pooled: Vec<Arc<VehicleType>> = self.sim.pooled_types();
         for ty in &pooled {
             if seen.insert(ty.def.path.clone()) {
-                let hof = self.sim.pool_hof(ty.def.dir(), world);
+                let hof = self.sim.pool_hof(ty.def.dir(), &*world.data());
                 crate::traffic::warm_up(world, ty, hof);
             }
         }
@@ -101,7 +101,7 @@ impl Schedule {
         let mut out = Vec::new();
         let mut seen: HashSet<crate::scene::VehicleKey> = HashSet::new();
         for i in self.sim.upcoming(day_time, fleet_ahead()) {
-            let Some(c) = self.sim.choose(i, world) else {
+            let Some(c) = self.sim.choose(i, &*world.data()) else {
                 continue;
             };
             for (ty, scheme) in Self::choice_sets(&c, traffic) {

@@ -1,7 +1,6 @@
 //! Putting one departure on the road.
 
 use super::*;
-use omsi_render::{Renderer, Scene};
 
 impl Schedule {
     /// Put departure `i` on the road where its bus is at `day_time`: on the part of the route
@@ -15,23 +14,20 @@ impl Schedule {
         i: usize,
         world: &World,
         traffic: &mut Traffic,
-        view: &mut TrafficView,
-        renderer: &Renderer,
-        scene: &mut Scene,
         day_time: f64,
         onto: Option<usize>,
     ) -> Placed {
         let profile = omsi_cfg::flags::OMSI_PROFILE.is_set();
         let t_spawn = std::time::Instant::now();
-        let p = match self.sim.place_departure(i, world, &mut traffic.sim, day_time, onto) {
+        let p = match self.sim.place_departure(i, &*world.data(), &mut traffic.sim, day_time, onto) {
             Ok(p) => p,
             Err(placed) => return placed,
         };
         let t_route = t_spawn.elapsed();
         if let Some(ci) = onto {
-            return self.take_trip_on(i, ci, p, world, traffic, view, renderer, scene, day_time);
+            return self.take_trip_on(i, ci, p, world, traffic, day_time);
         }
-        self.spawn_new_bus(i, p, world, traffic, view, renderer, scene, day_time, profile, t_spawn, t_route)
+        self.spawn_new_bus(i, p, world, traffic, day_time, profile, t_spawn, t_route)
     }
 
     /// The tour's bus `ci`, at the end of its previous trip, takes departure `i` on.
@@ -43,9 +39,6 @@ impl Schedule {
         p: Placing,
         world: &World,
         traffic: &mut Traffic,
-        view: &mut TrafficView,
-        renderer: &Renderer,
-        scene: &mut Scene,
         day_time: f64,
     ) -> Placed {
         let (trip_name, section) = (&p.trip_name, &p.section);
@@ -67,7 +60,7 @@ impl Schedule {
                 .min_by(|a, b| a.3.total_cmp(&b.3));
             match found {
                 Some((k, l, s, d)) if d < 2.5 => {
-                    traffic.turn_train(view, world, renderer, scene, ci, l, s, &section[..k], reverse);
+                    traffic.turn_train(world, ci, l, s, &section[..k], reverse);
                 }
                 _ => {
                     if omsi_cfg::flags::OMSI_DEBUG_TRAFFIC.is_set() {
@@ -91,9 +84,6 @@ impl Schedule {
         p: Placing,
         world: &World,
         traffic: &mut Traffic,
-        view: &mut TrafficView,
-        renderer: &Renderer,
-        scene: &mut Scene,
         day_time: f64,
         profile: bool,
         t_spawn: std::time::Instant,
@@ -106,7 +96,7 @@ impl Schedule {
                      hof,
                      scheme,
                      train,
-                 }) = self.sim.choose(i, world)
+                 }) = self.sim.choose(i, &*world.data())
         else {
             log::warn!(
                 "trip {trip_name}: no vehicles for AI group '{}'",
@@ -228,10 +218,7 @@ impl Schedule {
         let tour = self.sim.departure_tour(i).to_string();
         let terminus = self.sim.trip_of(i).terminus.clone();
         let Some(ci) = traffic.spawn_bus(
-            view,
             world,
-            renderer,
-            scene,
             lead_ty.clone(),
             route,
             s,
@@ -245,10 +232,10 @@ impl Schedule {
         };
         self.sim.bus_runs(traffic.cars[ci].id, i);
         if let Some(t) = &turned {
-            traffic.set_trailers(view, world, renderer, scene, ci, &t[1..]);
+            traffic.set_trailers(ci, &t[1..]);
             traffic.cars[ci].consist_reversed = true;
         } else if let Some(rest) = &rest {
-            traffic.attach_cars(view, world, renderer, scene, ci, rest);
+            traffic.attach_cars(ci, rest);
         }
         if train.is_some() {
             log::info!("train: {}", std::iter::once(traffic.cars[ci].vehicle.ty.def.path.file_stem().unwrap_or_default().to_string_lossy().to_string()).chain(traffic.cars[ci].vehicle.trailers.iter().map(|t| format!("{}{}", t.ty.def.path.file_stem().unwrap_or_default().to_string_lossy(), if t.reversed { " (turned)" } else { "" }))).collect::<Vec<_>>().join(" + "));

@@ -6,7 +6,9 @@
 //! The window's picture then traces, per pixel of the depth prepass, the sun's shadow and
 //! the sky's occlusion (rt.wgsl); the main pass takes them in place of the shadow map and
 //! the screen-space AO where they are there. What a hit looks like - for the reflections -
-//! comes from a record per geometry: its material's colour and its texture's mean colour.
+//! comes from a record per geometry: its material's colour and textures, which the hit reads
+//! from small copies of them at its triangle's texture coordinates (rt_tex.rs), or their mean
+//! colours until those are made.
 //!
 //! OMSI_NO_RT=1 opens no ray queries (Enhanced+ draws as Enhanced), OMSI_NO_RT_FRAME=1 keeps
 //! them but traces nothing, OMSI_NO_RT_GRADE=1 leaves out Enhanced+'s grade, and
@@ -27,7 +29,7 @@ const SUN_CONE: f32 = 0.012;
 /// brings hundreds of meshes; they come into the shadows over a few frames instead of a hitch.
 const BLAS_BUDGET: usize = 320;
 /// Texture means worked out per frame at most.
-const AVG_BUDGET: usize = 128;
+pub(super) const AVG_BUDGET: usize = 128;
 /// Frames a pixel's rays are accumulated over at most.
 const HISTORY: f32 = 24.0;
 const NO_TEX: u32 = u32::MAX;
@@ -111,9 +113,14 @@ struct Record {
     tex: u32,
     trans: u32,
     flags: u32,
-    pad: u32,
+    uvs: u32,
     color: [f32; 4],
+    uvt: [f32; 4],
 }
+
+/// The size of the shaders' `Record` (for the shader test).
+#[cfg(test)]
+pub(super) const RECORD_SIZE: usize = std::mem::size_of::<Record>();
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -167,6 +174,8 @@ pub(super) struct RayTracer {
     records_buf: wgpu::Buffer,
     tex_avg: wgpu::Buffer,
     tex_gen: Vec<u64>,
+    /// The textures' small copies and the meshes' texture coordinates, for the reflections.
+    tex: rt_tex::TexStore,
     avg_stride: u64,
     avg_layout: wgpu::BindGroupLayout,
     avg_pipeline: wgpu::ComputePipeline,
@@ -261,7 +270,7 @@ impl RayTracer {
                     count: None,
                 },
                 texture_entry(2, wgpu::TextureSampleType::Depth),
-                storage_buffer(3, true, false, 32),
+                storage_buffer(3, true, false, 48),
                 storage_buffer(4, true, false, 256),
                 texture_entry(5, wgpu::TextureSampleType::Float { filterable: false }),
                 texture_entry(6, wgpu::TextureSampleType::Float { filterable: false }),
@@ -290,12 +299,15 @@ impl RayTracer {
         let trace = pipeline("cs_trace", None);
         let temporal = pipeline("cs_denoise", None);
         let avg_stride = (device.limits().min_storage_buffer_offset_alignment as u64).max(256);
+        let atlas_entries = rt_tex::TexStore::avg_entries();
         let avg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("texture means"),
             entries: &[
                 texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
                 wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
-                storage_buffer(2, false, true, 16),
+                storage_buffer(2, false, true, 32),
+                atlas_entries[0],
+                atlas_entries[1],
             ],
         });
         let avg_module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("texture means"), source: wgpu::ShaderSource::Wgsl(include_str!("rt_avg.wgsl").into()) });
@@ -329,7 +341,7 @@ impl RayTracer {
                 },
                 wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None },
                 tex(2, wgpu::TextureSampleType::Depth, d2, vis),
-                storage_buffer(3, true, false, 32),
+                storage_buffer(3, true, false, 48),
                 storage_buffer(4, true, false, 256),
                 tex(5, unfilt, d2, vis),
                 tex(6, unfilt, d2, vis),
@@ -344,6 +356,8 @@ impl RayTracer {
                     count: None,
                 },
                 tex(12, unfilt, d2, vis),
+                storage_buffer(13, true, false, 16),
+                tex(14, filt, d2, wgpu::ShaderStages::COMPUTE),
             ],
         });
         let refl_module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("ray-traced reflections"), source: wgpu::ShaderSource::Wgsl(reflect_source().into()) });
@@ -394,6 +408,7 @@ impl RayTracer {
             records_buf: Self::make_records(device, 1 << 16),
             tex_avg: Self::make_avg(device, 4096, avg_stride),
             tex_gen: Vec::new(),
+            tex: rt_tex::TexStore::new(device),
             avg_stride,
             avg_layout,
             avg_pipeline,
@@ -579,7 +594,9 @@ impl Renderer {
                 let mask = match kind {
                     0 => (caster as u8) | ((seen as u8) << 1),
                     1 => (seen as u8) << 2,
-                    _ => (caster as u8) << 3,
+                    // (the panes also stop the reflections' rays: a car beside the bus mirrors
+                    // its windows, not the seats behind them in the sun and the open sky)
+                    _ => ((caster as u8) << 3) | ((seen as u8) << 4),
                 };
                 if bits == 0 || mask == 0 {
                     continue;
@@ -638,7 +655,8 @@ impl Renderer {
                 if base >= (1 << 24) - 64 {
                     break;
                 }
-                for (ri, (_, _, slot)) in m.ranges.iter().enumerate().take(64) {
+                let uvs = rt.tex.mesh_uvs(&self.device, inst.mesh, m, frame);
+                for (ri, (first, _, slot)) in m.ranges.iter().enumerate().take(64) {
                     if bits & (1 << ri) == 0 {
                         continue;
                     }
@@ -658,7 +676,21 @@ impl Renderer {
                     if from_trans {
                         flags |= 4;
                     }
-                    rt.records.push(Record { tex, trans, flags, pad: 0, color: mat.color });
+                    flags |= rt_tex::address_mode(mat.address) << 3;
+                    // (a [matl_transmap] whose alpha is not taken: the slot is opaque, see the
+                    // main pass)
+                    if mat.uniform.params[2] > 0.5 && mat.uniform.params[3] < 0.5 {
+                        flags |= 32;
+                    }
+                    if kind == 2 {
+                        flags |= 64;
+                    }
+                    // (a range's triangles are the mesh's from its first on: a range that
+                    // starts within a triangle has none)
+                    let uvs = uvs.filter(|_| first % 3 == 0).map_or(rt_tex::NO_UV, |b| b + first / 3);
+                    let off = inst.slot_uv.get(*slot as usize).copied().unwrap_or([0.0; 2]);
+                    let repeat = if mat.uniform.extra[0] > 0.5 { mat.uniform.extra[2] } else { 1.0 };
+                    rt.records.push(Record { tex, trans, flags, uvs, color: mat.color, uvt: [repeat, off[0], off[1], 0.0] });
                 }
                 chosen.push((entry.blas.clone(), rows, base, mask));
             }
@@ -690,6 +722,9 @@ impl Renderer {
         }
         rt.instances = chosen.len();
         rt.tlas_last = chosen;
+        if rt.tex.grown() {
+            rt.bind_gen += 1;
+        }
         // the records, in a buffer grown as needed; only from the first that changed to the last
         let bytes: &[u8] = bytemuck::cast_slice(&rt.records);
         if bytes.len() as u64 > rt.records_buf.size() {
@@ -707,6 +742,7 @@ impl Renderer {
         // structures nobody used for a while are let go
         if frame % 240 == 0 {
             rt.blas.retain(|_, e| frame - e.used < 1200);
+            rt.tex.retain(frame);
         }
         if omsi_cfg::flags::OMSI_DEBUG_RT.is_set() && frame % 30 == 1 {
             log::info!("ray tracing: {} instances, {} geometries, {} structures ({} built this frame)", rt.instances, rt.records.len(), rt.blas.len(), rt.to_build.len());
@@ -786,16 +822,23 @@ impl Renderer {
         if wanted.is_empty() {
             return;
         }
+        if rt.tex.ensure_atlas(&self.device, encoder, &wanted) {
+            rt.bind_gen += 1;
+        }
+        rt.tex.write_tiles(&self.queue, &wanted);
         let groups: Vec<wgpu::BindGroup> = wanted
             .iter()
             .map(|&t| {
+                let [atlas, tile] = rt.tex.avg_bindings();
                 self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("texture mean"),
                     layout: &rt.avg_layout,
                     entries: &[
                         wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&scene.textures[t].view) },
                         wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.tone.lin_sampler) },
-                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &rt.tex_avg, offset: 0, size: wgpu::BufferSize::new(16) }) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &rt.tex_avg, offset: 0, size: wgpu::BufferSize::new(32) }) },
+                        atlas,
+                        tile,
                     ],
                 })
             })
@@ -803,8 +846,8 @@ impl Renderer {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("texture means"), timestamp_writes: None });
             pass.set_pipeline(&rt.avg_pipeline);
-            for (&t, bg) in wanted.iter().zip(&groups) {
-                pass.set_bind_group(0, bg, &[(t as u64 * rt.avg_stride) as u32]);
+            for (k, (&t, bg)) in wanted.iter().zip(&groups).enumerate() {
+                pass.set_bind_group(0, bg, &[(t as u64 * rt.avg_stride) as u32, rt.tex.tile_offset(k)]);
                 pass.dispatch_workgroups(1, 1, 1);
             }
         }
@@ -818,6 +861,7 @@ impl Renderer {
     pub(super) fn encode_ray_tracing(&mut self, encoder: &mut wgpu::CommandEncoder, scene: &Scene, queries: Option<&wgpu::QuerySet>, timed: &mut Vec<&'static str>) {
         self.encode_texture_means(encoder, scene);
         let Some(rt) = self.rt.as_mut() else { return };
+        rt.tex.encode_uvs(&self.device, &self.queue, encoder);
         let Some(depth) = self.targets.ao.as_ref().map(|a| &a.depth_view) else { return };
         let Some(t) = rt.targets.as_ref() else { return };
         if !rt.to_build.is_empty() || !rt.tlas_built {
@@ -934,6 +978,8 @@ impl Renderer {
                     wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::TextureView(&probe.view) },
                     wgpu::BindGroupEntry { binding: 11, resource: self.tone.enh_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 12, resource: wgpu::BindingResource::TextureView(h12) },
+                    wgpu::BindGroupEntry { binding: 13, resource: rt.tex.uvs.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 14, resource: wgpu::BindingResource::TextureView(&rt.tex.atlas_view) },
                 ],
             })
         };

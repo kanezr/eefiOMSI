@@ -66,7 +66,7 @@ impl Schedule {
     /// holiday, 8 school days, 9 school holidays) that selects which run today.
     pub fn new(root: &Path, world: &World, clock: &omsi_sim::SimClock) -> Schedule {
         Schedule {
-            sim: ScheduleSim::new(root, world, clock),
+            sim: ScheduleSim::new(root, &*world.data(), clock),
             next_number: 0,
             fleet_reading: HashMap::new(),
             fleet_ready: Default::default(),
@@ -79,13 +79,13 @@ impl Schedule {
     /// The lanes a trip runs on (for the navigator): its track, else the station links
     /// between its stops, as far as the tiles have brought them - and whether that is all.
     pub fn trip_route(&self, world: &World, traffic: &Traffic, trip_name: &str) -> (Vec<usize>, bool) {
-        self.sim.trip_route(world, &traffic.sim, trip_name)
+        self.sim.trip_route(&*world.data(), &traffic.sim, trip_name)
     }
 
     /// `OMSI_CHECK_TRIPS=1`: the routes of every trip on the loaded lanes checked (see
     /// `ScheduleSim::check_routes`).
     pub fn check_routes(&self, world: &World, traffic: &mut Traffic) {
-        self.sim.check_routes(world, &mut traffic.sim)
+        self.sim.check_routes(&*world.data(), &mut traffic.sim)
     }
 
     /// Assign the player a tour of a line (see `ScheduleSim::player_duty`).
@@ -98,7 +98,7 @@ impl Schedule {
         trip: Option<&str>,
         whole_tour: bool,
     ) -> Result<PlayerDuty, String> {
-        self.sim.player_duty(world, line, tour, now, trip, whole_tour)
+        self.sim.player_duty(&*world.data(), line, tour, now, trip, whole_tour)
     }
 
     /// Make the departure boards of the stops whose displays are near

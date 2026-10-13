@@ -179,15 +179,8 @@ pub struct NavStop {
     pub arrival: f64,
 }
 
-/// Another player of the session as the maps show them.
-#[derive(Debug, Clone, PartialEq)]
-pub struct NavPlayer {
-    /// Where they are: their bus, or on foot where they walk (riding in someone's bus: that bus).
-    pub position: DVec3,
-    /// Compass heading (degrees, 0 = +y, clockwise).
-    pub heading: f64,
-    pub name: String,
-}
+/// Another player of the session as the maps show them (the session's, see `lan`).
+pub use omsi_lan::game::NavPlayer;
 
 /// What the navigator is told each frame.
 pub struct NavFrame<'a> {
@@ -1201,7 +1194,7 @@ impl Navigator {
                 -1 => "turn_left",
                 _ => "turn_right",
             };
-            let t = if *dist >= 1000.0 { format!("{:.1} km", dist / 1000.0) } else { format!("{:.0} m", ((dist / 10.0).round() * 10.0).max(10.0)) };
+            let t = crate::units::Units::now().distance(*dist as f64);
             let tw = self.fonts.width(&t, 14.0 * s, Weight::Bold);
             // with the street it turns into, when the map names it
             let street = street.as_deref().map(|n| self.fonts.fit(n, 12.0 * s, Weight::Medium, map.w * 0.62 - 50.0 * s - tw));
@@ -1286,9 +1279,12 @@ impl Navigator {
         let pad = 11.0 * s;
         let base = top.y + top.h * 0.5 + self.fonts.cap_height(17.0 * s, Weight::Bold) * 0.5;
         let mut x = pad;
-        x += ui.text(&mut self.atlas, &self.fonts, &format!("{:.0}", f.speed_kmh.abs()), 17.0 * s, Weight::Bold, Vec2::new(x, base), Align::Left, TEXT);
+        let units = crate::units::Units::now();
+        let (speed, unit) = units.speed(f.speed_kmh.abs());
+        x += ui.text(&mut self.atlas, &self.fonts, &format!("{speed:.0}"), 17.0 * s, Weight::Bold, Vec2::new(x, base), Align::Left, TEXT);
         x += 4.0 * s;
-        x += ui.text(&mut self.atlas, &self.fonts, wd.kmh, 12.0 * s, Weight::Medium, Vec2::new(x, base), Align::Left, TEXT_DIM);
+        let unit = if units == crate::units::Units::Metric { wd.kmh } else { unit };
+        x += ui.text(&mut self.atlas, &self.fonts, unit, 12.0 * s, Weight::Medium, Vec2::new(x, base), Align::Left, TEXT_DIM);
         let limit = net.and_then(|n| {
             let lane = if self.route.on_route { self.route.lanes.get(self.route.progress).copied() } else { None };
             let lane = lane.or_else(|| n.nearest_lane_near(f.bus, LaneKind::Street).filter(|l| l.2 < 8.0).map(|l| l.0))?;
@@ -1300,7 +1296,7 @@ impl Navigator {
             let c = Vec2::new(x + 10.0 * s, top.center().y);
             ui.circle(c, 10.5 * s, Color::rgba(200, 40, 40, 1.0));
             ui.circle(c, 8.3 * s, Color::rgba(235, 235, 235, 1.0));
-            let t = format!("{:.0}", (v / 5.0).round() * 5.0);
+            let t = format!("{:.0}", units.speed_limit(v));
             let px = if t.len() > 2 { 7.5 } else { 9.0 } * s;
             ui.text(&mut self.atlas, &self.fonts, &t, px, Weight::Black, Vec2::new(c.x, c.y + self.fonts.cap_height(px, Weight::Black) * 0.5), Align::Center, Color::rgba(15, 15, 15, 1.0));
         }
@@ -1364,7 +1360,7 @@ impl Navigator {
                 ui.text_in(&mut self.atlas, &self.fonts, &name, 13.5 * s, Weight::Bold, stop_row, Align::Left, TEXT);
                 let mut parts = Vec::new();
                 if let Some(d) = self.next_dist {
-                    parts.push(if d >= 1000.0 { format!("{:.1} km", d / 1000.0) } else { format!("{:.0} m", (d / 10.0).round() * 10.0) });
+                    parts.push(crate::units::Units::now().distance(d as f64));
                     let secs = d / (self.speed_avg.max(5.0) as f64);
                     parts.push(if secs < 60.0 { "<1 min".to_string() } else { format!("{:.0} min", (secs / 60.0).round()) });
                 }

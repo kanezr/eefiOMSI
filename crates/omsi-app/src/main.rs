@@ -34,11 +34,9 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(code);
     }
     omsi_guard::apply_safe_mode();
-    // A launcher start (a double click: no arguments; or --launcher) gets its watcher, or is
-    // healed right now when this version failed here before.
-    let mut args = std::env::args_os().skip(1);
-    let launcher = std::env::args_os().len() == 1 || args.any(|a| a == "--launcher");
-    if launcher {
+    // A launcher start (a double click: no arguments) gets its watcher, or is healed right
+    // now when this version failed here before.
+    if std::env::args_os().len() == 1 {
         if !omsi_guard::start(omsi_guard::journal::Kind::Launcher) {
             return Ok(());
         }

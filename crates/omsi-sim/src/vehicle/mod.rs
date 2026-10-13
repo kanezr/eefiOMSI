@@ -194,7 +194,9 @@ pub struct VehicleInstance {
     /// the coupled parts and the scripts still run every frame.
     pub ai_visuals: bool,
     ai_visuals_missed: f32,
-    var_index: HashMap<String, omsi_script::VarId>,
+    /// Variable names (lower case) to their slots; shared with the view's snapshot
+    /// (`crate::view_events::CarLooks`), copied only when the vehicle gains a variable.
+    var_index: std::sync::Arc<HashMap<String, omsi_script::VarId>>,
     /// Where each mesh's material properties come from, resolved against `var_index`
     /// (rebuilt when the vehicle gains engine variables).
     props_plan: PropsPlan,

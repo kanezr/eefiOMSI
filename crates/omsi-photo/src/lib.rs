@@ -4,7 +4,9 @@
 //! panel, the renderer's pictures, saving); nothing here knows the simulation or the window.
 
 pub mod develop;
+pub mod exposure;
 pub mod lens;
+pub mod optics;
 
 /// `px` (`w` x `h`) stretched to `tw` x `th` (the nearest pixel), for the input script's
 /// pictures of the window.

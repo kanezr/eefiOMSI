@@ -70,7 +70,8 @@ pub(crate) fn place_on_duty(args: &mut Args) {
     net.link(1.5);
     // the entry points and where they stand (heading from the object)
     let entries: Vec<(usize, String, DVec3, f64)> = {
-        let pos = world.object_positions.lock();
+        let data = world.data.peek();
+        let pos = &data.objects;
         world
             .global
             .entry_points

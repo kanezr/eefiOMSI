@@ -7,26 +7,6 @@ use glam::Vec2;
 use omsi_plugin::ui::UiState;
 
 impl crate::App {
-    /// Whether the plugins' panels have the mouse (`omsi.ui.focus`).
-    pub(crate) fn plugin_focus(&self) -> bool {
-        crate::plugin_ui::focused(&self.integrations.plugins)
-    }
-
-    /// Esc while the panels have the mouse: typing in a field ends first, then the mouse goes
-    /// back to the bus (and not on to the menu). True when it did one of them.
-    pub(crate) fn release_plugin_focus(&mut self) -> bool {
-        let Some(p) = self.integrations.plugins.as_ref().filter(|p| p.ui.borrow().focused()) else {
-            return false;
-        };
-        let mut ui = p.ui.borrow_mut();
-        if ui.typing().is_some() {
-            ui.stop_typing(false);
-        } else {
-            ui.release_focus();
-        }
-        true
-    }
-
     /// The left button while the panels have the mouse: a press on a clickable part goes to
     /// its plugin as `ui_click`, a slider or tabs take the place pressed, a draggable panel
     /// follows the cursor from its free parts; the bus gets none of it.
@@ -60,37 +40,15 @@ impl crate::App {
             _ => {}
         }
     }
+}
 
-    /// The cursor moved while a slider or a panel is dragged: it follows. True when it did
-    /// (the cursor's other work is left out then).
-    pub(crate) fn plugin_drag_move(&mut self, x: f32, y: f32) -> bool {
-        let Some(drag) = self.integrations.plugin_panels.drag.clone() else { return false };
-        let Some(p) = self.integrations.plugins.as_ref() else { return false };
-        let mut ui = p.ui.borrow_mut();
-        if !ui.focused() {
-            self.integrations.plugin_panels.drag = None;
-            return false;
-        }
-        match drag {
-            Drag::Slider { owner, panel, element, track } => {
-                let f = ((x - track[0]) / (track[1] - track[0]).max(1.0)).clamp(0.0, 1.0);
-                ui.set_control(owner, &panel, &element, f);
-            }
-            Drag::Panel { owner, panel, last } => {
-                let k = self.integrations.plugin_panels.scale.max(0.25);
-                ui.drag(owner, &panel, (x - last.x) / k, (y - last.y) / k);
-                self.integrations.plugin_panels.drag = Some(Drag::Panel { owner, panel, last: Vec2::new(x, y) });
-            }
-        }
-        true
-    }
-
+impl crate::app::Integrations {
     /// A key while the player types into a plugin's text field: the text goes to the field,
     /// Backspace rubs out, Enter hands it to the plugin and Esc leaves it. True when the
     /// key was the field's (the bus does not get it).
     pub(crate) fn plugin_typing_key(&mut self, code: winit::keyboard::KeyCode, text: Option<&str>) -> bool {
         use winit::keyboard::KeyCode;
-        let Some(p) = self.integrations.plugins.as_ref() else { return false };
+        let Some(p) = self.plugins.as_ref() else { return false };
         let mut ui = p.ui.borrow_mut();
         if ui.typing().is_none() {
             return false;
@@ -106,5 +64,49 @@ impl crate::App {
             }
         }
         true
+    }
+
+    /// The cursor moved while a slider or a panel is dragged: it follows. True when it did
+    /// (the cursor's other work is left out then).
+    pub(crate) fn plugin_drag_move(&mut self, x: f32, y: f32) -> bool {
+        let Some(drag) = self.plugin_panels.drag.clone() else { return false };
+        let Some(p) = self.plugins.as_ref() else { return false };
+        let mut ui = p.ui.borrow_mut();
+        if !ui.focused() {
+            self.plugin_panels.drag = None;
+            return false;
+        }
+        match drag {
+            Drag::Slider { owner, panel, element, track } => {
+                let f = ((x - track[0]) / (track[1] - track[0]).max(1.0)).clamp(0.0, 1.0);
+                ui.set_control(owner, &panel, &element, f);
+            }
+            Drag::Panel { owner, panel, last } => {
+                let k = self.plugin_panels.scale.max(0.25);
+                ui.drag(owner, &panel, (x - last.x) / k, (y - last.y) / k);
+                self.plugin_panels.drag = Some(Drag::Panel { owner, panel, last: Vec2::new(x, y) });
+            }
+        }
+        true
+    }
+
+    /// Esc while the panels have the mouse: typing in a field ends first, then the mouse goes
+    /// back to the bus (and not on to the menu). True when it did one of them.
+    pub(crate) fn release_plugin_focus(&mut self) -> bool {
+        let Some(p) = self.plugins.as_ref().filter(|p| p.ui.borrow().focused()) else {
+            return false;
+        };
+        let mut ui = p.ui.borrow_mut();
+        if ui.typing().is_some() {
+            ui.stop_typing(false);
+        } else {
+            ui.release_focus();
+        }
+        true
+    }
+
+    /// Whether the plugins' panels have the mouse (`omsi.ui.focus`).
+    pub(crate) fn plugin_focus(&self) -> bool {
+        crate::plugin_ui::focused(&self.plugins)
     }
 }

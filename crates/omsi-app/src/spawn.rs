@@ -356,33 +356,27 @@ pub(crate) fn spawn_player_prepared(
     }
     // number / ident were installed before {init}; do not rewrite them here.
     // ground following through the loaded tiles (road surfaces first, then terrain)
-    let terrains = world.terrains.clone();
-    let surfaces = world.surfaces.clone();
+    let data = world.data.clone();
     vehicle.ground = Some(std::sync::Arc::new(move |x, y| {
         let tx = (x / omsi_map::tile_size()).floor() as i32;
         let ty = (y / omsi_map::tile_size()).floor() as i32;
         let lx = (x - tx as f64 * omsi_map::tile_size()) as f32;
         let ly = (y - ty as f64 * omsi_map::tile_size()) as f32;
-        if let Some(s) = surfaces.read().get(&(tx, ty)) {
+        let d = data.peek();
+        if let Some(s) = d.ground.surfaces.get(&(tx, ty)) {
             if let Some(h) = s.sample(lx, ly) {
                 return Some(h as f64);
             }
         }
-        let t = terrains.read();
-        let terrain = t.get(&(tx, ty))?;
+        let terrain = d.ground.terrains.get(&(tx, ty))?;
         Some(terrain.sample(lx, ly) as f64)
     }));
     // what the wheels stand on: the faces of the roads and surface objects themselves,
     // and the terrain where it is not cut away under them (the streamer keeps both maps to
     // the loaded tiles, and the bus is one of its centres)
-    let terrains = world.terrains.clone();
-    let surfaces = world.surfaces.clone();
-    vehicle.contact = Some(std::sync::Arc::new(scene::DriveGround {
-        terrains,
-        surfaces,
-    }));
+    vehicle.contact = Some(std::sync::Arc::new(scene::LiveGround(world.data.clone())));
     let objects = crate::settings::Settings::load().collision_objects;
-    vehicle.collision = objects.then(|| world.collision.lock().clone());
+    vehicle.collision = objects.then(|| world.data.peek().lists.collision.clone());
     vehicle.wheel_walls = objects;
     // a rail vehicle rides the track (its position comes from the rails, not the tyres)
     let rail_bound = crate::rail_drive::is_rail(&vt.def);
@@ -463,6 +457,7 @@ pub(crate) fn spawn_player_prepared(
         renderer,
         scene,
         matches!(args.view.as_str(), "driver" | "pax"),
+        world.settings.rain_quality(),
     );
     // The sounds the scripts asked for while the bus was being set up ({init}, the state it
     // is put in - cold, ready, the situation's) are not played: the first frame played them
@@ -541,7 +536,7 @@ fn place_at_entry_point(args: &Args, world: &World, vehicle: &mut omsi_sim::Vehi
                 // (a bridge over the place, a lower level) is not this one
                 if let Some(g) = world.stand_height(pos.x, pos.y, pos.z) {
                     vehicle.position.z = g;
-                } else if crate::scene::drive_probe(&world.terrains, &world.surfaces, pos.x, pos.y, pos.z + 1.5).below.is_none() {
+                } else if world.data.peek().drive_probe(pos.x, pos.y, pos.z + 1.5).below.is_none() {
                     // nothing under the place at all (the marker came out under the ground):
                     // on the ground above, not in the void under the map
                     if let Some(g) = world.walk_height(pos.x, pos.y) {

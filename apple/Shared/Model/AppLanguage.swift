@@ -8,7 +8,7 @@ enum AppLanguage {
     static let codes: [String: String] = [
         "ENG": "en", "DEU": "de", "FRA": "fr", "RUS": "ru", "UKR": "uk", "BEL": "be", "KAZ": "kk",
         "POL": "pl", "CZE": "cs", "HUN": "hu", "ESP": "es", "CAT": "ca", "PTB": "pt-BR", "PTP": "pt-PT",
-        "ITA": "it", "NLD": "nl", "TUR": "tr", "JPN": "ja", "ZHT": "zh-Hant", "KOR": "ko", "THA": "th",
+        "ITA": "it", "NLD": "nl", "SWE": "sv", "TUR": "tr", "JPN": "ja", "ZHT": "zh-Hant", "KOR": "ko", "THA": "th",
         "VIE": "vi", "IND": "id", "MSA": "ms", "TGL": "fil", "CHS": "zh-Hans", "HIN": "hi",
     ]
 

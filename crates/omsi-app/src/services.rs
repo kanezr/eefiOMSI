@@ -38,7 +38,8 @@ pub(crate) fn at_petrol_station(world: &World, v: &omsi_sim::VehicleInstance) ->
         pole: None,
         id: -1,
     };
-    let stations = world.petrol_stations.lock();
+    let data = world.data.peek();
+    let stations = &data.lists.petrol_stations;
     if omsi_cfg::flags::OMSI_DEBUG_SERVICES.is_set() {
         for p in stations.iter() {
             log::info!("petrol station box at ({:.1}, {:.1}) {:.1} x {:.1} m: bus {:.1} m away", p.center.x, p.center.y, p.half.x * 2.0, p.half.y * 2.0, me.separation(p));

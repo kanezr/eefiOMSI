@@ -21,7 +21,7 @@ async fn work<F: FnOnce() -> Answer + Send + 'static>(f: F) -> Answer {
 }
 
 pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
-    tauri::generate_handler![call, call_bytes, pick_folder, pick_file, pick_mod, open_path, open_url, classic_launcher, selftest_done]
+    tauri::generate_handler![call, call_bytes, pick_folder, pick_file, pick_mod, open_path, open_url, update_relaunch, selftest_done, fit_zoom]
 }
 
 /// This window, for the commands of `omsi-launcher-api`.
@@ -36,11 +36,17 @@ impl omsi_launcher_api::Platform for Window {
     fn launched(&self) {
         crate::service::release();
     }
+    fn before_update(&self) {
+        crate::service::release();
+    }
     fn renderer(&self, req: Value, wait: Duration) -> Result<(Value, Vec<u8>), String> {
         crate::service::ask(req, wait)
     }
     fn selftest(&self) -> Option<String> {
         crate::selftest().then(|| std::env::var("OPENOMSI_LAUNCHER_SELFTEST").unwrap_or_default())
+    }
+    fn quit(&self) {
+        self.0.exit(0);
     }
 }
 
@@ -62,18 +68,25 @@ pub fn start_watch(app: AppHandle) {
     std::thread::Builder::new()
         .name("launcher watch".into())
         .spawn(move || {
-            let mut running = 0usize;
+            let mut was: Vec<core::instances::Instance> = Vec::new();
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 let asked = std::time::Instant::now();
-                let now = core::list_instances().iter().filter(|i| i.running).count();
-                if now == 0 {
+                let all = core::list_instances();
+                let running: Vec<_> = all.iter().filter(|i| i.running).cloned().collect();
+                if running.is_empty() {
                     crate::service::no_game_since(asked);
                 }
-                if running > 0 && now == 0 {
+                for ended in was.iter().filter_map(|w| all.iter().find(|a| a.id == w.id && !a.running)) {
+                    if let Some((event, what)) = omsi_launcher_api::game_ended(ended) {
+                        core::log_to_file(&format!("game {} ended: {event}", ended.pid));
+                        let _ = app.emit(event, what);
+                    }
+                }
+                if !was.is_empty() && running.is_empty() {
                     let _ = app.emit("games-ended", ());
                 }
-                running = now;
+                was = running;
             }
         })
         .ok();
@@ -137,12 +150,23 @@ fn open_with_system(what: &std::ffi::OsStr) -> Answer {
     Ok(json!(true))
 }
 
-/// Switch to the game's own launcher window (and close this one).
 #[tauri::command]
-fn classic_launcher(app: AppHandle) -> Answer {
-    if !crate::classic_launcher() {
-        return Err("the game program was not found".into());
-    }
+fn fit_zoom(window: tauri::WebviewWindow, size: f64) -> Answer {
+    let dpi = window.scale_factor().map_err(err)?;
+    let inner = window.inner_size().map_err(err)?;
+    let (w, h) = (inner.width as f64 / dpi, inner.height as f64 / dpi);
+    let zoom = (w / 1440.0).min(h / 820.0).clamp(1.0, 2.2) * size.clamp(0.8, 1.5);
+    window.set_zoom(zoom).map_err(err)?;
+    Ok(json!(zoom))
+}
+
+#[tauri::command]
+fn update_relaunch(app: AppHandle) -> Answer {
+    let place = omsi_platform::updater::install_place().map_err(err)?;
+    let game = place.exe.with_file_name(if cfg!(windows) { "openomsi.exe" } else { "openomsi" });
+    let program = if game.is_file() { game } else { place.exe.clone() };
+    omsi_launcher_lib::log_to_file(&format!("update: starting {} after the update", program.display()));
+    std::process::Command::new(&program).current_dir(&place.dir).spawn().map_err(err)?;
     app.exit(0);
     Ok(json!(true))
 }

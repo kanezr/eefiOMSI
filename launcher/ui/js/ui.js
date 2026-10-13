@@ -4,6 +4,7 @@
 import { html, useEffect, useRef, useState } from '../vendor/preact-htm.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
+import { onPhone } from './api.js';
 
 export { html };
 
@@ -27,11 +28,92 @@ export function Field({ label, help, children }) {
 
 /** A select of `options`: [value, label] pairs (labels translated unless `raw`). */
 export function Select({ value, options, onChange, disabled, raw, placeholder }) {
-  const has = options.some(([v]) => String(v) === String(value));
-  return html`<select class="select" value=${String(value ?? '')} disabled=${disabled} onChange=${(e) => onChange(e.currentTarget.value)}>
-    ${!has && html`<option value=${String(value ?? '')}>${value === '' || value == null ? t(placeholder || 'Choose…') : String(value)}</option>`}
-    ${options.map(([v, l]) => html`<option value=${String(v)}>${raw ? l : t(l)}</option>`)}
-  </select>`;
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(-1);
+  const [place, setPlace] = useState(null);
+  const box = useRef();
+  const list = useRef();
+  const now = String(value ?? '');
+  const has = options.some(([v]) => String(v) === now);
+  const items = [
+    ...(has ? [] : [[now, value === '' || value == null ? t(placeholder || 'Choose…') : now]]),
+    ...options.map(([v, l]) => [String(v), raw ? l : t(l)]),
+  ];
+  const at = items.findIndex(([v]) => v === now);
+  useEffect(() => {
+    if (!open) return;
+    const r = box.current.getBoundingClientRect();
+    const below = innerHeight - r.bottom - 12;
+    const up = below < 220 && r.top > below;
+    const max = Math.min(320, up ? r.top - 12 : below);
+    const right = innerWidth - r.left - 12;
+    const left = r.right - 12;
+    const leftward = right < 420 && left > right;
+    setPlace({ ...(leftward ? { right: innerWidth - r.right } : { left: r.left }), width: r.width, widest: Math.max(r.width, Math.min(420, leftward ? left : right)), max, ...(up ? { bottom: innerHeight - r.top + 4 } : { top: r.bottom + 4 }) });
+    setHi(at);
+    const out = (e) => !box.current?.contains(e.target) && !list.current?.contains(e.target) && setOpen(false);
+    const away = (e) => !list.current?.contains(e.target) && setOpen(false);
+    const shut = () => setOpen(false);
+    document.addEventListener('mousedown', out);
+    document.addEventListener('scroll', away, true);
+    addEventListener('resize', shut);
+    return () => {
+      document.removeEventListener('mousedown', out);
+      document.removeEventListener('scroll', away, true);
+      removeEventListener('resize', shut);
+    };
+  }, [open]);
+  useEffect(() => {
+    if (open && place) list.current?.children[Math.max(at, 0)]?.scrollIntoView({ block: 'nearest' });
+  }, [place]);
+  if (onPhone) {
+    return html`<select class="select" value=${now} disabled=${disabled} onChange=${(e) => onChange(e.currentTarget.value)}>
+      ${items.map(([v, l]) => html`<option value=${v}>${l}</option>`)}
+    </select>`;
+  }
+  const pick = (v) => {
+    setOpen(false);
+    if (v !== now) onChange(v);
+  };
+  const move = (n) => {
+    const i = Math.max(0, Math.min(items.length - 1, n));
+    setHi(i);
+    list.current?.children[i]?.scrollIntoView({ block: 'nearest' });
+  };
+  const key = (e) => {
+    if (!open) {
+      if (['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(e.key)) {
+        e.preventDefault();
+        setOpen(true);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      setOpen(false);
+    } else if (e.key === 'Tab') setOpen(false);
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      move(hi + (e.key === 'ArrowDown' ? 1 : -1));
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      move(e.key === 'Home' ? 0 : items.length - 1);
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (items[hi]) pick(items[hi][0]);
+    }
+  };
+  const label = items[at]?.[1] ?? '';
+  return html`<div class="dropdown" ref=${box}>
+    <button type="button" class=${'select' + (open ? ' open' : '')} disabled=${disabled} title=${label} aria-haspopup="listbox" aria-expanded=${open}
+      onClick=${() => setOpen(!open)} onKeyDown=${key}><span>${label}</span></button>
+    ${open && place && html`<div class="dropdown-list" role="listbox" ref=${list}
+      style=${(place.left != null ? `left:${place.left}px;` : `right:${place.right}px;`) + `min-width:${place.width}px;width:max-content;max-width:${place.widest}px;max-height:${place.max}px;` + (place.top != null ? `top:${place.top}px` : `bottom:${place.bottom}px`)}>
+      ${items.map(([v, l], i) => html`<div role="option" aria-selected=${v === now} title=${l}
+        class=${'dropdown-item' + (v === now ? ' on' : '') + (i === hi ? ' hi' : '')}
+        onMouseMove=${() => i !== hi && setHi(i)} onMouseDown=${(e) => { e.preventDefault(); pick(v); }}>${l}</div>`)}
+    </div>`}
+  </div>`;
 }
 
 export function Input({ value, onInput, placeholder, type = 'text', ...rest }) {
@@ -67,10 +149,13 @@ export function Tabs({ value, options, onChange }) {
 /** A slider; `format` turns the value into what is shown beside the label. */
 export function Slider({ label, value, min, max, step, onChange, format }) {
   const v = Number(value ?? min);
-  const fill = ((v - min) / (max - min || 1)) * 100;
+  // (the thumb's centre runs from half its width to the track's end less that: the fill ends
+  // under it there, not at the plain percentage, which left the thumb beside the fill's end)
+  const at = Math.min(1, Math.max(0, (v - min) / (max - min || 1)));
+  const fill = `calc(8px + (100% - 16px) * ${at})`;
   return html`<div class="slider">
     <div class="top"><span>${t(label)}</span><span>${format ? format(v) : v}</span></div>
-    <input type="range" min=${min} max=${max} step=${step} value=${v} style=${`--fill:${fill}%`} onInput=${(e) => onChange(Number(e.currentTarget.value))} />
+    <input type="range" min=${min} max=${max} step=${step} value=${v} style=${`--fill:${fill}`} onInput=${(e) => onChange(Number(e.currentTarget.value))} />
   </div>`;
 }
 
@@ -91,15 +176,15 @@ export function Tag({ kind = '', children }) {
 }
 
 /** A dialog over the page; Escape and a click beside it close it. */
-export function Dialog({ title, onClose, children, footer, wide }) {
+export function Dialog({ title, onClose, children, footer, wide, class: cls = '' }) {
   useEffect(() => {
     const k = (e) => e.key === 'Escape' && onClose?.();
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
   return html`<div class="overlay" onMouseDown=${(e) => e.target === e.currentTarget && onClose?.()}>
-    <div class=${'dialog' + (wide ? ' wide' : '')} role="dialog">
-      <div class="dialog-head"><h2>${t(title)}</h2><${Button} kind="ghost" icon="x" title="Close" onClick=${onClose} /></div>
+    <div class=${'dialog' + (wide ? ' wide' : '') + (cls ? ' ' + cls : '')} role="dialog">
+      <div class="dialog-head"><h2>${t(title)}</h2>${onClose && html`<${Button} kind="ghost" icon="x" title="Close" onClick=${onClose} />`}</div>
       <div class="dialog-body">${children}</div>
       ${footer && html`<div class="dialog-foot">${footer}</div>`}
     </div>

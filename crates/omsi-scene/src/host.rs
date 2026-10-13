@@ -3,22 +3,80 @@
 //! simulation draws its pictures with. The game sets these at its start; a world a test or
 //! a tool opens takes the defaults.
 
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering::Relaxed};
+
 // The settings below are set by the game at every session start and read while worlds and
 // vehicles load, where no game state is at hand.
 
-/// Enhanced graphics wanted (from the settings, `--enhanced`, or OMSI_ENHANCED=1).
-pub static ENHANCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// Vanilla graphics: the picture as OMSI 2 draws it (no Vanilla+ extras, see
-/// `omsi_render::Lighting::classic`).
-pub static CLASSIC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-/// Volume of the scenery's own sounds (OMSI's `sound_scenery`), as the bits of an f32.
-pub static SOUND_SCENERY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x3f80_0000);
+/// The graphics' kind a scene is drawn in (the game's settings and arguments; a world a test
+/// or a tool opens: Vanilla+).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GraphicsKind {
+    #[default]
+    VanillaPlus,
+    /// Enhanced graphics (from the settings, `--enhanced`, or OMSI_ENHANCED=1).
+    Enhanced,
+    /// Vanilla graphics: the picture as OMSI 2 draws it (no Vanilla+ extras, see
+    /// `omsi_render::Lighting::classic`).
+    Classic,
+}
 
-/// Edge of a mirror's picture (the `mirror_size` setting, OMSI's reflTexSize).
-pub static MIRROR_SIZE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(256);
+/// The game's settings and the session's weather as a world's loading code and sounds read
+/// them: each `World` holds its own (`World::settings`), the game sets them when the session
+/// starts and again when they change; a world a test or a tool opens keeps the defaults.
+/// (Atomics: the world is shared with the loading threads, and the game changes them while
+/// it plays.)
+#[derive(Debug)]
+pub struct SceneSettings {
+    /// Volume of the scenery's own sounds (OMSI's `sound_scenery`), as the bits of an f32.
+    sound_scenery: AtomicU32,
+    /// Edge of a mirror's picture (the `mirror_size` setting, OMSI's reflTexSize).
+    mirror_size: AtomicU32,
+    /// The `rain_quality` setting: 2 high, 1 medium, 0 low (see `rain::quality_of`).
+    rain_quality: AtomicU8,
+    /// The session's weather lies as snow (`[snow]` in the `.owt`): the vehicles' panes wear
+    /// it as they go onto the GPU.
+    snow: AtomicBool,
+}
 
-pub fn sound_gain(which: &std::sync::atomic::AtomicU32) -> f32 {
-    f32::from_bits(which.load(std::sync::atomic::Ordering::Relaxed))
+impl Default for SceneSettings {
+    fn default() -> SceneSettings {
+        SceneSettings { sound_scenery: AtomicU32::new(1.0f32.to_bits()), mirror_size: AtomicU32::new(256), rain_quality: AtomicU8::new(2), snow: AtomicBool::new(false) }
+    }
+}
+
+impl SceneSettings {
+    pub fn sound_scenery(&self) -> f32 {
+        f32::from_bits(self.sound_scenery.load(Relaxed))
+    }
+
+    pub fn set_sound_scenery(&self, v: f32) {
+        self.sound_scenery.store(v.to_bits(), Relaxed);
+    }
+
+    pub fn mirror_size(&self) -> u32 {
+        self.mirror_size.load(Relaxed)
+    }
+
+    pub fn set_mirror_size(&self, v: u32) {
+        self.mirror_size.store(v, Relaxed);
+    }
+
+    pub fn rain_quality(&self) -> u8 {
+        self.rain_quality.load(Relaxed)
+    }
+
+    pub fn set_rain_quality(&self, v: u8) {
+        self.rain_quality.store(v, Relaxed);
+    }
+
+    pub fn snow(&self) -> bool {
+        self.snow.load(Relaxed)
+    }
+
+    pub fn set_snow(&self, v: bool) {
+        self.snow.store(v, Relaxed);
+    }
 }
 
 /// The settings a world reads when it opens.

@@ -50,6 +50,7 @@ impl Traffic {
     /// a cabin right now, so every AI car's sound is heard through that bodywork and glass -
     /// a passing car's horn does not simply sound like the street outside once the windows
     /// are shut. `riding`: the AI bus the player rides in on foot - heard from inside it.
+    /// `volume`: the traffic's volume (OMSI's `sound_ai`).
     pub fn update_audio(
         &mut self,
         audio: &omsi_audio::AudioEngine,
@@ -57,8 +58,9 @@ impl Traffic {
         street_cond: f32,
         muffled: bool,
         riding: Option<u64>,
+        volume: f32,
     ) {
-        self.update_riding_audio(audio, riding);
+        self.update_riding_audio(audio, riding, volume);
         let freed = audio.trim_clips(std::time::Duration::from_secs(60));
         if freed > 0 && omsi_cfg::flags::OMSI_PROFILE.is_set() {
             log::info!(
@@ -70,22 +72,26 @@ impl Traffic {
             s.stop_all(audio);
         }
         let near = 250.0;
-        for c in &mut self.sim.cars {
-            let d = (c.vehicle.position - listener).length();
+        // what the sounds read of the cars, taken from the traffic (`SoundFrame`)
+        let mut frame = std::mem::take(&mut self.sound_frame);
+        self.sim.snapshot_sounds(&mut frame, listener, near * 1.2, street_cond, riding);
+        let mut triggers = Vec::new();
+        for c in frame.cars() {
             // (the bus ridden in is heard from inside, by `update_riding_audio`)
-            if d > near * 1.2 || riding == Some(c.id) {
+            if !c.heard {
                 if let Some(mut s) = self.sounds.remove(&c.id) {
                     s.stop_all(audio);
                 }
                 continue;
             }
+            let d = (c.position - listener).length();
             if !self.sounds.contains_key(&c.id) && d < near {
-                let plan = sound_plan(&mut self.sound_plans, &mut self.sound_cfgs, &c.vehicle.ty.def);
+                let plan = sound_plan(&mut self.sound_plans, &mut self.sound_cfgs, &c.ty.def);
                 if let Some(plan) = plan {
                     // an articulated bus's rear section sounds too (its engine, on a pusher)
                     let mut parts = Vec::new();
-                    for (i, t) in c.vehicle.trailers.iter().enumerate() {
-                        if let Some(part) = sound_plan(&mut self.sound_plans, &mut self.sound_cfgs, &t.ty.def) {
+                    for (i, t) in c.part_types.iter().enumerate() {
+                        if let Some(part) = sound_plan(&mut self.sound_plans, &mut self.sound_cfgs, &t.def) {
                             parts.push((i, part));
                         }
                     }
@@ -93,69 +99,64 @@ impl Traffic {
                     let ready = audio.clips_ready(&plan.clips)
                         && parts.iter().all(|(_, part)| audio.clips_ready(&part.clips));
                     if ready {
-                        let number = c.vehicle.number();
-                        let mut ss = omsi_audio::SoundSet::new_exterior(audio, &plan.cfg.chosen_for(&number), &plan.dir);
+                        let number = &c.number;
+                        let mut ss = omsi_audio::SoundSet::new_exterior(audio, &plan.cfg.chosen_for(number), &plan.dir);
                         for (i, part) in &parts {
-                            ss.add_part(*i, omsi_audio::SoundSet::new_exterior(audio, &part.cfg.chosen_for(&number), &part.dir));
+                            ss.add_part(*i, omsi_audio::SoundSet::new_exterior(audio, &part.cfg.chosen_for(number), &part.dir));
                         }
-                        ss.master = crate::sound_gain(&crate::SOUND_AI);
-                        c.vehicle.host.snapshot_triggers = ss.curve_triggers().into_iter().collect();
+                        ss.master = volume;
+                        triggers.push((c.id, ss.curve_triggers().into_iter().collect()));
                         self.sounds.insert(c.id, ss);
                     }
                 }
             }
-            let fired: Vec<String> = std::mem::take(&mut c.vehicle.host.fired_triggers);
-            let fired_vars: Vec<(String, Vec<f32>)> = std::mem::take(&mut c.vehicle.host.fired_trigger_vars);
-            let fired_files: Vec<(String, String)> =
-                std::mem::take(&mut c.vehicle.host.fired_file_triggers);
-            c.vehicle.host.street_cond = street_cond;
-            c.vehicle.set_engine_var("StreetCond", street_cond);
             if let Some(ss) = self.sounds.get_mut(&c.id) {
                 ss.set_muffled(muffled);
-                let xf = c.vehicle.world_transform();
-                let v = &c.vehicle;
+                let xf = c.world;
+                let vars = frame.vars(c);
+                let var = |n: &str| c.var_slot(n).and_then(|i| vars.get(i).copied());
                 let at_fire = |t: &str, n: &str| -> Option<f32> {
-                    let vals = &fired_vars.iter().rev().find(|(k, _)| k.eq_ignore_ascii_case(t))?.1;
-                    v.var_slot(n).and_then(|i| vals.get(i).copied())
+                    let vals = &c.fired_vars.iter().rev().find(|(k, _)| k.eq_ignore_ascii_case(t))?.1;
+                    c.var_slot(n).and_then(|i| vals.get(i).copied())
                 };
-                ss.update_fired(audio, &|n| v.var(n), &xf, &fired, &at_fire);
-                ss.update_parts(
-                    audio,
-                    &|n| v.var(n),
-                    &|i| v.trailers.get(i).map(|t| t.world_transform()),
-                    &fired,
-                );
-                for (t, f) in &fired_files {
-                    ss.play_file_trigger(audio, t, f, &|n| v.var(n), &xf);
+                ss.update_fired(audio, &var, &xf, &c.fired, &at_fire);
+                let parts = frame.parts(c);
+                ss.update_parts(audio, &var, &|i| parts.get(i).copied(), &c.fired);
+                for (t, f) in &c.fired_files {
+                    ss.play_file_trigger(audio, t, f, &var, &xf);
                 }
             }
         }
-        self.play_horns(audio, listener, muffled);
+        // (a new sound set tells its car which triggers to keep the variables of)
+        for (id, t) in triggers {
+            self.sim.set_sound_triggers(id, t);
+        }
+        self.play_horns(audio, &frame, listener, muffled, volume);
+        self.sound_frame = frame;
     }
 
-    /// The horns of the cars that honked (`TrafficSim::honked`): a car whose own sound set
-    /// answers `ev_AI_Horn` was heard by it already; every other one sounds OMSI's own AI
-    /// horn (`Sounds/AI_Cars`, the lorry's for the heavy ones) where it stands - the stock
-    /// cars have nothing on that trigger, and the AI's honking was never heard.
-    fn play_horns(&mut self, audio: &omsi_audio::AudioEngine, listener: DVec3, muffled: bool) {
-        for (id, heavy) in std::mem::take(&mut self.sim.honked) {
-            let Some(c) = self.sim.cars.iter().find(|c| c.id == id) else { continue };
-            if (c.vehicle.position - listener).length() > 250.0 {
+    /// The horns of the cars that honked (`TrafficSim::honked`, in the `SoundFrame`): a car
+    /// whose own sound set answers `ev_AI_Horn` was heard by it already; every other one
+    /// sounds OMSI's own AI horn (`Sounds/AI_Cars`, the lorry's for the heavy ones) where it
+    /// stands - the stock cars have nothing on that trigger, and the AI's honking was never heard.
+    fn play_horns(&mut self, audio: &omsi_audio::AudioEngine, frame: &omsi_sim::view_events::SoundFrame, listener: DVec3, muffled: bool, volume: f32) {
+        for (heavy, position, ty) in &frame.honks {
+            if (*position - listener).length() > 250.0 {
                 continue;
             }
-            let own = sound_plan(&mut self.sound_plans, &mut self.sound_cfgs, &c.vehicle.ty.def)
+            let own = sound_plan(&mut self.sound_plans, &mut self.sound_cfgs, &ty.def)
                 .is_some_and(|p| p.cfg.sounds.iter().any(|s| s.triggers.iter().any(|t| t.trim().eq_ignore_ascii_case("ev_AI_Horn"))));
             if own {
                 continue;
             }
-            let file = if heavy { "Sounds/AI_Cars/Hupe_Lkw.wav" } else { "Sounds/AI_Cars/hupe.wav" };
+            let file = if *heavy { "Sounds/AI_Cars/Hupe_Lkw.wav" } else { "Sounds/AI_Cars/hupe.wav" };
             let path = omsi_cfg::resolve_path(&self.sim.root, file);
             let Some(clip) = audio.load_clip(&path) else { continue };
-            let at = c.vehicle.position + DVec3::Z * 0.8;
+            let at = *position + DVec3::Z * 0.8;
             audio.play(
                 clip,
                 omsi_audio::mixer::VoiceParams {
-                    gain: crate::sound_gain(&crate::SOUND_AI),
+                    gain: volume,
                     pitch: 1.0,
                     looping: false,
                     position: Some(at.as_vec3()),
@@ -171,7 +172,7 @@ impl Traffic {
     /// The AI bus ridden in on foot: its full `[sound]` set from inside ([viewpoint] 2, the
     /// outside sounds through what it has open - its own `Snd_OutsideVol`), instead of its
     /// `[sound_ai]` heard as from the street (#1286: a passenger heard next to nothing).
-    fn update_riding_audio(&mut self, audio: &omsi_audio::AudioEngine, riding: Option<u64>) {
+    fn update_riding_audio(&mut self, audio: &omsi_audio::AudioEngine, riding: Option<u64>, volume: f32) {
         if self.riding_sounds.as_ref().map(|r| r.0) != riding {
             if let Some((_, mut s)) = self.riding_sounds.take() {
                 s.stop_all(audio);
@@ -204,7 +205,7 @@ impl Traffic {
                 return;
             }
             let mut ss = omsi_audio::SoundSet::new(audio, &cfg.chosen_for(&c.vehicle.number()), &dir);
-            ss.master = crate::sound_gain(&crate::SOUND_AI);
+            ss.master = volume;
             self.riding_sounds = Some((id, ss));
         }
         if let Some((_, ss)) = self.riding_sounds.as_mut() {

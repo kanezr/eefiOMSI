@@ -4,12 +4,17 @@
 //! (`gateway`), what of a vehicle goes over the network beyond its pose (`sync`), where a
 //! joining bus may stand (`spawn`), a client's tracks of the host's world (`mirror`), a
 //! dedicated server's `server.cfg` and administration (`server_cfg`, `admin`) and the
-//! session's status file for the launcher. The game's side (the remote buses drawn and
-//! heard, the shared world, the chat on the HUD) stays in the app, which hands this crate
-//! plain values.
+//! session's status file for the launcher. The session as the game plays it (`game`: our
+//! bus sent, the other players' vehicles run, the host's world and clock followed, the
+//! chat) takes the game's choices as a `config::LanConfig`, the frame's as a
+//! `game::LanInput`, and asks the rest of the game through `host::LanHost`; how the others
+//! are drawn and heard, and the shared world's mirror, stay in the app.
 
 pub mod admin;
+pub mod config;
+pub mod game;
 pub mod gateway;
+pub mod host;
 pub mod mirror;
 pub mod mods;
 pub mod remote;
@@ -26,9 +31,7 @@ pub fn data_dir() -> Option<PathBuf> {
     Some(PathBuf::from(home).join(".openomsi"))
 }
 
-/// The line the launcher looks for in the game's log when the game is over: the server sent
-/// the player away (kick, ban) or turned it away at the door, with the server's message.
-pub const LEFT_SERVER: &str = "LAN: disconnected from the server: ";
+pub use omsi_net::LEFT_SERVER;
 
 /// The status file of this game process.
 pub fn status_path() -> Option<PathBuf> {

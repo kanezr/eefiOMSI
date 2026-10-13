@@ -68,7 +68,6 @@ fn is_ring(net: &Network, cycle: &[usize]) -> bool {
 /// The shortest loop of street lanes from `start` back to it within `RING_MAX` (lanes in
 /// order, `start` first), if any.
 fn shortest_loop(net: &Network, start: usize) -> Option<Vec<usize>> {
-    // breadth first by length: (length so far, path)
     // breadth first by length: (length so far, path), a path being its last lane and parent in `nodes`
     let mut nodes: Vec<(usize, usize)> = vec![(start, usize::MAX)];
     let mut open: Vec<(f32, usize)> = vec![(net.lanes[start].length(), 0)];
@@ -241,6 +240,7 @@ mod tests {
         let net = network(lanes, false);
         assert!(net.lanes.iter().all(|l| !l.ring));
     }
+
     /// The search as it was, a scan of the open paths for the shortest each time.
     fn scan_loop(net: &Network, start: usize) -> Option<Vec<usize>> {
         let mut open: Vec<(f32, Vec<usize>)> = vec![(net.lanes[start].length(), vec![start])];
@@ -307,4 +307,3 @@ mod tests {
         assert_eq!(found, net.lanes.len(), "every lane of the grid is on a loop");
     }
 }
-

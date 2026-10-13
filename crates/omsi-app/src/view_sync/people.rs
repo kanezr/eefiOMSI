@@ -4,12 +4,12 @@
 //! The simulation does not touch the renderer. What it does that the renderer has to
 //! follow - somebody appearing, somebody going, coins put on the desk - it writes down as
 //! `BodyOp`s (`PeopleSim::bodies`), and the view replays them in the order they happened
-//! (`show_bodies`), at the end of the same call that made them: the renderer sees the very
+//! ([`apply_people`]), right after the call that made them: the renderer sees the very
 //! calls, in the very order, it saw when the simulation made them itself.
 //!
-//! The replay runs at the end of every `Humans` call that can make or remove people
-//! (`tick`, `populate`, `avatar`, `mirror_add`, `seed_riders`), which take the people's
-//! `PeopleView` (`SimView::people`, apart from the `Humans`) for it; the coins handed out,
+//! The replay follows every `Humans` call that can make or remove people (`tick` - in
+//! `steps::tick_humans` -, `populate`, `avatar`, `mirror_add`, `seed_riders`), with the
+//! people's `PeopleView` (`SimView::people`, apart from the `Humans`); the coins handed out,
 //! the ticket blocks and the posing are the view sync's (`view_sync::sync`).
 
 use crate::humans::Humans;
@@ -18,12 +18,16 @@ use glam::{DVec3, Mat4, Vec3};
 use hashbrown::HashMap;
 use omsi_render::{AlphaMode, MaterialId, MeshId, Renderer, Scene};
 use omsi_sim::human::{skin, HumanType};
-use omsi_sim::people::{BodyOp, Person, Place, State};
+use omsi_sim::people::cabin::DrawnBus;
+use omsi_sim::people::{BodyOp, BusId, Place};
+use omsi_sim::view_events::{PeopleFrame, PersonFrame};
 use omsi_sim::VehicleInstance;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod animation;
+mod avatars;
+pub(crate) use avatars::{set_hour, speak};
 
 /// About how long one person's pose and skinning takes (s), and the work worth a helper
 /// of the pool (see `omsi_cfg::par`).
@@ -45,9 +49,18 @@ pub(crate) struct PeopleView {
     /// people who have gone, kept for the next person dressed alike.
     pub(crate) gpu_materials: HashMap<(usize, usize, usize), Vec<MaterialId>>,
     pub(crate) spare: HashMap<(usize, usize, usize), Vec<(MeshId, usize)>>,
+    /// Everybody's meshes, instances and pose as drawn, by person id (the simulation's
+    /// people hold none of it: `BodyOp::Spawn` makes the meshes here, `Retire` lets them go,
+    /// `Renamed` follows a new id).
+    pub(crate) people: HashMap<u32, PersonView>,
+    /// What the posing reads of the simulation, taken at each sync (its buffer kept).
+    pub(crate) frame: PeopleFrame,
     pub(crate) sync_frame: u32,
     /// Animation choice for this session, refreshed on Android in-process launches.
     pub(crate) enhanced_poses: bool,
+    /// The people are drawn with the avatars of "Character models: High quality" (this
+    /// session's choice; see `avatars`).
+    pub(crate) avatars: bool,
     /// Simulation time of the last `sync`.
     pub(crate) last_sync: f64,
     /// Frames synced, people posed and skinned, the time that took and the part of it spent
@@ -55,6 +68,8 @@ pub(crate) struct PeopleView {
     pub(crate) pose_stats: (u32, usize, f64, f64),
     /// Who is posed this frame, per person (kept from frame to frame).
     due: Vec<bool>,
+    /// The avatar textures whose PBR maps went up already.
+    pbr_done: hashbrown::HashSet<PathBuf>,
     /// `OMSI_TRACE_PAX=<csv>`: every person near the eye, every frame (see `sync`).
     pub(crate) trace: Option<std::io::BufWriter<std::fs::File>>,
     /// The tear-off ticket blocks of the player's bus (`money::TicketBlocks`).
@@ -68,11 +83,15 @@ impl PeopleView {
             gpu_textures: HashMap::new(),
             gpu_materials: HashMap::new(),
             spare: HashMap::new(),
+            people: HashMap::new(),
+            frame: PeopleFrame::default(),
             sync_frame: 0,
             enhanced_poses: animation::enabled(),
+            avatars: avatars::enabled(),
             last_sync: 0.0,
             pose_stats: (0, 0, 0.0, 0.0),
             due: Vec::new(),
+            pbr_done: hashbrown::HashSet::new(),
             trace: omsi_cfg::flags::OMSI_TRACE_PAX.var().and_then(|f| std::fs::File::create(f).ok()).map(|f| {
                 use std::io::Write;
                 let mut w = std::io::BufWriter::new(f);
@@ -83,10 +102,25 @@ impl PeopleView {
         }
     }
 
+    /// The renderer instances of the people, by person id in its order
+    /// (`OMSI_SCENE_DIGEST`).
+    pub(crate) fn instances(&self) -> Vec<(u64, usize)> {
+        let mut ids: Vec<u32> = self.people.keys().copied().collect();
+        ids.sort_unstable();
+        ids.iter().flat_map(|id| self.people[id].meshes.iter().map(|m| (*id as u64, m.1))).collect()
+    }
+
     /// `OMSI_TRACE_PAX` is writing a trace.
     pub(crate) fn tracing(&self) -> bool {
         self.trace.is_some()
     }
+}
+
+/// Bring the renderer up to what the people's calls did since the last time (see
+/// [`BodyOp`]): called right after each call that can make or remove people, where those
+/// calls used to show them themselves.
+pub(crate) fn apply_people(h: &mut Humans, view: &mut PeopleView, world: &World, renderer: &Renderer, scene: &mut Scene) {
+    h.show_bodies(view, world, renderer, scene);
 }
 
 impl Humans {
@@ -107,35 +141,42 @@ impl Humans {
             return;
         }
         let ops = std::mem::take(&mut self.sim.bodies.ops);
-        // the meshes of people who came and went before the view caught up
-        let mut gone: HashMap<u32, Vec<(MeshId, usize)>> = HashMap::new();
         let mut ops = ops.into_iter();
         while let Some(op) = ops.next() {
             let world = match world {
                 Some(w) => w,
                 None if op.needs_world() => {
-                    // (cannot happen: whatever makes such ops shows them before it returns)
+                    // (cannot happen: whatever makes such ops shows them right after it)
                     log::warn!("people: {} body changes left for later", ops.len() + 1);
                     self.sim.bodies.ops = std::iter::once(op).chain(ops).collect();
                     return;
                 }
                 None => {
-                    let BodyOp::Retire { id, tkey, variant, meshes } = op else { unreachable!() };
-                    view.retire_meshes(id, tkey, variant, meshes, &mut gone);
+                    match op {
+                        BodyOp::Retire { id, tkey, variant } => view.retire_meshes(id, tkey, variant),
+                        BodyOp::Renamed { from, to } => view.rename(from, to),
+                        _ => unreachable!(),
+                    }
                     continue;
                 }
             };
             match op {
                 BodyOp::Spawn { id, ty, variant, position } => {
-                    let meshes = view.make_meshes(world, renderer, scene, &ty, variant, position);
-                    match self.sim.people.iter_mut().find(|p| p.id == id) {
-                        Some(p) => p.meshes = meshes,
-                        None => {
-                            gone.insert(id, meshes);
-                        }
-                    }
+                    // (drawn as an avatar of the same kind when the player wants them)
+                    let avatar = if view.avatars { avatars::pool().and_then(|p| p.pick(id, &ty)) } else { None };
+                    let meshes = match &avatar {
+                        Some(a) => view.make_meshes(world, renderer, scene, a, 0, position),
+                        None => view.make_meshes(world, renderer, scene, &ty, variant, position),
+                    };
+                    let st = view.people.entry(id).or_default();
+                    st.meshes = meshes;
+                    // (somebody who came before the avatars were loaded gets one later, see `pose`)
+                    st.avatar_checked = !view.avatars || avatars::pool().is_some();
+                    st.made_as = (Arc::as_ptr(&ty) as usize, variant);
+                    st.avatar = avatar;
                 }
-                BodyOp::Retire { id, tkey, variant, meshes } => view.retire_meshes(id, tkey, variant, meshes, &mut gone),
+                BodyOp::Retire { id, tkey, variant } => view.retire_meshes(id, tkey, variant),
+                BodyOp::Renamed { from, to } => view.rename(from, to),
                 BodyOp::Coins { coins, point, var, change, parent } => {
                     if let Some(m) = self.sim.money.as_mut() {
                         crate::money::place(m, world, renderer, scene, &coins, point, var, change, parent.as_deref());
@@ -147,11 +188,26 @@ impl Humans {
 }
 
 impl PeopleView {
-    fn retire_meshes(&mut self, id: u32, tkey: usize, variant: usize, meshes: Vec<(MeshId, usize)>, gone: &mut HashMap<u32, Vec<(MeshId, usize)>>) {
-        let meshes = gone.remove(&id).unwrap_or(meshes);
+    /// Person `id` has gone: their meshes hidden and kept for the next person of the type
+    /// (`tkey`) dressed alike (`variant`).
+    fn retire_meshes(&mut self, id: u32, tkey: usize, variant: usize) {
+        let person = self.people.remove(&id);
+        // (an avatar's meshes go to the next person drawn with the same avatar)
+        let (tkey, variant) = match person.as_ref().and_then(|p| p.avatar.as_ref()) {
+            Some(a) => (Arc::as_ptr(a) as usize, 0),
+            None => (tkey, variant),
+        };
+        let meshes = person.map(|p| p.meshes).unwrap_or_default();
         for (mi, m) in meshes.iter().enumerate() {
             self.hidden.push(m.1);
             self.spare.entry((tkey, variant, mi)).or_default().push(*m);
+        }
+    }
+
+    /// Person `from` is called `to` from now on.
+    fn rename(&mut self, from: u32, to: u32) {
+        if let Some(m) = self.people.remove(&from) {
+            self.people.insert(to, m);
         }
     }
 
@@ -187,6 +243,7 @@ impl PeopleView {
                             m.texture
                         );
                     }
+                    let found_path = found.clone();
                     let tex = match found {
                         Some(path) => match self.gpu_textures.get(&path) {
                             Some(t) => *t,
@@ -207,7 +264,17 @@ impl PeopleView {
                         2 => AlphaMode::Blend,
                         _ => AlphaMode::Opaque,
                     };
-                    mats.push(renderer.add_material(scene, tex, alpha, [1.0; 4], false));
+                    // an avatar's normal maps lie beside its colour textures (`<texture>_normal`)
+                    if let (Some(t), Some(path), true) = (tex, found_path.as_ref(), ty.face.is_some()) {
+                        if self.pbr_done.insert(path.clone()) {
+                            if let Some(set) = omsi_texture::pbr::load_set(&omsi_texture::pbr::find(path)) {
+                                renderer.add_pbr_maps(scene, t, &set);
+                            }
+                        }
+                    }
+                    // (a body: its cut-out hair and clothes are not leaves, see `MaterialExtra::solid`)
+                    let extra = omsi_render::MaterialExtra { solid: true, ..Default::default() };
+                    mats.push(renderer.add_material_extra(scene, tex, alpha, [1.0; 4], false, None, None, None, None, [0.0; 3], extra));
                 }
                 self.gpu_materials.insert(key, mats);
             }
@@ -254,7 +321,7 @@ impl Humans {
         }
     }
 
-    pub(super) fn sync_money(&mut self, view: &mut PeopleView, world: &World, renderer: &Renderer, scene: &mut Scene, bus: &VehicleInstance) {
+    pub(crate) fn sync_money(&mut self, view: &mut PeopleView, world: &World, renderer: &Renderer, scene: &mut Scene, bus: &VehicleInstance) {
         if let Some(m) = self.sim.money.as_mut() {
             crate::money::sync(m, renderer, scene, bus);
         }
@@ -270,26 +337,144 @@ impl Humans {
         }
     }
 
-    /// Skin the people due for a new pose and push transforms to the renderer. Near people
-    /// are posed every frame, far ones every few frames and people out of view rarely; the
-    /// posing and skinning run in parallel.
+    /// Skin the people due for a new pose and push transforms to the renderer: the people
+    /// who went since first, then what the posing reads of them is taken into the view's
+    /// `PeopleFrame` and posed from it ([`PeopleView::pose`]).
     pub(super) fn sync(&mut self, view: &mut PeopleView, world: &World, renderer: &Renderer, scene: &mut Scene, camera: DVec3) {
         self.catch_up_bodies(view, renderer, scene);
-        for inst in view.hidden.drain(..) {
+        self.sim.snapshot_into(&mut view.frame);
+        view.pose(world, renderer, scene, camera);
+    }
+}
+
+impl PeopleView {
+    pub(crate) fn follow_buses<'a>(&self, vehicle_of: impl Fn(BusId) -> Option<&'a VehicleInstance>, avatar: Option<u32>, renderer: &Renderer, scene: &mut Scene) -> Option<DVec3> {
+        let mut drawn: HashMap<BusId, Option<(usize, DrawnBus)>> = HashMap::new();
+        let mut moved = None;
+        for p in &self.frame.people {
+            let Place::Bus(b, l) = p.place else { continue };
+            let found = drawn.entry(b).or_insert_with(|| {
+                let k = self.frame.buses.iter().position(|x| x.id == b)?;
+                vehicle_of(b).map(|v| (k, DrawnBus::of(v, &self.frame.buses[k].cabin)))
+            });
+            let Some((k, d)) = found.as_ref() else { continue };
+            // (where they are drawn: with what is left of a glide onto their seat, see
+            // `animation::bones`)
+            let st = self.people.get(&p.id);
+            let (glide, glide_world) = st.map(|s| (s.glide, s.glide_world)).unwrap_or_default();
+            let (at, heading, tilt) = self.frame.buses[*k].follow(d, l + glide, p.position + glide_world, p.heading, p.tilt);
+            if avatar == Some(p.id) {
+                moved = Some(at - p.position - glide_world);
+            }
+            let Some(st) = st else { continue };
+            let xf = tilt * Mat4::from_rotation_z((-heading).to_radians() as f32);
+            for (_, inst) in &st.meshes {
+                renderer.set_transform(scene, *inst, at, xf);
+            }
+        }
+        moved
+    }
+}
+
+/// One person as the renderer has them: their meshes and instances, and their pose as
+/// drawn (none of it is the simulation's).
+#[derive(Default)]
+pub(crate) struct PersonView {
+    pub(crate) meshes: Vec<(MeshId, usize)>,
+    /// Skinned positions and normals, per mesh.
+    skins: Vec<(Vec<Vec3>, Vec<Vec3>)>,
+    /// The bones the skins were made with, and whether this frame's pose changed them
+    /// (somebody standing still keeps the mesh of the frame before: skinning and uploading
+    /// thirty waiting people every frame took 2 ms of the frame at a bus station).
+    skin_bones: Option<[glam::Affine3A; omsi_sim::human::SLOTS]>,
+    pose_changed: bool,
+    /// Whether this person has ever been posed (an unposed model is the file's T-pose).
+    skinned: bool,
+    /// Frames since the last pose and where the person stood then (the
+    /// feet of a mesh posed a frame ago stay on the floor when it is drawn there).
+    since_posed: u32,
+    posed_at: (DVec3, f64),
+    /// The interior light as drawn: it follows the bus's over a moment (stepping through
+    /// the door, people lit up and went dark again from one frame to the next).
+    lit: f32,
+    /// Ankles of the last pose (model frame), for `OMSI_TRACE_PAX`.
+    pub(super) ankles: [Vec3; 2],
+    /// The earlier IK/foot-planted animation, allocated only for the enhanced poses.
+    pub(super) procedural: Option<omsi_sim::human::Pose>,
+    /// A jump of the person's place within a bus (onto the seat, as Omsi.exe puts them
+    /// there) drawn as a glide instead: what is left of it in the bus's frame, the same in
+    /// the world for the drawing, and the place last frame (the bus, where).
+    pub(super) glide: glam::Vec3,
+    pub(super) glide_world: DVec3,
+    pub(super) last_place: Option<(u64, DVec3)>,
+    pub(super) last_world: DVec3,
+    /// The avatar this person is drawn with ("Character models: High quality"), else the
+    /// content's own type.
+    pub(crate) avatar: Option<Arc<HumanType>>,
+    /// The avatar's face (made when it is first near the eye).
+    face: Option<avatars::FaceView>,
+    /// Whether the avatar was chosen (the avatars were loaded when the person came).
+    avatar_checked: bool,
+    /// The content type and clothing the meshes were made for (type key, variant).
+    made_as: (usize, usize),
+}
+
+impl PeopleView {
+    /// The people who came before the avatars were loaded: drawn as theirs now (their
+    /// meshes given back as those of somebody gone).
+    fn late_avatars(&mut self, world: &World, renderer: &Renderer, scene: &mut Scene) {
+        if !self.avatars || self.people.values().all(|p| p.avatar_checked) {
+            return;
+        }
+        let Some(pool) = avatars::pool() else { return };
+        let waiting: Vec<(u32, Arc<HumanType>, DVec3)> = self.frame.people.iter().filter(|p| self.people.get(&p.id).is_some_and(|st| !st.avatar_checked)).map(|p| (p.id, p.ty.clone(), p.position)).collect();
+        for (id, ty, position) in waiting {
+            let Some(st) = self.people.get_mut(&id) else { continue };
+            if st.avatar_checked {
+                continue;
+            }
+            st.avatar_checked = true;
+            let Some(a) = pool.pick(id, &ty) else { continue };
+            let old = std::mem::take(&mut st.meshes);
+            let (tkey, variant) = st.made_as;
+            for (mi, m) in old.iter().enumerate() {
+                renderer.set_params(scene, m.1, &[], false, &[]);
+                self.spare.entry((tkey, variant, mi)).or_default().push(*m);
+            }
+            let meshes = self.make_meshes(world, renderer, scene, &a, 0, position);
+            let Some(st) = self.people.get_mut(&id) else { continue };
+            st.meshes = meshes;
+            st.avatar = Some(a);
+            st.skins.clear();
+            st.skin_bones = None;
+            st.skinned = false;
+        }
+    }
+
+    /// Pose and skin the people of `self.frame` that are due, and push their transforms to
+    /// the renderer. Near people are posed every frame, far ones every few frames and people
+    /// out of view rarely; the posing and skinning run in parallel. Reads nothing of the
+    /// simulation but the frame.
+    pub(crate) fn pose(&mut self, world: &World, renderer: &Renderer, scene: &mut Scene, camera: DVec3) {
+        for inst in self.hidden.drain(..) {
             renderer.set_params(scene, inst, &[], false, &[]);
         }
         let started = std::time::Instant::now();
-        view.sync_frame = view.sync_frame.wrapping_add(1);
-        let eye = self.sim.eye;
+        self.sync_frame = self.sync_frame.wrapping_add(1);
+        self.late_avatars(world, renderer, scene);
+        let frame = std::mem::take(&mut self.frame);
+        let eye = frame.eye;
         let from = eye.map(|e| e.pos).unwrap_or(camera);
         // synced only now and then (offscreen snapshots): everybody is posed afresh
-        let all = self.sim.time - view.last_sync > 0.12;
-        let sdt = (self.sim.time - view.last_sync).clamp(0.0, 0.5) as f32;
-        view.last_sync = self.sim.time;
-        let mut due = std::mem::take(&mut view.due);
+        let all = frame.time - self.last_sync > 0.12;
+        let sdt = (frame.time - self.last_sync).clamp(0.0, 0.5) as f32;
+        self.last_sync = frame.time;
+        // everybody's pose as drawn, in the frame's order (put back below)
+        let mut states: Vec<PersonView> = frame.people.iter().map(|p| self.people.remove(&p.id).unwrap_or_default()).collect();
+        let mut due = std::mem::take(&mut self.due);
         due.clear();
-        for (k, p) in self.sim.people.iter_mut().enumerate() {
-            p.since_posed = p.since_posed.saturating_add(1);
+        for (k, (p, st)) in frame.people.iter().zip(states.iter_mut()).enumerate() {
+            st.since_posed = st.since_posed.saturating_add(1);
             let d = p.position + DVec3::Z * 0.9 - from;
             let dist = d.length();
             let visible = match eye {
@@ -315,42 +500,91 @@ impl Humans {
             };
             let every = if p.vel.length_squared() < 1e-4 && dist > 20.0 { every * 2 } else { every };
             // spread the far ones over the frames
-            let turn = (view.sync_frame + k as u32) % every == 0;
+            let turn = (self.sync_frame + k as u32) % every == 0;
             due.push(
-                !p.skinned
+                !st.skinned
                     || all
-                    || (p.since_posed >= every && (turn || p.since_posed >= 2 * every)),
+                    || (st.since_posed >= every && (turn || st.since_posed >= 2 * every)),
             );
         }
         let n_due = due.iter().filter(|d| **d).count();
-        let enhanced = view.enhanced_poses;
+        let enhanced = self.enhanced_poses;
         let buses: HashMap<_, _> = if enhanced {
-            self.sim.last_buses.iter().map(|b| (b.id, b)).collect()
+            frame.buses.iter().map(|b| (b.id, b)).collect()
         } else {
             HashMap::new()
         };
-        let pose_one = |p: &mut Person| {
+        let hour = avatars::hour();
+        let frame_no = self.sync_frame;
+        let pose_one = |(p, st): &mut (&PersonFrame, &mut PersonView)| {
+            // the type drawn: the person's avatar, else the content's own
+            let ty = st.avatar.clone().unwrap_or_else(|| p.ty.clone());
+            let dt = (sdt * st.since_posed.max(1) as f32).min(0.25);
             // Preserve the OMSI-original pose unless the enhanced A/B mode is requested.
-            let bones = if enhanced && p.puppet.is_none() {
-                let dt = (sdt * p.since_posed.max(1) as f32).min(0.25);
-                animation::bones(p, dt, world, &buses)
+            let bones = if enhanced && !p.puppet {
+                animation::bones(p, &ty, st, dt, world, &buses)
             } else {
-                omsi_sim::human::slots_from_omsi(&p.anim.bones(&p.ty.omsi))
+                omsi_sim::human::slots_from_omsi(&p.anim.bones(&ty.omsi))
             };
-            let Person { ty, skins, skin_bones, pose_changed, .. } = p;
+            // an avatar's face near the eye: blinks, looks, expressions, the lips
+            // (from the camera the picture is drawn from: a face is seen from there)
+            let near = ty.face.is_some() && (p.position - camera).length() < avatars::FACE_DISTANCE;
+            let mut face_now = false;
+            if near {
+                let face = st.face.get_or_insert_with(|| avatars::FaceView::new(p.id));
+                let input = omsi_sim::human::face::FaceInput {
+                    paying: p.facts.activity == omsi_sim::human::Activity::Pay,
+                    walking: p.vel.length() > 0.3,
+                    talking: avatars::talking(p.id),
+                    hour,
+                    glare: 0.0,
+                    head_turn: (0.0, 0.0),
+                };
+                let mut w = *face.face.advance(&input, dt);
+                {
+                    use omsi_sim::human::face::Channel as C;
+                    let force: &[C] = match omsi_cfg::flags::OMSI_DEBUG_FACE.var() {
+                        Some("smile") => &[C::SmileL, C::SmileR, C::CheekSquintL, C::CheekSquintR],
+                        Some("open") => &[C::JawOpen, C::VisemeAA],
+                        Some("blink") => &[C::BlinkL, C::BlinkR],
+                        _ => &[],
+                    };
+                    for c in force {
+                        w[*c as usize] = 1.0;
+                    }
+                }
+                if omsi_cfg::flags::OMSI_DEBUG_FACE.is_set() && (frame_no < 8 || frame_no % 30 == 0) {
+                    let mut top: Vec<(usize, f32)> = w.iter().copied().enumerate().filter(|(_, v)| *v > 0.02).collect();
+                    top.sort_by(|a, b| b.1.total_cmp(&a.1));
+                    log::info!("face {} ({}): {:?} talking {:?}", p.id, ty.def.path.file_stem().unwrap_or_default().to_string_lossy(), &top[..top.len().min(6)], input.talking);
+                }
+                face_now = ty.face_rest(0, &w, &mut face.rest);
+                face.live = face_now;
+            }
+            let face_was = st.face.as_ref().is_some_and(|f| f.live);
+            if !near {
+                if let Some(f) = st.face.as_mut() {
+                    f.live = false;
+                }
+            }
+            let PersonView { skins, skin_bones, pose_changed, face, .. } = &mut **st;
             *pose_changed = false;
             if bones.iter().any(|b| !b.is_finite()) && !skins.is_empty() {
                 // keep the last good mesh (the rest pose would be the file's T-pose)
                 return;
             }
-            // (the same bones as the mesh was made with: nothing to skin or upload)
-            if skins.len() == ty.meshes.len() && skin_bones.as_ref().is_some_and(|b| b.iter().zip(&bones).all(|(a, c)| a.abs_diff_eq(*c, 1e-6))) {
+            // (the same bones as the mesh was made with: nothing to skin or upload - unless
+            // the face moves, or has just gone back to rest)
+            if !face_now && !(face_was && !near) && skins.len() == ty.meshes.len() && skin_bones.as_ref().is_some_and(|b| b.iter().zip(&bones).all(|(a, c)| a.abs_diff_eq(*c, 1e-6))) {
                 return;
             }
             skins.resize_with(ty.meshes.len(), Default::default);
             for (k, m) in ty.meshes.iter().enumerate() {
                 let (pos, nrm) = &mut skins[k];
-                skin(m, &bones, pos, nrm);
+                match face.as_ref().filter(|_| face_now && k == 0) {
+                    Some(f) => omsi_sim::human::skin_from(m, &f.rest, &bones, pos, nrm),
+                    None => skin(m, &bones, pos, nrm),
+                }
             }
             *skin_bones = Some(bones);
             *pose_changed = true;
@@ -359,61 +593,69 @@ impl Humans {
         // for them (`frame_each`): handed to the pool whole (a par_iter from this thread) the
         // frame waited for its busy workers - Spandau, 9 people a frame: 2.4 ms against ~0.2
         // ms posed here, and up to 39 ms in the frames where the workers were busy.
-        let mut due_people: Vec<&mut Person> = self.sim.people.iter_mut().zip(&due).filter(|(_, go)| **go).map(|(p, _)| p).collect();
+        let mut due_people: Vec<(&PersonFrame, &mut PersonView)> =
+            frame.people.iter().zip(states.iter_mut()).zip(&due).filter(|(_, go)| **go).map(|(pair, _)| pair).collect();
         let helpers = omsi_cfg::par::helpers_for(due_people.len() as f64 * POSE_SECS, POSE_PER_HELPER);
-        omsi_cfg::par::frame_each(&mut due_people, helpers, |p| pose_one(p));
+        omsi_cfg::par::frame_each(&mut due_people, helpers, |pair| pose_one(pair));
+        drop(due_people);
         let upload = std::time::Instant::now();
-        for (p, &go) in self.sim.people.iter_mut().zip(&due) {
+        for ((p, st), &go) in frame.people.iter().zip(states.iter_mut()).zip(&due) {
             if go {
-                if p.pose_changed || !p.skinned {
-                    for (k, (id, _)) in p.meshes.iter().enumerate() {
-                        if let Some((pos, nrm)) = p.skins.get(k) {
-                            renderer.update_mesh(scene, *id, pos, nrm, &p.ty.meshes[k].data.uvs);
+                if st.pose_changed || !st.skinned {
+                    let ty = st.avatar.as_ref().unwrap_or(&p.ty);
+                    for (k, (id, _)) in st.meshes.iter().enumerate() {
+                        if let (Some((pos, nrm)), Some(m)) = (st.skins.get(k), ty.meshes.get(k)) {
+                            renderer.update_mesh(scene, *id, pos, nrm, &m.data.uvs);
                         }
                     }
                 }
-                p.skinned = true;
-                p.since_posed = 0;
-                p.posed_at = (p.position, p.heading);
+                st.skinned = true;
+                st.since_posed = 0;
+                st.posed_at = (p.position + st.glide_world, p.heading);
             }
             // riders go with their bus; on the ground a mesh not posed this frame goes on
             // with the body too (left where it was posed, a far walker moved in jerks -
             // its feet slide a few centimetres instead, which nobody sees at that distance)
-            let (at, heading) = match (p.puppet, p.place) {
-                (_, Place::Ground) if go => p.posed_at,
-                _ => (p.position, p.heading),
+            let (mut at, heading) = match p.place {
+                Place::Ground if go => st.posed_at,
+                _ => (p.position + st.glide_world, p.heading),
             };
+            // a seated avatar: its own seat height in place of the content type's (the
+            // simulation put the feet that far under the seat point)
+            if let (Some(a), omsi_sim::human::Activity::Sit) = (st.avatar.as_ref(), p.facts.activity) {
+                at.z += (p.ty.def.seat_height - a.def.seat_height).clamp(-0.25, 0.25) as f64;
+            }
             // (riders with the tilt of their floor)
             let tilt = if matches!(p.place, Place::Bus(..)) { p.tilt } else { Mat4::IDENTITY };
             let xf = tilt * Mat4::from_rotation_z((-heading).to_radians() as f32);
             let lit_to = if matches!(p.place, Place::Bus(..)) { p.interior } else { 0.0 };
-            p.lit += (lit_to - p.lit) * (sdt / 0.4).min(1.0);
-            for (_, inst) in &p.meshes {
+            st.lit += (lit_to - st.lit) * (sdt / 0.4).min(1.0);
+            for (_, inst) in &st.meshes {
                 renderer.set_transform(scene, *inst, at, xf);
-                renderer.set_interior(scene, *inst, p.lit * 0.5);
+                renderer.set_interior(scene, *inst, st.lit * 0.5);
             }
-            if self.sim.avatar_hidden.contains_key(&p.id) && omsi_cfg::flags::OMSI_DEBUG_FOOT.is_set() && view.sync_frame % 30 == 0 {
+            if p.hidden.is_some() && omsi_cfg::flags::OMSI_DEBUG_FOOT.is_set() && self.sync_frame % 30 == 0 {
                 log::info!("avatar drawn at ({:.2}, {:.2}, {:.2}) heading {:.0} place {:?} go {}", at.x, at.y, at.z, heading, matches!(p.place, Place::Ground), go);
             }
-            if let Some(hide) = self.sim.avatar_hidden.get_mut(&p.id) {
+            if let Some(hide) = p.hidden {
                 // (the first-person view: the avatar's own body out of the picture; set
                 // every frame, the posing would show it again)
-                for (_, inst) in &p.meshes {
-                    renderer.set_params(scene, *inst, &[], !*hide, &[]);
+                for (_, inst) in &st.meshes {
+                    renderer.set_params(scene, *inst, &[], !hide, &[]);
                 }
             }
-            if let Some(t) = view.trace.as_mut() {
+            if let Some(t) = self.trace.as_mut() {
                 // OMSI_TRACE_PAX: where the mesh is drawn and where its ankles are, per frame
                 if (at - from).length() < 40.0 {
                     use std::io::Write;
-                    let a = |k: usize| at + (xf.transform_vector3(p.ankles[k])).as_dvec3();
+                    let a = |k: usize| at + (xf.transform_vector3(st.ankles[k])).as_dvec3();
                     let (l, r) = (a(0), a(1));
                     let _ = writeln!(
                         t,
                         "{:.4},{},{},{},{},{:.4},{:.4},{:.4},{:.2},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.3},{:.3}",
-                        self.sim.time,
+                        frame.time,
                         p.id,
-                        p.state.name(),
+                        p.state,
                         matches!(p.place, Place::Ground) as u8,
                         go as u8,
                         at.x,
@@ -435,25 +677,27 @@ impl Humans {
         // OMSI_CHECK_TPOSE=1: everybody drawn with the arms out (the file's rest pose): the
         // skinned mesh wider than 1.3 m from hand to hand
         if omsi_cfg::flags::OMSI_CHECK_TPOSE.is_set() {
-            for p in &self.sim.people {
-                let Some((pos, _)) = p.skins.first() else {
-                    log::info!("t-pose? {} {}: never skinned", p.label(), p.state_name());
+            for (p, st) in frame.people.iter().zip(&states) {
+                let [who, pax] = p.debug.clone().unwrap_or_default();
+                let Some((pos, _)) = st.skins.first() else {
+                    log::info!("t-pose? {who}: never skinned");
                     continue;
                 };
                 let (lo, hi) = pos.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v.x), hi.max(v.x)));
                 if hi - lo > 1.3 {
-                    let pax = match &p.state {
-                        State::Pax(x) => format!("pax_state {} speed {:.2} seat_h {:.2} room {:.2} st {}", x.pax_state, x.speed, x.seat_h, x.room, x.st),
-                        _ => String::new(),
-                    };
-                    log::info!("t-pose: {} {} width {:.2} skinned {} {pax}", p.label(), p.state_name(), hi - lo, p.skinned);
+                    log::info!("t-pose: {who} width {:.2} skinned {} {pax}", hi - lo, st.skinned);
                 }
             }
         }
-        view.due = due;
-        view.pose_stats.0 += 1;
-        view.pose_stats.1 += n_due;
-        view.pose_stats.2 += started.elapsed().as_secs_f64() * 1000.0;
-        view.pose_stats.3 += upload.elapsed().as_secs_f64() * 1000.0;
+        drop(buses);
+        for (p, st) in frame.people.iter().zip(states) {
+            self.people.insert(p.id, st);
+        }
+        self.frame = frame;
+        self.due = due;
+        self.pose_stats.0 += 1;
+        self.pose_stats.1 += n_due;
+        self.pose_stats.2 += started.elapsed().as_secs_f64() * 1000.0;
+        self.pose_stats.3 += upload.elapsed().as_secs_f64() * 1000.0;
     }
 }

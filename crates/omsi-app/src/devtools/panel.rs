@@ -6,8 +6,8 @@ use omsi_ui::paint::Align;
 use omsi_ui::{Rect, Weight};
 
 use super::{overlay, set_value, DevTools, Kind, Request};
-use crate::launcher::theme::*;
-use crate::launcher::ui::{ButtonKind, Ui};
+use omsi_ui::theme::*;
+use omsi_ui::kit::{ButtonKind, Ui};
 use crate::player::Player;
 
 pub(crate) const TABS: [&str; 4] = ["Variables", "Overlays", "Mirrors", "Files"];

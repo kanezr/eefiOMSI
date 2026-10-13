@@ -65,6 +65,9 @@ pub(crate) struct Probe {
     /// takes the parallax out, and the eye moves on (the whole cube redrawn) once the
     /// camera has gone far enough for the correction to show.
     pub(crate) cube_eye: Option<DVec3>,
+    /// Where the camera was when the reflection probe was last redrawn (world). Used to
+    /// skip redraws when the camera has not moved significantly (>2 m).
+    pub(crate) probe_eye: Option<DVec3>,
     /// Which slices of the cube are drawn when, the cube for the next eye and the probe's
     /// turn.
     pub(crate) sched: SkySched,
@@ -74,6 +77,8 @@ pub(crate) struct Probe {
 pub(crate) struct AoTargets {
     pub(crate) size: (u32, u32),
     pub(crate) depth_view: wgpu::TextureView,
+    /// (the texture itself, to read the depth back for the photo mode)
+    pub(crate) depth_tex: wgpu::Texture,
     pub(crate) ao_view: wgpu::TextureView,
     pub(crate) blur_view: wgpu::TextureView,
     pub(crate) ssao_bg: wgpu::BindGroup,
@@ -174,8 +179,8 @@ impl Renderer {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
-                | if self.puddles.is_some() { wgpu::TextureUsages::COPY_SRC } else { wgpu::TextureUsages::empty() },
+            // (copied from: by the puddles, and read back for the photo mode's depth of field)
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
         // the AO itself at half size: four times fewer pixels, and the blur hides the rest
@@ -256,6 +261,7 @@ impl Renderer {
         self.targets.ao = Some(AoTargets {
             size: (w, h),
             depth_view,
+            depth_tex: depth.clone(),
             ao_view,
             blur_view,
             ssao_bg,

@@ -154,11 +154,18 @@ fn fs_down(in: VsOut) -> @location(0) vec4<f32> {
 fn fs_up(in: VsOut) -> @location(0) vec4<f32> {
     let texel = 1.0 / vec2<f32>(textureDimensions(t_src));
     let uv = in.uv;
-    // (a tent a texel and a half wide: one a texel wide left the coarse levels' texels as
-    // steps round a bright source - a headlight's halo came out square)
-    let tent = (src(uv, texel, -1.5, -1.5) + src(uv, texel, 1.5, -1.5) + src(uv, texel, -1.5, 1.5) + src(uv, texel, 1.5, 1.5)
-        + (src(uv, texel, 0.0, -1.5) + src(uv, texel, -1.5, 0.0) + src(uv, texel, 1.5, 0.0) + src(uv, texel, 0.0, 1.5)) * 2.0
-        + src(uv, texel, 0.0, 0.0) * 4.0) / 16.0;
+    // (a round kernel: the centre and two rings of eight, 1 and 2 texels out - the outer
+    // turned by half a step - weighted as a Gaussian of about a texel. A 3x3 tent, however
+    // wide, is a square: a far headlamp, a pixel or two that the coarse levels hold in one
+    // texel, came back as a square halo, the squarer the further the lamp)
+    var ring1 = vec3<f32>(0.0);
+    var ring2 = vec3<f32>(0.0);
+    for (var k = 0; k < 8; k = k + 1) {
+        let a = f32(k) * 0.78539816;
+        ring1 = ring1 + src(uv, texel, cos(a), sin(a));
+        ring2 = ring2 + src(uv, texel, 2.0 * cos(a + 0.39269908), 2.0 * sin(a + 0.39269908));
+    }
+    let tent = (src(uv, texel, 0.0, 0.0) + ring1 * 0.60653066 + ring2 * 0.13533528) / (1.0 + 8.0 * 0.60653066 + 8.0 * 0.13533528);
     let base = clean(textureSampleLevel(t_base, s_lin, uv, 0.0).rgb);
     // (each level keeps a quarter of its own and passes three quarters of the wider ones
     // on: the levels' shares follow the eye's scattering - about 5.7 % of the light lands

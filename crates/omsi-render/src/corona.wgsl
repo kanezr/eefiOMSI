@@ -15,6 +15,19 @@ struct Camera {
     sky: vec4<f32>,
     cam_right: vec4<f32>,
     cam_up: vec4<f32>,
+    clouds: vec4<f32>,
+    light_view_proj: mat4x4<f32>,
+    light_view_proj_far: mat4x4<f32>,
+    shadow: vec4<f32>,
+    post: vec4<f32>,
+    inside_a: vec4<f32>,
+    inside_b: vec4<f32>,
+    inside_c: vec4<f32>,
+    flags: vec4<f32>,
+    light_view_proj_close: mat4x4<f32>,
+    wind: vec4<f32>,
+    lod_bias: f32,
+    _pad_lod_bias: vec3<f32>,
 };
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(1) @binding(0) var t_corona: texture_2d<f32>;
@@ -332,6 +345,10 @@ fn fs_enhanced(in: CoronaOut) -> @location(0) vec4<f32> {
         let w = max(0.1, px * 1.5);
         let core = exp(-r * r / (w * w)) * 3.0 + exp(-r * 9.0) * 0.35;
         shape = mix(core * max(lit, shape) + shape * 0.22, shape, wet);
+        // (round, inside the circle the sprite holds: a far lamp's sprite is a few pixels,
+        // the core spans it, and brighter than white even in its corners it showed the
+        // whole quad - a square blot of light for every distant headlamp)
+        shape = shape * (1.0 - smoothstep(1.0 - px, 1.0, r));
     }
     return vec4<f32>(in.color.rgb * shape * in.color.a * scale, 1.0);
 }

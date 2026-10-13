@@ -804,7 +804,15 @@ fn places_follow_their_own_variables() {
     PeopleSim::write_door_requests(&mut v, &DoorWants { places: taken, ..Default::default() });
     assert_eq!(v.var("fold_seat_down"), Some(1.0));
     PeopleSim::write_door_requests(&mut v, &DoorWants { places: places_taken(&bn, &[]), ..Default::default() });
-    assert_eq!(v.var("fold_seat_down"), Some(0.0), "up again once they have got up");
+    assert_eq!(v.var("fold_seat_down"), Some(0.0), "up again once they have got up");    // a player's figure on the tip-up seat counts for the scripts' GetHumanCountOnSeat
+    let cab = bn.cabin.clone();
+    h.player_cabin = Some(cab.clone());
+    assert!(h.seat_counts().iter().all(|&n| n == 0));
+    let sat = cab.seats[1].omsi_seat;
+    h.avatar_cmds.insert(7, AvatarCmd { seat: Some((BusId::Player, 1)), pos: DVec3::ZERO, heading: 0.0, vel: DVec2::ZERO, lift: 0.0, floor: None, aboard: None });
+    assert_eq!(h.seat_counts()[sat], 1);
+    h.avatar_cmds.insert(8, AvatarCmd { seat: Some((BusId::Ai(2), 1)), pos: DVec3::ZERO, heading: 0.0, vel: DVec2::ZERO, lift: 0.0, floor: None, aboard: None });
+    assert_eq!(h.seat_counts().iter().sum::<u32>(), 1, "another bus's seat is not this one's");
 }
 
 /// A timetable bus boarding at a stop the passengers' stops do not have (#1593): its
@@ -1019,4 +1027,50 @@ fn walking_can_find_a_biarticulated_bus_at_its_last_section() {
     assert_eq!(people.bus_ids_near(at_rear, 25.0), [BusId::Ai(42)]);
     assert!(people.bus_ids_near(DVec3::new(100.0, -34.0, 0.0), 25.0).is_empty());
     assert_eq!(people.bus_ids_near(DVec3::ZERO, 25.0), [BusId::Ai(42)]);
+}
+
+#[test]
+fn riders_are_drawn_on_the_bus_where_it_is_drawn() {
+    let dir = std::env::temp_dir().join(format!("omsi-drawn-bus-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("test.bus"), "[boundingbox]\n2.5\n12\n3\n0\n0\n1.5\n\n[passengercabin]\ncabin.cfg\n\n[paths]\npaths.cfg\n").unwrap();
+    std::fs::write(dir.join("paths.cfg"), "[pathpnt]\n0\n4\n0.5\n\n[pathpnt]\n0\n-3\n0.5\n\n[pathlink]\n0\n1\n").unwrap();
+    std::fs::write(dir.join("cabin.cfg"), "[entry]\n0\n\n[exit]\n1\n").unwrap();
+    let def = omsi_vehicle::Vehicle::load(&dir.join("test.bus")).unwrap();
+    let cabin = Arc::new(Cabin::load_train(&[(&def, Vec3::ZERO, f32::INFINITY)]).expect("cabin"));
+    std::fs::remove_dir_all(&dir).ok();
+    let pose = |pos: DVec3, heading: f64| (pos, Mat4::from_rotation_z((-heading).to_radians() as f32), heading);
+    let (pos, rot, heading) = pose(DVec3::new(100.0, 200.0, 5.0), 30.0);
+    let bn = BusNow {
+        id: BusId::Ai(7),
+        cabin,
+        pos,
+        rot,
+        heading,
+        speed: 10.0,
+        entry_open: vec![false],
+        exit_open: vec![false],
+        walk_open: None,
+        interior: 0.0,
+        air: CabinAir::default(),
+        half: DVec2::new(1.25, 6.0),
+        centre: DVec2::ZERO,
+        accel: DVec2::ZERO,
+        trailers: Vec::new(),
+        terminus: None,
+        takes: Takes::Nobody,
+        next_stop: None,
+        places_off: Vec::new(),
+        served: None,
+    };
+    let local = Vec3::new(0.6, -2.0, 0.9);
+    let (at, faces, tilt) = (bn.world(local), heading + 90.0, bn.tilt_at(local));
+    let still = DrawnBus { pos, rot, heading, trailers: Vec::new() };
+    let (p, h, t) = bn.follow(&still, local, at, faces, tilt);
+    assert!((p - at).length() < 1e-9 && (h - faces).abs() < 1e-9 && t.abs_diff_eq(tilt, 1e-6), "a bus drawn where it stands leaves its riders be");
+    let (pos2, rot2, heading2) = pose(DVec3::new(100.1, 200.2, 5.0), 31.0);
+    let drawn = DrawnBus { pos: pos2, rot: rot2, heading: heading2, trailers: Vec::new() };
+    let (p, h, _) = bn.follow(&drawn, local, at, faces, tilt);
+    assert!((p - drawn.world(local)).length() < 1e-6, "the rider stands on the drawn floor: {p:?}");
+    assert!((h - (faces + 1.0)).abs() < 1e-9, "and turns with it: {h}");
 }

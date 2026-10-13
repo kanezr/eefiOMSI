@@ -115,7 +115,12 @@ pub(super) fn object_html_pages(
                         &Image { width: w, height: h, rgba: [0, 0, 0, 255].repeat((w * h) as usize), has_alpha: true },
                         false,
                     );
-                    let mat = renderer.add_material(scene, Some(tex), text_alpha(o3d_mats, slot, overrides), [1.0; 4], true);
+                    // A page declared `lit` (the word after its path, see
+                    // `HtmlTextureDef::lit`) is a surface: shaded like every other material -
+                    // the sun, the street's lamps, the fog, the eye's own metering - so a
+                    // sign face dims with the night it stands in. Left out, the page is a
+                    // display, drawn at its own brightness: an outdoor screen.
+                    let mat = renderer.add_material(scene, Some(tex), text_alpha(o3d_mats, slot, overrides), [1.0; 4], !def.lit);
                     let mat = gpu.material(renderer, scene, mat);
                     tg.textures.push(tex);
                     tg.materials.push(mat);

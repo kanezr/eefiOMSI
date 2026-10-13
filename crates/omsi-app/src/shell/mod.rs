@@ -1,6 +1,6 @@
 //! The game's own screens over the picture - the pause menu, its settings windows and lists,
-//! and the photo mode - drawn with the launcher's toolkit (`launcher::ui`), so that they are
-//! the launcher's widgets, type and colours rather than a look of their own.
+//! and the photo mode - drawn with the widget kit (`omsi_ui::kit`), so that they have the
+//! launcher's widgets, type and colours rather than a look of their own.
 //!
 //! The toolkit is immediate-mode: every frame the screen is drawn anew from the game's state
 //! and the widgets answer what was clicked. What the game is to do about it is collected as
@@ -14,7 +14,7 @@ use glam::Vec2;
 use omsi_render::Renderer;
 use omsi_ui::{Draw, Gpu, Layer, Vertex};
 
-use crate::launcher::ui::Ui;
+use omsi_ui::kit::Ui;
 
 pub(crate) mod pause;
 
@@ -127,6 +127,10 @@ impl Shell {
 
     pub(crate) fn pointer(&mut self, x: f32, y: f32) {
         self.ui.input.mouse = Vec2::new(x, y) / self.scale;
+    }
+
+    pub(crate) fn onto_slider(&self, start: Vec2, p: Vec2) -> Option<Vec2> {
+        self.ui.onto_slider(start / self.scale, p / self.scale).filter(|_| self.showing() && self.dd_anchor.is_none()).map(|q| q * self.scale)
     }
 
     pub(crate) fn button(&mut self, pressed: bool) {

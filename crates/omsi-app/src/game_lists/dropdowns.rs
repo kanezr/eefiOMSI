@@ -258,14 +258,17 @@ pub(super) fn select_options(key: &str) -> Vec<(&'static str, &'static str)> {
         "max_obj_dist" => vec![("auto", "Automatic"), ("500", "500 m"), ("750", "750 m"), ("900", "900 m"), ("1500", "1500 m"), ("3000", "3000 m")],
         "min_obj_size" => vec![("0.005", "All"), ("0.013", "Normal"), ("0.02", "Fewer (faster)"), ("0.03", "Few (fastest)")],
         "mirror_size" => vec![("0", "Off"), ("128", "Low (128)"), ("256", "Normal (256)"), ("512", "High (512)"), ("1024", "Very high (1024)")],
+        "mirror_refresh" => vec![("off", "None (frozen picture)"), ("eco", "Economical"), ("full", "Full"), ("every", "Every frame (smoothest)")],
+        "mirror_quality" => vec![("standard", "Standard"), ("enhanced", "As the picture (Enhanced)")],
         "texture_memory" => vec![("0", "Automatic"), ("500", "500 MB"), ("1000", "1 GB"), ("1500", "1.5 GB"), ("2000", "2 GB"), ("3000", "3 GB"), ("4000", "4 GB"), ("6000", "6 GB")],
-        "max_texture_size" => vec![("0", "Device limit"), ("1024", "1024"), ("2048", "2048"), ("4096", "4096"), ("8192", "8192")],
         "drive_keys" => vec![("omsi", "Custom controls (Controls page)"), ("simple", "W A S D + arrows"), ("wasd", "W A S D only"), ("arrows", "Arrow keys only")],
-        "resolution" => crate::launcher::pages::RESOLUTIONS.to_vec(),
+        "resolution" => vec![("auto", "Automatic"), ("1280x720", "1280 x 720"), ("1280x800", "1280 x 800 (Steam Deck)"), ("1366x768", "1366 x 768"), ("1600x900", "1600 x 900"), ("1920x1080", "1920 x 1080"), ("1920x1200", "1920 x 1200"), ("2560x1440", "2560 x 1440"), ("3840x2160", "3840 x 2160")],
         "navigator_corner" => vec![("top-left", "Top left"), ("top-right", "Top right"), ("bottom-left", "Bottom left"), ("bottom-right", "Bottom right")],
         "boarding" => vec![("auto", "Pay and take the ticket"), ("pay", "The driver sells the ticket"), ("walk", "Just walk in")],
         "standing_chance" => vec![("0", "Never"), ("5", "5%"), ("10", "10%"), ("25", "25%"), ("50", "50%"), ("100", "Always")],
+        "units" => vec![("metric", "Metric (km/h, km, °C)"), ("uk", "British (mph, miles, yards, °C)"), ("us", "American (mph, miles, feet, °F)")],
         "pax_voices" => vec![("all", "Greetings and tickets"), ("tickets", "Only the ticket asked for"), ("off", "Silent")],
+        "perf_overlay" => vec![("off", "Off"), ("compact", "Compact"), ("detailed", "Detailed")],
         "maintenance" => vec![("0", "Infinite (no wear)"), ("1", "Very bad"), ("2", "Bad"), ("3", "Normal"), ("4", "Good")],
         "ai_unsched_factor" => vec![("25", "25%"), ("50", "50%"), ("75", "75%"), ("100", "100%"), ("150", "150%"), ("200", "200%")],
         "ai_max_scheduled" => vec![("0", "All"), ("10", "At most 10"), ("25", "At most 25"), ("50", "At most 50")],
@@ -328,14 +331,18 @@ pub(super) fn reload_settings(app: &mut App) {
     app.settings = crate::settings::Settings::load();
     app.session.seat_bus.clear();
     crate::ui_language(&app.settings.language);
+    crate::units::Units::from_setting(&app.settings.units).set();
     sync_live(app);
 }
 
 pub(super) fn sync_live(app: &mut App) {
     let s = &app.settings;
-    crate::startup::SOUND_AI.store(s.vol_ai.to_bits(), std::sync::atomic::Ordering::Relaxed);
-    crate::startup::SOUND_SCENERY.store(s.vol_scenery.to_bits(), std::sync::atomic::Ordering::Relaxed);
-    omsi_audio::DOPPLER.store(s.doppler, std::sync::atomic::Ordering::Relaxed);
+    if let Some(w) = app.world.as_ref() {
+        w.settings.set_sound_scenery(s.vol_scenery);
+    }
+    if let Some(a) = app.sound.audio.as_ref() {
+        a.set_doppler(s.doppler);
+    }
     if let Some(n) = app.menus.navigator.as_mut() {
         n.arrows = s.nav_arrows;
     }

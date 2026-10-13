@@ -85,10 +85,18 @@ pub struct DeviceCfg {
     pub latching: Vec<usize>,
 }
 
-/// The `gamectrler.cfg` in use: the content folder's (written by the launcher) before
-/// OMSI 2's own.
+impl DeviceCfg {
+    pub fn steers(&self) -> bool {
+        self.axes.iter().flatten().any(|(f, _)| *f == Func::Steering)
+    }
+}
+
+/// The `gamectrler.cfg` in use: the newer of `~/.openomsi/Inputs`' (written by the launcher)
+/// and the content folder's, before OMSI 2's own.
 pub fn cfg_path(root: &Path) -> std::path::PathBuf {
-    omsi_cfg::find_in_roots("Inputs/gamectrler.cfg").map(|(_, p)| p).unwrap_or_else(|| root.join("Inputs").join("gamectrler.cfg"))
+    omsi_cfg::input_in_use("gamectrler.cfg")
+        .or_else(|| omsi_cfg::find_in_roots("Inputs/gamectrler.cfg").map(|(_, p)| p))
+        .unwrap_or_else(|| root.join("Inputs").join("gamectrler.cfg"))
 }
 
 /// `Inputs/gamectrler.cfg`: the configured devices.
@@ -1051,12 +1059,12 @@ impl HeldButtons {
     }
 }
 
-/// Save only to the writable openOMSI overlay (`content_dir`). The original OMSI installation is read-only.
-pub fn save_cfg(content_dir: Option<std::path::PathBuf>, devices: &[DeviceCfg]) -> Result<(), String> {
-    let dir = content_dir.ok_or("No writable openOMSI content folder was found")?.join("Inputs");
-    save_cfg_to(&dir.join("gamectrler.cfg"), devices)?;
+/// Save to `~/.openomsi/Inputs`. The original OMSI installation is read-only.
+pub fn save_cfg(devices: &[DeviceCfg]) -> Result<std::path::PathBuf, String> {
+    let path = omsi_cfg::own_input("gamectrler.cfg").ok_or("No home folder was found to keep the controllers in")?;
+    save_cfg_to(&path, devices)?;
     omsi_cfg::content_changed();
-    Ok(())
+    Ok(path)
 }
 
 fn save_cfg_to(path: &Path, devices: &[DeviceCfg]) -> Result<(), String> {
@@ -1078,6 +1086,14 @@ fn save_cfg_to(path: &Path, devices: &[DeviceCfg]) -> Result<(), String> {
 /// Scale only the configured gamepad, rather than borrowing a wheel's vibration setting.
 fn rumble_scale(cfg: &[DeviceCfg], name: &str) -> f32 {
     find_device_cfg(cfg, name).and_then(|d| d.ff_scale).map(|s| s.1).unwrap_or(1.0).clamp(0.0, 2.0)
+}
+
+pub fn wheel_set_up(cfg: &[DeviceCfg], connected: &[Connected]) -> bool {
+    connected.iter().any(|c| !c.gamepad && c.ff_capable && find_device_cfg(cfg, &c.name).is_some_and(DeviceCfg::steers))
+}
+
+fn takes_feedback(steer: &Option<(String, f32, bool)>, ff: bool) -> bool {
+    steer.as_ref().is_none_or(|s| ff && !s.2)
 }
 
 /// A button-only gamepad configuration keeps the automatic analog layout. Once axes
@@ -1154,6 +1170,11 @@ pub struct Controllers {
     moved: Vec<String>,
     /// A message for the screen: a wheel that is not set up.
     pub notice: Option<String>,
+    /// Devices nobody set up: their axes as they lie untouched (`auto_setup`).
+    rests: crate::auto_setup::Rests,
+    /// The set-up after a device was set up by itself (`auto_setup`), for the game to save.
+    pub auto_saved: Option<Vec<DeviceCfg>>,
+    cfg_unread: bool,
     /// The steering device: its name, physical position (-1..1, before dead zone
     /// and steering gain) now and previously, and whether it pushes back.
     steer: Option<(String, f32, f32, bool)>,
@@ -1188,6 +1209,7 @@ impl Controllers {
     pub fn install_cfg(&mut self, cfg: Vec<DeviceCfg>) {
         self.held.release(&mut self.actions);
         self.cfg = cfg;
+        self.cfg_unread = false;
         self.notice = None;
     }
 
@@ -1216,19 +1238,30 @@ impl Controllers {
 
     pub fn new(root: &Path, hwnd: Option<isize>) -> Controllers {
         let devices = Devices::new(hwnd, true);
-        let cfg = read_cfg(root);
+        let (cfg, unread) = match read_cfg_checked(root) {
+            Ok(cfg) => (cfg, false),
+            Err(e) => {
+                let unread = cfg_path(root).exists();
+                if unread {
+                    log::warn!("gamectrler.cfg could not be read, nothing set up by itself is saved over it: {e}");
+                }
+                (Vec::new(), unread)
+            }
+        };
         for c in devices.connected() {
             log::info!("game controller: {} ({})", c.name, if cfg.iter().any(|d| names_match(&d.name, &c.name)) { "set up in gamectrler.cfg" } else if c.gamepad { "as a gamepad" } else { "not set up: its X axis steers" });
         }
-        Self::with_devices(devices, cfg)
+        let mut c = Self::with_devices(devices, cfg);
+        c.cfg_unread = unread;
+        c
     }
 
     fn with_devices(devices: Devices, cfg: Vec<DeviceCfg>) -> Controllers {
-        Controllers { settled: Vec::new(), devices, focused: true, cfg, held: HeldButtons::default(), editing: false, raw_buttons: Vec::new(), deadzone: 0.0, right_stick_look: true, pad_deadzone: 0.08, pad_presets: true, pedal_throttle: 1.0, pedal_brake: 1.0, disabled: Vec::new(), ff_invert: false, ff_enabled: true, ff_road: 1.0, ff_engine: 1.0, ff_fade: FF_FADE, steer_gain: 1.0, enabled: true, actions: Vec::new(), announced: Vec::new(), moved: Vec::new(), notice: None, steer: None, ff_t: 0.0, ff_lateral: 0.0, ff_bump: 0.0, ff_bump_age: 0.0, ff_micro: Micro::default(), ff_vib: ScriptVib::default(), ff_rumble: 0.0, ff_source_logged: None, rumble: Vec::new(), #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel: None, #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel_tried: None }
+        Controllers { settled: Vec::new(), devices, focused: true, cfg, held: HeldButtons::default(), editing: false, raw_buttons: Vec::new(), deadzone: 0.0, right_stick_look: true, pad_deadzone: 0.08, pad_presets: true, pedal_throttle: 1.0, pedal_brake: 1.0, disabled: Vec::new(), ff_invert: false, ff_enabled: true, ff_road: 1.0, ff_engine: 1.0, ff_fade: FF_FADE, steer_gain: 1.0, enabled: true, actions: Vec::new(), announced: Vec::new(), moved: Vec::new(), notice: None, rests: Default::default(), auto_saved: None, cfg_unread: false, steer: None, ff_t: 0.0, ff_lateral: 0.0, ff_bump: 0.0, ff_bump_age: 0.0, ff_micro: Micro::default(), ff_vib: ScriptVib::default(), ff_rumble: 0.0, ff_source_logged: None, rumble: Vec::new(), #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel: None, #[cfg(all(target_os = "linux", target_pointer_width = "64"))] wheel_tried: None }
     }
 
     /// Whether this device steers the bus (set up so, or steering now): the photo mode's camera takes none for its gamepad (a wheel turned it).
-    pub fn steers(&self, name: &str) -> bool { self.steer.as_ref().is_some_and(|s| names_match(&s.0, name)) || find_device_cfg(&self.cfg, name).is_some_and(|d| d.axes.iter().flatten().any(|(f, _)| matches!(f, Func::Steering))) }
+    pub fn steers(&self, name: &str) -> bool { self.steer.as_ref().is_some_and(|s| names_match(&s.0, name)) || find_device_cfg(&self.cfg, name).is_some_and(|d| d.steers()) }
     /// A wheel or joystick steers the bus (then the arrow keys look around, as in OMSI:
     /// a G29's buttons set to the arrow keys turned the view there).
     pub fn wheel_steering(&self) -> bool {
@@ -1291,7 +1324,7 @@ impl Controllers {
         // at its own centre, whichever the system listed first
         let off = self.disabled.clone();
         let mut pads: Vec<(Option<&DeviceCfg>, Connected)> = self.devices.connected().into_iter().filter(|c| !off.iter().any(|d| names_match(d, &c.name))).map(|c| (find_device_cfg(&self.cfg, &c.name), c)).collect();
-        pads.sort_by_key(|(cfg, _)| cfg.is_none());
+        pads.sort_by_key(|(cfg, c)| (cfg.is_none(), cfg.is_none() && !c.ff_capable));
         // (the PlayStation pads nobody set up: read below, with the gamepads)
         #[cfg(windows)]
         let sony: Vec<Connected> = pads.iter().filter(|(cfg, c)| cfg.is_none() && c.gamepad && sony_pad(&c.name, c.hardware_id)).map(|(_, c)| c.clone()).collect();
@@ -1299,6 +1332,8 @@ impl Controllers {
         // (a device set up to steer has the wheel; one nobody set up only lends its X axis)
         let mut steering_set_up = false;
         let dz = self.deadzone.clamp(0.0, 0.3);
+        let mut set_up = Vec::new();
+        let mut steering_taken = pads.iter().any(|(cfg, c)| !c.gamepad && c.ff_capable && cfg.is_some_and(DeviceCfg::steers));
         for (cfg, c) in pads {
             if let Some((k, v)) = c.axes.iter().find(|(_, v)| v.abs() > 0.5) {
                 let key = format!("axis:{}", c.name);
@@ -1315,7 +1350,7 @@ impl Controllers {
                             steering_set_up = true;
                             let (steering, position) = wheel_steering(v, inverted, d.axis_flags[k], dz, self.steer_gain);
                             set_steering(&mut out, steering, c.gamepad);
-                            if steer.is_none() && !c.gamepad {
+                            if !c.gamepad && takes_feedback(&steer, c.ff) {
                                 steer = Some((c.name.clone(), position, c.ff));
                             }
                             continue;
@@ -1353,9 +1388,16 @@ impl Controllers {
                 }
                 None if c.gamepad => {}
                 None => {
-                    // a wheel or joystick nobody has set up yet: its X axis steers (as on
-                    // nearly every wheel), the pedals wait for the set-up (Launcher →
-                    // Controls → Game controllers), said once on the screen
+                    // a wheel, pedals or a joystick nobody has set up yet: set up by itself
+                    // from its axes at rest (`auto_setup`) once it is used - a force-feedback
+                    // wheel at once - and saved; until then its X axis steers
+                    if let Some(d) = (!self.editing).then(|| crate::auto_setup::when_used(&mut self.rests, &c, steering_taken)).flatten() {
+                        steering_taken |= c.ff_capable && d.steers();
+                        self.notice = Some(crate::auto_setup::notice(&d));
+                        self.announced.push(c.name.clone());
+                        set_up.push(d);
+                        continue;
+                    }
                     if !self.announced.contains(&c.name) {
                         self.announced.push(c.name.clone());
                         log::info!("game controller {} is not set up: its X axis steers", c.name);
@@ -1371,11 +1413,17 @@ impl Controllers {
                         let dz_free = if c.ff_capable { dz } else { dz.max(0.02) };
                         let (steering, position) = wheel_steering(*v, false, 0, dz_free, self.steer_gain);
                         out.steering.get_or_insert(steering);
-                        if steer.is_none() {
+                        if takes_feedback(&steer, c.ff) {
                             steer = Some((c.name.clone(), position, c.ff));
                         }
                     }
                 }
+            }
+        }
+        if !set_up.is_empty() {
+            self.cfg.extend(set_up);
+            if !self.cfg_unread {
+                self.auto_saved = Some(self.cfg.clone());
             }
         }
         // gamepads: the left stick steers, the triggers are the pedals
@@ -1694,9 +1742,9 @@ fn wheel_force(f: &FfInput, x: f32, x0: f32, t: &mut f32, k_springs: f32, k_effe
     // a smooth extra torque, tapered away at larger angles. It crosses zero
     // continuously so there is no fixed kick when the wheel passes the centre.
     let centre_return = 0.025 * x / (x * x + 0.004 * 0.004).sqrt() / (1.0 + (x / 0.12).powi(4));
-    // A physical wheel needs a middle even when parked: half the centring is there at a
-    // standstill, the rest builds up as the bus rolls.
-    let spring = -(spring_strength * x / (0.5 + 1.15 * x.abs()) + centre_return) * (0.5 + 0.5 * rolling);
+    // The tyre cannot self-align the steering while the bus is stationary. Preserve
+    // parking drag against wheel movement, and bring the spring back as it rolls.
+    let spring = -(spring_strength * x / (0.5 + 1.15 * x.abs()) + centre_return) * rolling;
     let road_align = -(f.lateral_accel / 9.81).clamp(-0.45, 0.45) * 0.25 * (v / 5.0).clamp(0.0, 1.0) * rolling;
     // Assisted steering should not demand ever more hand force near full lock.
     let lock_assist = 1.0 / (1.0 + 0.55 * x * x);
@@ -2347,7 +2395,7 @@ mod button_tests {
     }
 
     #[test]
-    fn a_parked_wheel_has_a_gentle_middle() {
+    fn a_parked_wheel_has_no_self_centering_force() {
         let mut t = 0.0;
         for kmh in [-0.5, -0.1, 0.0, 0.1, 0.5] {
             // Residual lateral acceleration from the body's suspension is no force when parked.
@@ -2356,7 +2404,7 @@ mod button_tests {
             for x in [0.2, 0.5, 1.0] {
                 let right = super::wheel_force(&f, x, x, &mut t, 1.0, 0.0);
                 let left = super::wheel_force(&f, -x, -x, &mut t, 1.0, 0.0);
-                assert!(right < -0.02 && right > -0.2, "kmh={kmh}, steering={x}: {right}");
+                assert_eq!(right, 0.0, "kmh={kmh}, steering={x}: {right}");
                 assert_eq!(right, -left, "kmh={kmh}, steering={x}");
             }
         }
@@ -2369,7 +2417,7 @@ mod button_tests {
         for x in [-0.5, 0.5] {
             let right = super::wheel_force(&f, x, x - 0.01, &mut t, 1.0, 0.0);
             let left = super::wheel_force(&f, x, x + 0.01, &mut t, 1.0, 0.0);
-            // (the parked centring adds the same pull to both)
+            // The drag opposes wheel motion in either direction.
             assert!(right < left, "{right} {left}");
         }
     }
@@ -2963,216 +3011,4 @@ mod right_stick_look_tests {
 }
 
 #[cfg(test)]
-mod hot_reload_tests {
-    use super::*;
-
-    fn wheel() -> DeviceCfg {
-        let mut d = DeviceCfg { name: "Test wheel".into(), second: "0".into(), ff_scale: Some((0.65, 1.25)), ff_invert: Some(true), ..Default::default() };
-        d.axes[0] = Some((Func::Steering, true));
-        d.axes[1] = Some((Func::Throttle, true));
-        d.axes[5] = Some((Func::Brake, false));
-        d.axis_flags[0] = 2 | 8 | 0x10;
-        d.buttons = vec![("horn".into(), "7".into()), ("kw_s_1_fest".into(), "0".into()), ("blinker_warn_toggle".into(), "0".into())];
-        d.latching = vec![2];
-        d
-    }
-
-    fn no_hardware() -> Devices {
-        Devices {
-            gilrs: None,
-            #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-            calibration_wheel: None,
-            #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-            ff_wheels: Default::default(),
-            #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-            button_devices: crate::evdev_buttons::ButtonDevices::new(),
-            #[cfg(windows)]
-            di: None,
-            #[cfg(target_os = "macos")]
-            gc: crate::mac_game_controller::GcPads::new(),
-            #[cfg(target_os = "macos")]
-            hid: None,
-            #[cfg(target_os = "macos")]
-            hid_axes: Vec::new(),
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
-            hats: Vec::new(),
-            pad_buttons: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn hot_reload_keeps_device_owner_and_ffb_runtime_state() {
-        let mut c = Controllers::with_devices(no_hardware(), vec![wheel()]);
-        c.ff_t = 12.0;
-        c.ff_lateral = 0.25;
-        c.ff_bump = 0.75;
-        c.ff_bump_age = 0.125;
-        c.ff_micro = Micro { roll: 10.0, rpm: 850.0, crank: 0.1, firing: 0.2, mass: 0.3 };
-        c.ff_vib = ScriptVib { amp: 0.4, period: 2.0, t: 0.12 };
-        c.ff_rumble = 0.6;
-        c.steer = Some(("Test wheel".into(), 0.2, 0.1, true));
-        c.settled = vec![0.3, 0.4];
-        let devices = std::ptr::addr_of!(c.devices);
-        c.held.event(&c.cfg, "Test wheel", 1, true, &mut c.actions);
-        let mut cfg = c.configuration();
-        cfg[0].ff_invert = Some(false);
-        c.install_cfg(cfg);
-        assert_eq!(std::ptr::addr_of!(c.devices), devices);
-        assert_eq!((c.ff_t, c.ff_lateral, c.ff_bump, c.ff_bump_age), (12.0, 0.25, 0.75, 0.125));
-        assert_eq!(c.steer, Some(("Test wheel".into(), 0.2, 0.1, true)));
-        assert_eq!(c.settled, vec![0.3, 0.4]);
-        assert_eq!((c.ff_micro.roll, c.ff_micro.rpm, c.ff_micro.crank, c.ff_micro.firing, c.ff_micro.mass), (10.0, 850.0, 0.1, 0.2, 0.3));
-        assert_eq!((c.ff_vib.amp, c.ff_vib.period, c.ff_vib.t, c.ff_rumble), (0.4, 2.0, 0.12, 0.6));
-        assert_eq!(c.actions.last(), Some(&("kw_s_1_fest".into(), false)));
-        assert_eq!(c.configuration()[0].ff_invert, Some(false));
-    }
-
-    #[test]
-    fn a_device_nobody_set_up_steers_only_once_its_axis_moved() {
-        let mut moved = Vec::new();
-        // idle at its centre (or a little off it): it does not steer, so the arrow keys
-        // switch the interior camera as with no device at all
-        assert!(!free_axis_steers(&mut moved, "4 axes, 25 buttons, joystick", 0.0));
-        assert!(!free_axis_steers(&mut moved, "4 axes, 25 buttons, joystick", -0.1));
-        // turned: it steers, also when back at the centre
-        assert!(free_axis_steers(&mut moved, "4 axes, 25 buttons, joystick", 0.4));
-        assert!(free_axis_steers(&mut moved, "4 axes, 25 buttons, joystick", 0.0));
-        assert!(!free_axis_steers(&mut moved, "another joystick", 0.0));
-    }
-
-    #[test]
-    fn hot_reload_editing_suppresses_input_and_releases_once() {
-        let mut c = Controllers::with_devices(no_hardware(), vec![wheel()]);
-        c.held.event(&c.cfg, "Test wheel", 0, true, &mut c.actions);
-        c.set_editing(true);
-        c.set_editing(true);
-        c.poll();
-        assert!(c.editing);
-        assert_eq!(c.actions, vec![("horn".into(), true), ("horn".into(), false)]);
-        c.set_editing(false);
-        assert!(!c.editing);
-    }
-
-    #[test]
-    fn a_latching_switch_stays_in_through_the_menu_and_the_focus() {
-        let cfg = vec![DeviceCfg { name: "Test wheel".into(), buttons: vec![(String::new(), String::new()), ("bus_stopbrake".into(), String::new()), ("bus_horn".into(), String::new())], latching: vec![1], ..Default::default() }];
-        let mut held = HeldButtons::default();
-        let mut actions = Vec::new();
-        held.event(&cfg, "Test wheel", 1, true, &mut actions);
-        held.event(&cfg, "Test wheel", 2, true, &mut actions);
-        actions.clear();
-        held.release_momentary(&mut actions);
-        assert_eq!(actions, vec![("bus_horn".to_string(), false)]);
-        actions.clear();
-        // switched out later: its release and the latch's way back still come
-        held.event(&cfg, "Test wheel", 1, false, &mut actions);
-        assert_eq!(actions.first(), Some(&("bus_stopbrake".to_string(), false)));
-    }
-
-    #[test]
-    fn hot_reload_releases_original_held_gear_and_does_not_press_new_binding() {
-        let mut held = HeldButtons::default();
-        let mut cfg = vec![wheel()];
-        let mut actions = Vec::new();
-        held.event(&cfg, "Test wheel", 1, true, &mut actions);
-        cfg[0].buttons[1].0 = "horn".into();
-        held.release(&mut actions);
-        held.event(&cfg, "Test wheel", 1, false, &mut actions);
-        assert_eq!(actions, vec![("kw_s_1_fest".into(), true), ("kw_s_1_fest".into(), false)]);
-        held.event(&cfg, "Test wheel", 1, true, &mut actions);
-        assert_eq!(actions.last(), Some(&("horn".into(), true)));
-    }
-
-    #[test]
-    fn hot_reload_does_not_toggle_latching_switch_on_menu_entry() {
-        let mut held = HeldButtons::default();
-        let cfg = vec![wheel()];
-        let mut actions = Vec::new();
-        held.event(&cfg, "Test wheel", 2, true, &mut actions);
-        held.event(&cfg, "Test wheel", 2, true, &mut actions); // duplicate down
-        held.release(&mut actions);
-        held.event(&cfg, "Test wheel", 2, false, &mut actions);
-        assert_eq!(actions, vec![("blinker_warn_toggle".into(), true), ("blinker_warn_toggle".into(), false)]);
-        // A physical release during driving still performs the existing latching behaviour.
-        held.event(&cfg, "Test wheel", 2, true, &mut actions);
-        held.event(&cfg, "Test wheel", 2, false, &mut actions);
-        assert_eq!(actions.len(), 6);
-    }
-
-    #[test]
-    fn hot_reload_release_uses_mapping_at_press_even_after_external_change() {
-        let mut held = HeldButtons::default();
-        let mut cfg = vec![wheel()];
-        let mut actions = Vec::new();
-        held.event(&cfg, "Test wheel", 0, true, &mut actions);
-        cfg[0].buttons[0].0 = "door".into();
-        held.event(&cfg, "Test wheel", 0, false, &mut actions);
-        assert_eq!(actions, vec![("horn".into(), true), ("horn".into(), false)]);
-    }
-
-    #[test]
-    fn hot_reload_preserves_axis_flags_button_metadata_and_per_device_ffb() {
-        let cfg = vec![wheel(), DeviceCfg { name: "Separate pedals".into(), second: "12".into(), ff_scale: Some((1.0, 1.0)), ..Default::default() }];
-        assert_eq!(parse_cfg(&cfg_text(&cfg)), cfg);
-        assert_eq!(cfg[0].axis_flags[0], 26);
-        let (steer, physical) = wheel_steering(0.6, true, 0, 0.1, 1.0);
-        assert!((physical + 0.6).abs() < 1e-6);
-        assert!((steer + 0.5 / 0.9).abs() < 1e-6);
-    }
-
-    #[test]
-    fn hot_reload_mixed_devices_keep_the_selected_steering_kind() {
-        let mut out = Analog::default();
-        set_steering(&mut out, 0.75, false);
-        set_steering(&mut out, 0.0, true);
-        assert_eq!(out.steering, Some(0.75));
-        assert!(!out.stick);
-        set_steering(&mut out, -0.9, true);
-        assert_eq!(out.steering, Some(-0.9));
-        assert!(out.stick);
-        set_steering(&mut out, -0.9, false);
-        assert!(out.stick); // identical readings keep the original source
-    }
-
-    #[test]
-    fn hot_reload_gamepad_vibration_uses_its_own_device_scale() {
-        let mut cfg = vec![wheel(), DeviceCfg { name: "Xbox Controller".into(), ff_scale: Some((1.0, 0.5)), ..Default::default() }];
-        assert_eq!(rumble_scale(&cfg, "Xbox Controller"), 0.5);
-        cfg[1].ff_scale = Some((1.0, 1.5));
-        assert_eq!(rumble_scale(&cfg, "Xbox Controller"), 1.5);
-        assert_eq!(rumble_scale(&cfg, "Test wheel"), 1.25);
-        assert_eq!(rumble_scale(&cfg, "Unconfigured gamepad"), 1.0);
-    }
-
-    #[test]
-    fn hot_reload_custom_gamepad_layout_owns_analog_controls() {
-        let mut cfg = vec![DeviceCfg { name: "Xbox Controller".into(), second: "0".into(), ..Default::default() }];
-        cfg[0].buttons.push(("horn".into(), "0".into()));
-        assert!(!custom_gamepad_axes(&cfg, "Xbox Controller"));
-        cfg[0].axes[0] = Some((Func::Steering, false));
-        assert!(custom_gamepad_axes(&cfg, "Xbox Controller"));
-        let mut axes = vec![(0, 0.2), (1, -0.1)];
-        gamepad_triggers(&mut axes, 0.0, 1.0);
-        assert_eq!(axes[2..], [(6, -1.0), (7, 1.0)]);
-        gamepad_triggers(&mut axes, 1.0, 0.0);
-        assert_eq!(axes.len(), 4);
-    }
-
-    #[test]
-    fn hot_reload_save_replaces_existing_file_and_rejects_invalid_input() {
-        let dir = std::env::temp_dir().join(format!("openomsi-controllers-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("gamectrler.cfg");
-        let mut cfg = vec![wheel()];
-        save_cfg_to(&path, &cfg).unwrap();
-        cfg[0].ff_invert = Some(false);
-        save_cfg_to(&path, &cfg).unwrap();
-        assert_eq!(parse_cfg(&std::fs::read_to_string(&path).unwrap()), cfg);
-        let original = std::fs::read(&path).unwrap();
-        cfg[0].buttons[0].0 = "horn\n[ctrl]".into();
-        assert!(save_cfg_to(&path, &cfg).is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), original);
-        assert!(save_cfg_to(&path.join("not-a-directory.cfg"), &[]).is_err());
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-}
+mod hot_reload_tests;

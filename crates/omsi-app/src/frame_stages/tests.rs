@@ -22,10 +22,14 @@ fn the_window_frame_runs_in_this_order() {
     assert_eq!(
         names(WINDOW_FRAME),
         [
-            "timing", "shell_actions", "placement", "menus", "streaming", "traffic", "controllers",
-            "mouse_drive", "pad_actions", "player", "audio", "lan", "on_foot", "humans", "after_humans",
-            "duty", "integrations", "view_keys", "weather", "lights", "scripted", "wheel_surface",
-            "photo", "ui", "lighting", "trace_look", "render",
+            // once a frame
+            "timing", "shell_actions", "placement", "menus", "streaming", "controllers", "mouse_drive",
+            "pad_actions",
+            // once per tick
+            "traffic", "player_tick", "on_foot", "humans", "after_humans", "duty", "weather", "wheel_surface",
+            // once a frame
+            "player_view", "audio", "lan", "integrations", "view_keys", "drawn", "lights", "scripted", "photo", "ui",
+            "lighting", "trace_look", "render",
         ]
     );
 }
@@ -69,11 +73,18 @@ fn the_window_frame_starts_with_its_time_and_ends_with_its_picture() {
 fn input_comes_before_the_bus_and_the_bus_before_its_passengers() {
     use WindowStage::*;
     let w = |s| pos(WINDOW_FRAME, s);
-    assert!(w(Controllers) < w(MouseDrive) && w(MouseDrive) < w(PadActions) && w(PadActions) < w(Player));
-    // the passengers sit in the bus's frame: placed on this frame's pose, not the last one's
-    assert!(w(Player) < w(Humans) && w(Player) < w(AfterHumans));
+    assert!(w(Controllers) < w(MouseDrive) && w(MouseDrive) < w(PadActions) && w(PadActions) < w(PlayerTick));
+    // the passengers sit in the bus's frame: placed on this tick's pose, not the last one's
+    assert!(w(PlayerTick) < w(Humans) && w(PlayerTick) < w(AfterHumans));
     // the traffic's cars the bus collides with are set before the bus moves
-    assert!(w(Traffic) < w(Player));
+    assert!(w(Traffic) < w(PlayerTick));
+    // the simulation's stages are the tick's; what the player does comes before them, the
+    // view of them after
+    use crate::app_events::{FRAME_AFTER, FRAME_BEFORE, FRAME_TICK};
+    for s in [Traffic, PlayerTick, OnFoot, Humans, AfterHumans, Duty, Weather] {
+        assert!(FRAME_TICK.contains(&s), "{s:?} not in the tick");
+    }
+    assert!(FRAME_BEFORE.contains(&PadActions) && FRAME_AFTER.contains(&PlayerView) && FRAME_AFTER.contains(&Render));
     use OffscreenStage as O;
     let o = |s| pos(OFFSCREEN_STEP, s);
     assert!(o(O::Traffic) < o(O::Drive) && o(O::Drive) < o(O::Humans));
@@ -123,7 +134,7 @@ fn every_stage_says_what_it_works_on_and_how_it_is_timed() {
             assert!(!i.writes.is_empty(), "{} writes nothing", i.name);
             if let Profile::Key(k) = i.profile {
                 // (a dot marks a stage's own parts, which the stutter log leaves out of the sum)
-                assert!(!k.contains('.') && !k.is_empty(), "{}: profile key {k:?}", i.name);
+                assert!(!k.name().contains('.') && !k.name().is_empty(), "{}: profile key {k:?}", i.name);
             }
         }
     }
@@ -134,11 +145,11 @@ fn every_stage_says_what_it_works_on_and_how_it_is_timed() {
 /// The window and the offscreen run take the shared work in the same order, but for the
 /// differences that were always there: the offscreen run sets its clock first (the window
 /// after the people), takes the duty before the drive (the window after the people), and
-/// the LAN after the people (the window before them).
+/// the LAN once a step (the window once a frame, after its ticks).
 #[test]
 fn the_window_and_the_offscreen_run_agree_on_the_shared_order() {
     use Role::*;
-    assert_eq!(roles(WINDOW_FRAME), [Traffic, Player, Lan, People, Duty, Clock, Surroundings, Picture]);
+    assert_eq!(roles(WINDOW_FRAME), [Traffic, Player, People, Duty, Clock, Lan, Surroundings, Picture]);
     assert_eq!(roles(OFFSCREEN_STEP), [Clock, Traffic, Duty, Player, People, Lan, Surroundings, Picture]);
     let known = [Clock, Duty, Lan];
     let shared = |list: Vec<Role>| list.into_iter().filter(|r| !known.contains(r)).collect::<Vec<_>>();
@@ -164,9 +175,9 @@ impl Stage for Probe {
             Probe::C => "c",
         };
         let profile = match self {
-            Probe::A | Probe::B => Profile::Key("ab"),
+            Probe::A | Probe::B => Profile::Key(ProfKey::Clock),
             Probe::Halt => Profile::None,
-            Probe::C => Profile::Key("c"),
+            Probe::C => Profile::Key(ProfKey::Drive),
         };
         StageInfo { name, phase: Phase::Sim, role: Role::Own, reads: &[], writes: &[Group::Perf], takes: &[], gives: &[], profile }
     }
@@ -175,7 +186,7 @@ impl Stage for Probe {
 #[derive(Default)]
 struct Recorder {
     ran: Vec<Probe>,
-    profile: BTreeMap<&'static str, f64>,
+    profile: ProfileTimes,
 }
 
 impl Host<Probe> for Recorder {
@@ -183,7 +194,7 @@ impl Host<Probe> for Recorder {
         self.ran.push(s);
         Ok(if s == Probe::Halt { Flow::Stop } else { Flow::Go })
     }
-    fn profile(&mut self) -> &mut BTreeMap<&'static str, f64> {
+    fn profile(&mut self) -> &mut ProfileTimes {
         &mut self.profile
     }
 }
@@ -194,11 +205,11 @@ fn the_runner_takes_the_stages_in_order_until_one_ends_the_frame() {
     assert_eq!(run(&mut r, &[Probe::A, Probe::B, Probe::C]).unwrap(), Flow::Go);
     assert_eq!(r.ran, [Probe::A, Probe::B, Probe::C]);
     // two stages under one key add up; an untimed stage leaves no key
-    assert_eq!(r.profile.keys().copied().collect::<Vec<_>>(), ["ab", "c"]);
+    assert_eq!(r.profile.iter().map(|(k, _)| k).collect::<Vec<_>>(), [ProfKey::Clock, ProfKey::Drive]);
     let mut r = Recorder::default();
     assert_eq!(run(&mut r, &[Probe::A, Probe::Halt, Probe::C]).unwrap(), Flow::Stop);
     assert_eq!(r.ran, [Probe::A, Probe::Halt]);
-    assert!(!r.profile.contains_key("c") && !r.profile.contains_key("halt"));
+    assert_eq!(r.profile.iter().map(|(k, _)| k).collect::<Vec<_>>(), [ProfKey::Clock]);
 }
 
 #[test]

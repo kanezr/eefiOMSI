@@ -143,7 +143,6 @@ pub(super) fn steps_of(verb: &str) -> Option<Vec<f32>> {
         "temp" => (-20..=45).map(|v| v as f32).collect(),
         "wind_speed" => (0..=25).map(|v| v as f32).collect(),
         "wind_dir" => (0..360).map(|v| v as f32).collect(),
-        "lod_bias" => (-40..=40).map(|v| v as f32 / 10.0).collect(),
         _ => return None,
     })
 }

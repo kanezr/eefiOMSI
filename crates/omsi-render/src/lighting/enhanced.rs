@@ -700,21 +700,20 @@ impl Renderer {
         for (k, c) in st.sh.iter().enumerate() {
             sh[k] = c.extend(0.0).to_array();
         }
-// the probe is drawn every half second (`PROBE_EVERY`), and for a new sky on the frame
-        // after it is taken in (its table upload and the probe's six faces and blurrier
-        // levels were one frame's work); it holds the sky divided by the table scale it was
-        // drawn with, which the uniform passes on, so a frame on the old one is right
-        // Adaptive: if the camera hasn't moved much since last probe, skip redraw (sky changes
-        // over minutes; a bus at a stop for 30 s doesn't need 60 probe redraws).
+        // the probe is drawn when the camera has moved >2 m since the last probe, or a new
+        // sky comes in (its table upload and the probe's six faces and blurrier levels were
+        // one frame's work); it holds the sky divided by the table scale it was drawn with,
+        // which the uniform passes on, so a frame on the old one is right
         let instant = self.instant_exposure;
+        let cam_w = ro + cam_rel.as_dvec3();
         let (redraw, probe_scale) = match self.tone.probe.as_mut() {
             Some(p) => {
-                let cam_w = ro + cam_rel.as_dvec3();
-                let moved = p.cube_eye.map_or(true, |e| (cam_w - e).truncate().length() > 2.0);
-                let redraw = instant || sky_new || (moved && p.sched.probe_since >= PROBE_EVERY);
+                let moved_enough = p.probe_eye.map_or(true, |eye| (cam_w - eye).length() > 2.0);
+                let redraw = instant || sky_new || (p.sched.probe_since >= PROBE_EVERY && moved_enough);
                 if redraw {
                     p.sched.probe_since = 0.0;
                     p.scale = st.lut_scale;
+                    p.probe_eye = Some(cam_w);
                     // (a sky taken in by this frame is in this drawing already)
                     p.sched.sky_new = false;
                 } else {
@@ -724,7 +723,6 @@ impl Renderer {
             }
             None => (false, 1.0),
         };
-        // the sky cube's eye (see Probe::cube_eye): the correction for a camera that moved
         // away from it is exact for the base of the clouds, and wrong by up to the layer's
         // depth over their distance; a climb shows far sooner than driving along
         let cam_w = ro + cam_rel.as_dvec3();
@@ -859,8 +857,9 @@ pub(crate) const TONE_CONTRAST_DAY: f32 = 1.22;
 pub(crate) const TONE_CONTRAST_NIGHT: f32 = 0.94;
 /// How far night vision takes the colour out of a dark scene (post.wgsl `night_vision`).
 pub(crate) const NIGHT_VISION: f32 = 0.3;
-/// The sun's angular radius as drawn (a little larger than the real 0.27°).
-pub(crate) const SUN_RADIUS: f32 = 0.0065;
+/// The sun's angular radius: the real 0.2665° (16 minutes of arc). Drawn 40 % larger, with
+/// the glare round it, the sun looked far too big (#2400).
+pub(crate) const SUN_RADIUS: f32 = 0.00465;
 /// The moon's, as drawn (the real one is as large as the sun's; a little more, as the
 /// eye sees it).
 pub(crate) const MOON_RADIUS: f32 = 0.0062;

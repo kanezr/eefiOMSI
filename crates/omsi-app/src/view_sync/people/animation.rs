@@ -3,8 +3,8 @@
 
 use super::*;
 use glam::{Affine3A, Vec3};
-use omsi_sim::human::{Activity, Pose, PoseInput, SLOTS};
-use omsi_sim::people::{pax::Task, BusId};
+use omsi_sim::human::{Pose, PoseInput, SLOTS};
+use omsi_sim::people::{BusId, PoseFacts};
 
 mod floor;
 
@@ -20,23 +20,11 @@ pub(super) fn enabled() -> bool {
     is_procedural_mode(&mode)
 }
 
-/// Only riders assigned a standing place should hold a pole. Queued and walking
-/// passengers must keep their hands free to use the doors and ticket machines.
-fn grip_for_standing_rider(inside: bool, assigned_standing: bool, walking: bool, reaching: bool) -> f32 {
-    if inside && assigned_standing && !walking && !reaching { 1.0 } else { 0.0 }
-}
-
-/// A passenger is anchored at a model's [seatheight] below the seat's hip point.
-/// Its actual floor is at the cabin [passpos] height below that point, which may differ.
-/// Re-anchor the procedural floor and keep the pelvis on the seat's [passpos], not below it.
-fn seated_pose(model_height: f32, place_height: f32, seat_front: f32, seat_lift: f32) -> (Vec3, f32) {
-    let lift = model_height - place_height;
-    (Vec3::new(0.0, seat_front - 0.03, place_height - seat_lift), lift)
-}
-
-/// The previous foot-planted / IK pose system, driven by the current people's state.
-/// This changes only how bodies are skinned, never boarding, movement or ticket logic.
-pub(super) fn bones(p: &mut Person, dt: f32, world: &World, buses: &HashMap<BusId, &omsi_sim::people::cabin::BusNow>) -> [Affine3A; SLOTS] {
+/// The previous foot-planted / IK pose system, driven by the current people's state (as
+/// the frame has it: `PersonFrame::facts`). This changes only how bodies are skinned,
+/// never boarding, movement or ticket logic. `st`: the person as drawn (the pose's own
+/// state, the ankles for `OMSI_TRACE_PAX`).
+pub(super) fn bones(p: &PersonFrame, ty: &omsi_sim::human::HumanType, st: &mut PersonView, dt: f32, world: &World, buses: &HashMap<BusId, &omsi_sim::people::cabin::BusNow>) -> [Affine3A; SLOTS] {
     let (origin, heading, frame) = match p.place {
         Place::Ground => (p.position, p.heading, 0),
         Place::Bus(bus, at) => {
@@ -47,46 +35,65 @@ pub(super) fn bones(p: &mut Person, dt: f32, world: &World, buses: &HashMap<BusI
             (at.as_dvec3(), p.lheading, frame)
         }
     };
-    let (activity, seat, reach, floor_lift, hold) = match &p.state {
-        State::Pax(x) => {
-            let kind = x.pax_state.round().clamp(0.0, 2.0) as u8;
-            let activity = match kind {
-                2 => Activity::Sit,
-                1 => Activity::Walk,
-                _ if x.reach => Activity::Pay,
-                _ => Activity::Stand,
-            };
-            let (seat, floor_lift) = if kind == 2 {
-                let (seat, lift) = seated_pose(p.ty.def.seat_height, x.seat_h, p.ty.rig.seat_front(), p.ty.rig.seat_lift);
-                (Some(seat), lift)
-            } else {
-                (None, 0.0)
-            };
-            let reach = (x.reach && x.inside.is_some()).then(|| {
-                let d = x.reach_at.as_dvec3() - x.pos;
-                let (s, c) = x.yaw.sin_cos();
-                Vec3::new((d.x * c - d.y * s) as f32, (d.x * s + d.y * c) as f32, d.z as f32)
-            });
-            let hold = grip_for_standing_rider(
-                x.inside.is_some(),
-                x.task == Task::SittingInBus && kind == 0,
-                kind == 1,
-                x.reach,
-            );
-            (activity, seat, reach, floor_lift, hold)
-        }
-        _ => (p.activity, None, None, 0.0, 0.0),
-    };
+    let PoseFacts { activity, seat, reach, floor_lift, hold, seated_level } = p.facts;
     let bus = match p.place {
         Place::Bus(id, _) => buses.get(&id).copied(),
         Place::Ground => None,
     };
+    // The place jumps within the bus where Omsi.exe puts a passenger straight onto the seat
+    // from the aisle's nearest point (0.7 - 1.9 m): drawn as a glide at a walking pace, the
+    // feet stepping along under the body, while the pose sits down - the person popped onto
+    // the seat before.
+    let origin = {
+        // (in f64: the ground's places are world coordinates, far too large for an f32)
+        // (on the ground as well: where the bus comes and the waiting take their way to the
+        // door, their places jump a little; and from the ground into the bus, compared in
+        // the world where they were drawn last - the bus stands then)
+        // (a jump is the place's own, frame to frame: walking moves it by a few centimetres;
+        // across the floor only - its height the floor and the seat's anchor decide, which
+        // the pose follows by itself)
+        match st.last_place {
+            Some((f, last)) if f == frame => {
+                let jump = ((last - origin).as_vec3()) * glam::Vec3::new(1.0, 1.0, 0.0);
+                if (0.1..3.0).contains(&jump.length()) {
+                    st.glide += jump;
+                }
+            }
+            Some(_) => {
+                let drawn = match bus {
+                    Some(b) => b.to_local(st.last_world) - origin.as_vec3(),
+                    None => (st.last_world - origin).as_vec3(),
+                } * glam::Vec3::new(1.0, 1.0, 0.0);
+                st.glide = if drawn.length() < 3.0 { drawn } else { glam::Vec3::ZERO };
+            }
+            None => st.glide = glam::Vec3::ZERO,
+        }
+        st.last_place = Some((frame, origin));
+        let len = st.glide.length();
+        if len > 0.0 {
+            st.glide *= ((len - 1.2 * dt) / len).max(0.0);
+        }
+        st.glide_world = match bus {
+            Some(b) => b.world(origin.as_vec3() + st.glide) - b.world(origin.as_vec3()),
+            None => st.glide.as_dvec3(),
+        };
+        st.last_world = p.position + st.glide_world;
+        origin + st.glide.as_dvec3()
+    };
     // A seated renderer anchor is [passpos] - human [seatheight], not the floor.
-    let level = match &p.state {
-        State::Pax(x) if x.pax_state.round() >= 1.5 => origin.z + (p.ty.def.seat_height - x.seat_h) as f64,
-        _ => origin.z,
+    let level = match seated_level {
+        Some(lift) => origin.z + lift,
+        None => origin.z,
     };
     let sample = |at| floor::sample(world, bus, at, level);
+    // (seated: the pelvis where the original seated pose has it - on a bus seat and on a
+    // stop's bench alike - in the pose's frame, which stands `floor_lift` higher)
+    let seat_pelvis = seat.map(|_| {
+        let b = omsi_sim::human::slots_from_omsi(&p.anim.bones(&p.ty.omsi));
+        let r = &p.ty.rig;
+        let mid = (b[0].transform_point3(r.hip[0]) + b[1].transform_point3(r.hip[1])) * 0.5;
+        mid + (r.pelvis - (r.hip[0] + r.hip[1]) * 0.5) - Vec3::Z * floor_lift
+    });
     let input = PoseInput {
         activity,
         // The simulation's renderer still places a seated person at hip - model height.
@@ -96,15 +103,16 @@ pub(super) fn bones(p: &mut Person, dt: f32, world: &World, buses: &HashMap<BusI
         frame,
         velocity: p.vel,
         seat,
+        seat_pelvis,
         reach,
         hold,
         floor: Some(&sample),
         ..PoseInput::default()
     };
     let seed = p.id;
-    let pose = p.procedural.get_or_insert_with(|| Pose::new(seed));
-    pose.advance(&p.ty.rig, &input, dt);
-    let mut posed = pose.bones(&p.ty.rig);
+    let pose = st.procedural.get_or_insert_with(|| Pose::new(seed));
+    pose.advance(&ty.rig, &input, dt);
+    let mut posed = pose.bones(&ty.rig);
     // Shift the local pose back to the renderer's original anchor; no game logic moves.
     if floor_lift != 0.0 {
         let lift = Affine3A::from_translation(Vec3::Z * floor_lift);
@@ -114,40 +122,13 @@ pub(super) fn bones(p: &mut Person, dt: f32, world: &World, buses: &HashMap<BusI
         posed.ankle = posed.ankle.map(|a| lift.transform_point3(a));
     }
     // OMSI_TRACE_PAX records the deformed ankles rather than the untouched spawn markers.
-    p.ankles = posed.ankle;
+    st.ankles = posed.ankle;
     posed.bones
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn seated_floor_and_pelvis_use_different_seat_heights() {
-        // Test the geometry used by the renderer: an OMSI model with [seatheight]
-        // 0.82 m placed at a 0.45 m physical seat height.
-        let model = 0.82;
-        let physical = 0.45;
-        let seat_front = 0.34;
-        let seat_lift = 0.10;
-        // The same calculation as seated_pose, with rig measurements supplied.
-        let (seat, floor_lift) = seated_pose(model, physical, seat_front, seat_lift);
-        // The pelvis is still precisely at [passpos] (the simulation origin + 0.82).
-        assert!((floor_lift + seat.z + seat_lift - model).abs() < 1e-5);
-        // The hip aligns with [passpos] instead of being behind the seat.
-        assert!((seat.y - seat_front + 0.03).abs() < 1e-5);
-        // The soles follow the real floor of the seat, not model [seatheight].
-        assert!((floor_lift - (model - physical)).abs() < 1e-5);
-    }
-
-    #[test]
-    fn only_stationary_standing_riders_hold_the_rail() {
-        assert_eq!(grip_for_standing_rider(true, true, false, false), 1.0);
-        assert_eq!(grip_for_standing_rider(true, false, false, false), 0.0);
-        assert_eq!(grip_for_standing_rider(true, true, true, false), 0.0);
-        assert_eq!(grip_for_standing_rider(true, true, false, true), 0.0);
-        assert_eq!(grip_for_standing_rider(false, true, false, false), 0.0);
-    }
 
     #[test]
     fn enhanced_pose_requires_explicit_opt_in() {

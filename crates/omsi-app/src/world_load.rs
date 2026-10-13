@@ -38,8 +38,13 @@ pub(crate) fn open_world(args: &Args) -> Result<(World, Camera, DVec3)> {
         None => World::open(&args.root, &map_cfg, date)?,
     };
     *world.start_clock.lock() = start_clock(args);
+    // the session's settings the world's loading reads, and whether its weather lies as snow
+    // (the panes of the vehicles that go onto the GPU wear it)
+    args.session_settings.apply_to(&world);
     {
-        let (kind, folder) = season_folder(args, &world.global);
+        let weather = load_weather(args);
+        world.settings.set_snow(weather.snow);
+        let (kind, folder) = season_folder_on(args, &world.global, start_clock(args).day_of_year, weather.snow, weather.snow_on_road);
         log::info!(
             "season: day {} -> kind {kind} (texture folder {:?})",
             start_clock(args).day_of_year,

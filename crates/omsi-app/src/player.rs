@@ -385,6 +385,16 @@ impl Player {
         fire
     }
 
+    /// `doors_release`: the bus's door release (`VehicleInstance::door_release_trigger`); the triggers fired.
+    pub(crate) fn door_release(&mut self) -> Vec<String> {
+        let fired: Vec<String> = self.vehicle.door_release_trigger().map(str::to_string).into_iter().collect();
+        log::info!("door release: {}", fired.first().map_or("none on this bus", |s| s.as_str()));
+        for name in &fired {
+            self.vehicle.trigger(name);
+        }
+        fired
+    }
+
     /// A door key let go: the `_off` of the triggers it fired (the push buttons of the
     /// automatic doors are held between the two).
     pub(crate) fn door_key_off(&mut self, fired: &[String]) {
@@ -423,6 +433,15 @@ impl Player {
         if let Some(gate) = crate::hpattern::resolve(&self.vehicle.ty.program, name) {
             if pressed { self.clutch_for_gate(&gate); }
             if let Some(done) = crate::hpattern::action(&mut self.vehicle, &gate, pressed, self.momentary_gears && !self.from_keyboard) { return done; }
+        }
+        if omsi_input::actions::is_door_release(name) {
+            if pressed {
+                let fired = self.door_release();
+                self.door_buttons.insert("doors_release".into(), fired);
+            } else if let Some(fired) = self.door_buttons.remove("doors_release") {
+                self.door_key_off(&fired);
+            }
+            return true;
         }
         // the ticket key of Inputs/keyboard.cfg (T): sell the ticket the passenger at the
         // desk asked for, on buses whose script has no ticket printer
@@ -482,6 +501,22 @@ impl Player {
         }
         let done = self.toggle_as_steps(name, pressed);
         done
+    }
+
+    /// A trigger of `--triggers` at its time (the offscreen run's and the window's): a gate of
+    /// a manual gearbox comes with the automatic clutch, as from the keys; the game's door
+    /// actions (`door_<n>` / `doors_all`) as a button pressed and let go; else the script's
+    /// trigger.
+    pub(crate) fn fire_timed(&mut self, name: &str) {
+        self.clutch_for_gate(name);
+        // (the game's door actions, `door_<n>` / `doors_all` / `doors_release`, as a button
+        // pressed and let go)
+        if door_action(name).is_some() || omsi_input::actions::is_door_release(name) {
+            self.action(name, true);
+            self.action(name, false);
+        } else {
+            self.vehicle.trigger(name);
+        }
     }
 
     /// OMSI's automatic clutch for a gear lever whose scripts only take a gear with the

@@ -11,7 +11,14 @@ impl Pose {
         }
         for f in &mut self.feet {
             if f.planted {
-                f.pos.z = Self::sample_floor(input, f.pos.truncate(), f.pos.z);
+                // (only a floor that moved a little under the foot - the bus's floor settling:
+                // a floor found a stair's height away is another one, sought from the body's
+                // level as it climbs, and the foot popped up onto it in a frame; it stays
+                // and steps up instead)
+                let z = Self::sample_floor(input, f.pos.truncate(), f.pos.z);
+                if (z - f.pos.z).abs() < 0.2 {
+                    f.pos.z = z;
+                }
             } else {
                 // A landing at the same x/y needs resampling after a vertical change too.
                 f.to_sampled = DVec2::splat(f64::MAX);

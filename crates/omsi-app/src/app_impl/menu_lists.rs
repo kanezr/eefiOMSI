@@ -9,7 +9,7 @@ impl App {
         crate::game_lists::forget_page_titles(self);
         // (a search belongs to its list; `chooser_pick` has taken the kind when it goes on)
         if self.menus.list_kind.as_ref().is_some_and(|k| *k != kind) {
-            self.forget_search();
+            self.menus.forget_search();
         }
         self.menus.dropdown = None;
         self.menus.admin_list = Some(crate::game_lists::items(self, &kind));
@@ -17,26 +17,7 @@ impl App {
         // (on its first line, not on a heading, nor on the search line above it: Enter
         // picks what it picked before the lists could be searched)
         let search = self.menus.admin_list.as_ref().and_then(|l| l.first()).is_some_and(|l| l.1 == "search");
-        self.menus.chooser = Some(if self.is_heading(0) || search { self.chooser_next(0, 1) } else { 0 });
-    }
-
-    /// Line `k` of the list shown heads the lines under it (`game_lists::HEADING`).
-    fn is_heading(&self, k: usize) -> bool {
-        self.menus.admin_list.as_ref().and_then(|l| l.get(k)).is_some_and(|l| l.1 == crate::game_lists::HEADING)
-    }
-
-    /// The line `step` lines on from `sel` (round the list; `n - 1` is one back), over the
-    /// headings.
-    fn chooser_next(&self, sel: usize, step: usize) -> usize {
-        let n = self.menus.admin_list.as_ref().unwrap_or(&self.menus.vehicle_list).len().max(1);
-        let mut k = sel;
-        for _ in 0..n {
-            k = (k + step) % n;
-            if !self.is_heading(k) {
-                break;
-            }
-        }
-        k
+        self.menus.chooser = Some(if self.menus.is_heading(0) || search { self.menus.chooser_next(0, 1) } else { 0 });
     }
 
     /// Left or Right on line `k` of a list, or a click on the arrows round its value: its
@@ -119,15 +100,6 @@ impl App {
             }
         }
         self.refresh_list();
-    }
-
-    /// The search of the list shown is over (another list is shown).
-    fn forget_search(&mut self) {
-        self.menus.menu_search.clear();
-        if self.menus.menu_edit_search {
-            self.menus.menu_edit = None;
-            self.menus.menu_edit_search = false;
-        }
     }
 
     /// A key while the search of a list is typed: Enter keeps it, Escape drops what was
@@ -388,7 +360,7 @@ impl App {
                 }
             }
             KeyCode::Escape => {
-                if self.tours_list() {
+                if self.menus.tours_list() {
                     self.open_list(crate::game_lists::ListKind::Lines);
                 } else {
                     self.menus.chooser = None;
@@ -396,8 +368,8 @@ impl App {
                     self.menus.list_kind = None;
                 }
             }
-            KeyCode::ArrowUp | KeyCode::KeyW => self.menus.chooser = Some(self.chooser_next(sel, n - 1)),
-            KeyCode::ArrowDown | KeyCode::KeyS => self.menus.chooser = Some(self.chooser_next(sel, 1)),
+            KeyCode::ArrowUp | KeyCode::KeyW => self.menus.chooser = Some(self.menus.chooser_next(sel, n - 1)),
+            KeyCode::ArrowDown | KeyCode::KeyS => self.menus.chooser = Some(self.menus.chooser_next(sel, 1)),
             KeyCode::ArrowLeft | KeyCode::KeyA if self.settings_list() => self.list_adjust(sel, crate::game_lists::Move::Dec),
             KeyCode::ArrowRight | KeyCode::KeyD if self.settings_list() => self.list_adjust(sel, crate::game_lists::Move::Inc),
             KeyCode::Tab if self.settings_list() => {
@@ -405,17 +377,17 @@ impl App {
                 self.settings_tab_step(!back);
             }
             // (the stop to start from: - and +)
-            KeyCode::Minus | KeyCode::Slash | KeyCode::NumpadSubtract if self.tours_list() => self.tour_stop_step(false),
-            KeyCode::Equal | KeyCode::BracketRight | KeyCode::NumpadAdd if self.tours_list() => self.tour_stop_step(true),
+            KeyCode::Minus | KeyCode::Slash | KeyCode::NumpadSubtract if self.menus.tours_list() => self.tour_stop_step(false),
+            KeyCode::Equal | KeyCode::BracketRight | KeyCode::NumpadAdd if self.menus.tours_list() => self.tour_stop_step(true),
             // (the trip of the tour: the arrows go to the one leaving before or after, as OMSI's)
-            KeyCode::ArrowLeft | KeyCode::KeyA if self.tours_list() => self.trip_step(false),
-            KeyCode::ArrowRight | KeyCode::KeyD if self.tours_list() => self.trip_step(true),
+            KeyCode::ArrowLeft | KeyCode::KeyA if self.menus.tours_list() => self.trip_step(false),
+            KeyCode::ArrowRight | KeyCode::KeyD if self.menus.tours_list() => self.trip_step(true),
             KeyCode::ArrowLeft | KeyCode::KeyA => self.chooser_adjust(sel, "-"),
             KeyCode::ArrowRight | KeyCode::KeyD => self.chooser_adjust(sel, "+"),
             KeyCode::PageUp if self.settings_list() => self.settings_tab_step(false),
             KeyCode::PageDown if self.settings_list() => self.settings_tab_step(true),
-            KeyCode::PageUp => self.menus.chooser = Some(sel.saturating_sub(15)).map(|k| if self.is_heading(k) { self.chooser_next(k, 1) } else { k }),
-            KeyCode::PageDown => self.menus.chooser = Some((sel + 15).min(n - 1)).map(|k| if self.is_heading(k) { self.chooser_next(k, 1) } else { k }),
+            KeyCode::PageUp => self.menus.chooser = Some(sel.saturating_sub(15)).map(|k| if self.menus.is_heading(k) { self.menus.chooser_next(k, 1) } else { k }),
+            KeyCode::PageDown => self.menus.chooser = Some((sel + 15).min(n - 1)).map(|k| if self.menus.is_heading(k) { self.menus.chooser_next(k, 1) } else { k }),
             KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Space => self.chooser_pick(sel),
             _ => {}
         }
@@ -471,11 +443,6 @@ impl App {
         }
     }
 
-    /// A line's tours are open, with the stops of the tour chosen beside them.
-    fn tours_list(&self) -> bool {
-        self.menus.chooser.is_some() && matches!(self.menus.list_kind, Some(crate::game_lists::ListKind::Tours(..)))
-    }
-
     /// The trip of the chosen tour leaving before (or after) the one chosen, as OMSI's
     /// timetable steps through the times of a tour (the tour itself stays).
     pub(crate) fn trip_step(&mut self, forward: bool) {
@@ -523,7 +490,7 @@ impl App {
     /// the vehicle driven (OMSI puts a new vehicle where the map view points).
     pub(crate) fn chooser_pick(&mut self, k: usize) {
         // (a heading is no choice)
-        if self.is_heading(k) {
+        if self.menus.is_heading(k) {
             return;
         }
         // a row of a settings window that drops a list down (the weather preset, the clouds)
@@ -546,7 +513,7 @@ impl App {
                     let keep = next == kind;
                     if !keep {
                         self.menus.menu_top = None;
-                        self.forget_search();
+                        self.menus.forget_search();
                     }
                     self.open_list(next);
                     if keep {
@@ -640,5 +607,40 @@ mod dropdown_tests {
         assert_eq!(super::dropdown_top_at(900.0, track, 60.0, 40, 8), 32);
         // a list that fits never scrolls
         assert_eq!(super::dropdown_top_at(300.0, track, 60.0, 5, 8), 0);
+    }
+}
+
+impl MenuState {
+    /// A line's tours are open, with the stops of the tour chosen beside them.
+    fn tours_list(&self) -> bool {
+        self.chooser.is_some() && matches!(self.list_kind, Some(crate::game_lists::ListKind::Tours(..)))
+    }
+
+    /// The search of the list shown is over (another list is shown).
+    fn forget_search(&mut self) {
+        self.menu_search.clear();
+        if self.menu_edit_search {
+            self.menu_edit = None;
+            self.menu_edit_search = false;
+        }
+    }
+
+    /// The line `step` lines on from `sel` (round the list; `n - 1` is one back), over the
+    /// headings.
+    fn chooser_next(&self, sel: usize, step: usize) -> usize {
+        let n = self.admin_list.as_ref().unwrap_or(&self.vehicle_list).len().max(1);
+        let mut k = sel;
+        for _ in 0..n {
+            k = (k + step) % n;
+            if !self.is_heading(k) {
+                break;
+            }
+        }
+        k
+    }
+
+    /// Line `k` of the list shown heads the lines under it (`game_lists::HEADING`).
+    fn is_heading(&self, k: usize) -> bool {
+        self.admin_list.as_ref().and_then(|l| l.get(k)).is_some_and(|l| l.1 == crate::game_lists::HEADING)
     }
 }

@@ -8,7 +8,7 @@
 //! out.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
 use std::time::{Duration, Instant};
 
 struct Slot {
@@ -27,8 +27,8 @@ const CHECKPOINT: Duration = Duration::from_secs(2);
 /// (Devices compare with their instance since the fork's oo/device-eq: two instances' devices
 /// had the same ids, and a test's device took another's cache, "PipelineCache does not exist".)
 static SLOT: Mutex<Option<Slot>> = Mutex::new(None);
-/// Whether a save is already running on a worker thread (see [`save`]).
-static SAVING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Whether a save is already running: get() does not start another.
+static SAVING: AtomicBool = AtomicBool::new(false);
 
 /// Whether to ask the device for the feature.
 pub(crate) fn wanted(adapter: &wgpu::Adapter) -> wgpu::Features {
@@ -95,47 +95,61 @@ pub(crate) fn get(device: &wgpu::Device) -> Option<wgpu::PipelineCache> {
 
 /// Write the cache to its file (after the pipelines were made, and at the end of the game, for
 /// the ones made later: puddles, Enhanced+). Nothing happens without a cache.
-///
-/// `get_data()` can take a noticeable while on a big cache (a few MB of driver-compiled
-/// pipelines), so on a backend where it blocks the caller it is worked off on a thread: the
-/// game's end, a phone going to the background and the pipelines just built are all moments
-/// where the caller should not wait on it. The slot is read under the lock and the work done
-/// without it, so a pipeline still being built is not held up.
+/// Runs on a background thread so ending the game does not wait for `get_data()`.
+/// A save already running is not started again.
 pub fn save() {
-    let work = {
+    // If a save is already in progress, don't start another
+    if SAVING.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        return;
+    }
+    let path_opt = {
         let mut slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(s) = slot.as_mut() else { return };
+        let Some(s) = slot.as_mut() else {
+            SAVING.store(false, Ordering::Release);
+            return;
+        };
         s.written = Instant::now();
-        if SAVING.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        let Some(data) = s.cache.get_data() else {
+            SAVING.store(false, Ordering::Release);
+            return;
+        };
+        if data.is_empty() || std::fs::metadata(&s.path).is_ok_and(|m| m.len() == data.len() as u64) {
+            SAVING.store(false, Ordering::Release);
             return;
         }
-        let cache = s.cache.clone();
-        let path = s.path.clone();
-        let written_len = std::fs::metadata(&path).ok().map(|m| m.len());
-        Some((cache, path, written_len))
+        s.path.clone()
     };
-    let Some((cache, path, written_len)) = work else { return };
-    std::thread::Builder::new().name("pipeline cache".into()).spawn(move || {
-        let done = || SAVING.store(false, std::sync::atomic::Ordering::Relaxed);
-        let Some(data) = cache.get_data() else { done(); return; };
-        if data.is_empty() || written_len.is_some_and(|m| m == data.len() as u64) {
-            done();
+    // Spawn a background thread to do the actual write
+    std::thread::spawn(move || {
+        let data = {
+            let mut slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(s) = slot.as_mut() else {
+                SAVING.store(false, Ordering::Release);
+                return;
+            };
+            s.cache.get_data()
+        };
+        let Some(data) = data else {
+            SAVING.store(false, Ordering::Release);
+            return;
+        };
+        if data.is_empty() {
+            SAVING.store(false, Ordering::Release);
             return;
         }
-        if let Some(dir) = path.parent() {
+        if let Some(dir) = path_opt.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        // written beside and renamed over: a game ended mid-write leaves the old file whole
-        let tmp = path.with_extension("tmp");
-        match std::fs::write(&tmp, &data).and_then(|_| std::fs::rename(&tmp, &path)) {
+        let tmp = path_opt.with_extension("tmp");
+        match std::fs::write(&tmp, &data).and_then(|_| std::fs::rename(&tmp, &path_opt)) {
             Ok(()) => log::info!("pipeline cache saved: {} KB", data.len() / 1024),
             Err(e) => {
                 let _ = std::fs::remove_file(&tmp);
-                log::warn!("pipeline cache not saved to {}: {e}", path.display());
+                log::warn!("pipeline cache not saved to {}: {e}", path_opt.display());
             }
         }
-        done();
-    }).ok();
+        SAVING.store(false, Ordering::Release);
+    });
 }
 
 /// Forget `device`'s cache (the device is lost or failed to make the renderer).

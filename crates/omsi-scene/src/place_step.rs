@@ -1140,7 +1140,7 @@ impl World {
     /// Keep a traffic lamp (or another object a crossing's light program drives) for the
     /// traffic to switch.
     fn keep_light_object(&self, pl: &mut Placing, obj: &ObjectCx, lamp: (i64, usize, bool), made: ObjectMade) {
-        let ObjectCx { ot, pos, xf, script_strings, .. } = *obj;
+        let ObjectCx { ot, pos, xf, script_strings, key: tile, .. } = *obj;
         let ObjectMade { lamp_instances, lamp_slots, object_variants, lamp_texts, .. } = made;
         let (parent, index, any_light) = lamp;
         let names: Mutex<Vec<LightSwitch>> = Mutex::new(Vec::new());
@@ -1157,16 +1157,17 @@ impl World {
                 _ => None,
             })
             .unzip();
+        // (the script goes to the simulation's scenery state, the lamp keeps its key)
+        let mut animated = false;
         let script = ot.program.as_ref().map(|p| {
-            Arc::new(Mutex::new(omsi_sim::scenery::SceneryInstance::new(
-                p.clone(),
-                &ot.mesh_defs(),
-                self.script_clock(),
-                script_strings,
-            )))
+            let inst = omsi_sim::scenery::SceneryInstance::new(p.clone(), &ot.mesh_defs(), self.script_clock(), script_strings);
+            animated = inst.animated();
+            let inbox = self.scripted.lock().inbox.clone();
+            let key = inbox.next_key();
+            inbox.push(omsi_sim::scenery::SceneryChange::Lamp(omsi_sim::scenery::LampScript { key, tile, inst }));
+            key
         });
         let lit = vec![0.0; coronas.len()];
-        let animated = script.as_ref().map(|s| s.lock().animated()).unwrap_or(false);
         let sound = ot.sco.sound.as_ref().map(|rel| {
             let dir = ot.sco.path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
             omsi_cfg::resolve_path(&dir, rel)
@@ -1207,7 +1208,7 @@ impl World {
     ) {
         let ObjectCx { ot, pos, xf, lamp, map_id, controller, strings, var_parent, key, tkey, images, .. } = *obj;
         let ObjectMade { mut all_instances, object_variants, script_texts, html_pages, .. } = made;
-        let texture_selection = scenery_texture_selection(ot, &inst);
+        let texture_selection = scenery_texture_selection(ot, &|n| inst.var(n));
         if !ot.dynamic_textures.is_empty() {
             if let Some(rows) = gpu.dynamic_texture_variant(
                 renderer,

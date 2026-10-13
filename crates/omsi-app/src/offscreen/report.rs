@@ -10,6 +10,7 @@ impl Offscreen<'_> {
         let Self {
             ref mut traffic,
             ref world,
+            ref mut scenery,
             ref renderer,
             ref mut scene,
             ref mut sim_view,
@@ -17,7 +18,7 @@ impl Offscreen<'_> {
             ..
         } = *self;
         if let Some(t) = traffic.as_mut() {
-            view_sync::sync(ViewSync::traffic(t), sim_view, world, renderer, scene);
+            view_sync::sync(ViewSync::traffic(t, scenery), sim_view, world, renderer, scene);
             let buses = t
                 .cars
                 .iter()
@@ -559,7 +560,7 @@ impl Offscreen<'_> {
                     p.vehicle.physics.velocity_kmh()
                 );
                 if omsi_cfg::flags::OMSI_DEBUG_HUMANS.is_set() {
-                    for (id, pos, rot, name) in world.bus_stops.lock().iter() {
+                    for (id, pos, rot, name) in world.data.peek().lists.bus_stops.iter() {
                         log::info!(
                             "  bus stop {id} '{name}' at ({:.1}, {:.1}) heading {rot:.0}",
                             pos.x,
@@ -567,7 +568,7 @@ impl Offscreen<'_> {
                         );
                     }
                 }
-                if let Some((id, pos, _, name)) = world.bus_stops.lock().iter().min_by(|a, b| (a.1 - p.vehicle.position).length().total_cmp(&(b.1 - p.vehicle.position).length())) {
+                if let Some((id, pos, _, name)) = world.data.peek().lists.bus_stops.iter().min_by(|a, b| (a.1 - p.vehicle.position).length().total_cmp(&(b.1 - p.vehicle.position).length())) {
                     log::info!(
                         "nearest bus stop {id} '{name}' at ({:.1}, {:.1}) is {:.1} m away",
                         pos.x,

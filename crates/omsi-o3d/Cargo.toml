@@ -11,3 +11,8 @@ glam.workspace = true
 log.workspace = true
 encoding_rs.workspace = true
 omsi-cfg = { path = "../omsi-cfg" }
+# models of today's tools: glTF / GLB (parsed only - pictures go to the texture loader)
+gltf = { version = "1.4", default-features = false, features = ["utils", "names", "extras"] }
+serde_json.workspace = true
+# FBX (ufbx: one C file, built with the crate)
+ufbx = "0.11"

@@ -243,6 +243,11 @@ impl VehicleInstance {
         let v_kmh = ai.speed * 3.6;
         self.put(self.v_velocity, v_kmh);
         self.put(self.v_velocity_ground, v_kmh);
+        // AI motion bypasses step_physics, which normally hands the pedals to scripts.
+        let controls = self.physics.controls;
+        self.put(self.v_throttle, controls.throttle);
+        self.put(self.v_brake, controls.brake);
+        self.put(self.v_clutch, controls.clutch);
         // how far the vehicle rolled since the last frame (a reset or a jump counts as none;
         // backwards only for a vehicle that reverses)
         let ds = ai.odometer - self.ai_odometer;

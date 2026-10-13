@@ -113,7 +113,7 @@ pub(crate) fn page_give(free: &mut Vec<(u64, u64)>, top: &mut u64, at: u64, len:
 
 impl MeshPage {
     pub(crate) fn new(device: &wgpu::Device, vertex_bytes: u64, index_bytes: u64) -> MeshPage {
-        let blas = if RT_BUFFERS.load(std::sync::atomic::Ordering::Relaxed) { wgpu::BufferUsages::BLAS_INPUT } else { wgpu::BufferUsages::empty() };
+        let blas = if RT_BUFFERS.load(std::sync::atomic::Ordering::Relaxed) { wgpu::BufferUsages::BLAS_INPUT | wgpu::BufferUsages::STORAGE } else { wgpu::BufferUsages::empty() };
         let buffer = |size: u64, usage| device.create_buffer(&wgpu::BufferDescriptor { label: Some("mesh page"), size: size.max(32), usage: usage | wgpu::BufferUsages::COPY_DST | blas, mapped_at_creation: false });
         MeshPage {
             vertex: buffer(vertex_bytes, wgpu::BufferUsages::VERTEX),

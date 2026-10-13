@@ -2,6 +2,8 @@
 
 use super::*;
 use crate::scene::World;
+use omsi_sim::handover::Inbox;
+use omsi_sim::world_data::{TrafficArrival, TrafficArrivals};
 
 /// Start a vehicle of type `ty` once and throw it away: its `{init}` and its displays read
 /// the files they need (depot data, fonts) into the caches before the first real one of the
@@ -30,7 +32,7 @@ impl Traffic {
     /// Build the network from the lanes collected by `World::build_scene` and load the AI
     /// car types of the map's `ailists.cfg` (the `[aigroup_2]` groups that are not depots).
     pub fn new(root: &Path, world: &World, target: usize) -> Result<Traffic> {
-        let (lanes, parked_cars, lane_tiles) = take_from_tiles(world);
+        let (lanes, parked_cars, lane_tiles, new_lights) = take_from_tiles(&world.traffic_inbox);
         let mut net = Network {
             lanes,
             // (`[lht]`: priority to the left, passing on the right, keeping left)
@@ -59,8 +61,8 @@ impl Traffic {
                 }
             }
         }
-        let lights = world.traffic_lights.lock().clone();
-        let controller_of_object = world.controller_of_object.lock().clone();
+        let controller_of_object: hashbrown::HashMap<i64, usize> = new_lights.iter().map(|(i, o, _)| (*o, *i)).collect();
+        let lights: Vec<omsi_sim::traffic::TrafficLightController> = new_lights.into_iter().map(|(_, _, c)| c).collect();
         let turning = net.lanes.iter().filter(|l| l.turn != 0).count();
         let with_side = net
             .lanes
@@ -122,11 +124,11 @@ impl Traffic {
         Ok(Traffic::with_sim(sim))
     }
 
-    /// Take in what the tiles loaded since the last call brought: their lanes (linked into
-    /// the network, whose existing indices stay valid), their parked cars (sorted onto the
-    /// lanes once those are in) and the light programs of their crossings.
-    pub fn add_tiles(&mut self, world: &World) -> usize {
-        let (new, parked_cars, tiles) = take_from_tiles(world);
+    /// Take in what the tiles loaded since the last call handed over (`inbox`): their lanes
+    /// (linked into the network, whose existing indices stay valid), their parked cars
+    /// (sorted onto the lanes once those are in) and the light programs of their crossings.
+    pub fn add_tiles(&mut self, inbox: &Inbox<TrafficArrival>) -> usize {
+        let (new, parked_cars, tiles, new_lights) = take_from_tiles(inbox);
         let n = new.len();
         let mut added = self.sim.net.lanes.len()..self.sim.net.lanes.len();
         if n > 0 {
@@ -144,32 +146,29 @@ impl Traffic {
         }
         self.sort_parked(parked_cars, added);
         // new crossings bring their light programs; the running ones keep their clocks
-        // (a program is never taken away again: the world's list only grows)
-        let lights = world.traffic_lights.lock();
-        if lights.len() > self.sim.lights.len() {
-            let from = self.sim.lights.len();
-            self.sim.lights.extend(lights[from..].iter().cloned());
-            self.sim.light_prev
-                .extend(lights[from..].iter().map(|c| vec![-100; c.lights.len()]));
-            self.sim.controller_of_object = world.controller_of_object.lock().clone();
+        // (a program is never taken away again: the numbers only grow)
+        for (index, object, c) in new_lights {
+            debug_assert_eq!(index, self.sim.lights.len(), "light programs arrive in the order of their numbers");
+            self.sim.light_prev.push(vec![-100; c.lights.len()]);
+            self.sim.lights.push(c);
+            self.sim.controller_of_object.insert(object, index);
         }
         n
     }
 }
 
-/// What the tiles placed since the last call hand to the traffic: their lanes, their parked
-/// cars and which tiles they were (taken together, see `World::lane_tiles`).
+/// What the tiles placed since the last call handed to the traffic: their lanes, their
+/// parked cars, which tiles they were (see `TrafficArrival::Tile`) and the new light programs.
+#[allow(clippy::type_complexity)]
 pub(super) fn take_from_tiles(
-    world: &World,
+    inbox: &Inbox<TrafficArrival>,
 ) -> (
     Vec<omsi_sim::traffic::Lane>,
     Vec<(DVec3, f64)>,
     Vec<(i32, i32)>,
+    Vec<(usize, i64, omsi_sim::traffic::TrafficLightController)>,
 ) {
-    let mut lanes = world.lanes.lock();
-    let parked = std::mem::take(&mut *world.parked_cars.lock());
-    let tiles = std::mem::take(&mut *world.lane_tiles.lock());
-    let mut new = std::mem::take(&mut *lanes);
+    let TrafficArrivals { lanes: mut new, parked, tiles, lights } = TrafficArrivals::gather(inbox.take());
     // The tiles are read in parallel and hand in their lanes in the order they finish:
     // sorted by their map identity, the lanes a set of tiles brings are numbered alike in
     // every run, and so is the random traffic drawn from them (a run can be repeated to
@@ -194,7 +193,7 @@ pub(super) fn take_from_tiles(
                 first(b),
             ))
     });
-    (new, parked, tiles)
+    (new, parked, tiles, lights)
 }
 
 /// Load the AI car types of the map's `ailists.cfg` that make its random traffic.
@@ -239,7 +238,8 @@ fn random_types(root: &Path, world: &World) -> RandomTypes {
                 .map(|n| if all_groups && n.1 <= 0 { 1 } else { n.1 })
                 .collect();
         }
-        let lists = &world.ailists;
+        let map = world.map();
+        let lists = &map.ailists;
         // Without `unsched_vehgroups.txt` the random traffic is the ailists' default group
         // alone (the first, or the one the `[ailist]` header names): Omsi.exe 0x785f98
         // makes one nameless group then, and a nameless group takes the default group.

@@ -440,6 +440,14 @@ impl PluginIo for Io<'_> {
         }
     }
 
+    fn script_texture_size(&self, index: usize) -> Option<(u32, u32)> {
+        self.veh()?.host.script_textures.get(index).map(|st| (st.width, st.height))
+    }
+
+    fn set_script_texture(&mut self, index: usize, width: u32, height: u32, rgba: &[u8]) -> bool {
+        self.veh_mut().and_then(|v| v.host.script_textures.get_mut(index)).is_some_and(|st| st.replace(width, height, rgba))
+    }
+
     /// A key down fires the trigger, a key up `<trigger>_off` (OMSI's keyboard event
     /// handler the original, which the plugin frame calls with the new state).
     fn fire(&mut self, trigger: &str, down: bool) {
@@ -823,7 +831,8 @@ impl PluginIo for Io<'_> {
     }
     fn season(&self) -> Option<(Option<String>, bool)> {
         self.app()?;
-        Some((omsi_texture::season_folder(), crate::scene::SNOW_WEATHER.load(std::sync::atomic::Ordering::Relaxed)))
+        let app = self.app()?;
+        Some((omsi_texture::season_folder(), app.world.as_ref().is_some_and(|w| w.settings.snow())))
     }
     fn weather(&self) -> Option<op::Weather> {
         pworld::weather(self.app()?)

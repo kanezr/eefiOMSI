@@ -8,15 +8,19 @@
 //!   circles, rings, lines, text and icons in pixels, and ribbons and markers in a 3D
 //!   world whose width can be given in metres, in pixels, or the larger of the two;
 //! * [`gpu`]: the wgpu pipeline that draws such lists (MSAA, premultiplied alpha,
-//!   rounded clipping), into a window or a texture.
+//!   rounded clipping), into a window or a texture;
+//! * [`kit`] and [`theme`]: the immediate-mode widgets and their look, which draw the game's
+//!   pause menu, photo mode and developer tools.
 
 pub mod atlas;
 pub mod edit;
 pub mod gpu;
 pub mod i18n;
 pub mod icons;
+pub mod kit;
 pub mod paint;
 pub mod text;
+pub mod theme;
 
 pub use atlas::{Atlas, Sprite};
 pub use gpu::{Draw, Gpu, Layer};

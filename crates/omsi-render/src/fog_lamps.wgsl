@@ -29,6 +29,7 @@ struct Camera {
     flags: vec4<f32>,
     light_view_proj_close: mat4x4<f32>,
     wind: vec4<f32>,
+    lod_bias: f32,         // LOD bias for mipmapping (positive = blurrier, negative = sharper)
     lamp_view_proj: array<mat4x4<f32>, 4>,
     lamp_shadow: vec4<f32>,
     tree_wind: vec4<f32>,
@@ -136,7 +137,8 @@ fn sun_shafts(c: vec3<f32>, d: vec3<f32>, len: f32, jitter: f32) -> vec3<f32> {
     }
     var shade = vec3<f32>(0.0);
     for (var i = 0u; i < SHAFT_STEPS; i = i + 1u) {
-        let t = (f32(i) + jitter) * dt;
+        let sj = step_jitter(jitter, i, camera.post.y);
+        let t = (f32(i) + sj) * dt;
         let x = c + d * t;
         let lit = sun_reaches(x);
         if (lit >= 0.999) {
@@ -165,8 +167,14 @@ fn fs_fog_lamps(in: FogVsOut) -> @location(0) vec4<f32> {
         return vec4<f32>(seen, 0.0, 0.0, 0.0);
     }
     let r = pixel_ray(floor(in.clip.xy) * 2.0 + vec2<f32>(0.5));
-    let ign = fract(52.9829189 * fract(dot(floor(in.clip.xy), vec2<f32>(0.06711056, 0.00583715))));
-    // (the lamps' halo and cones only from the mist's and fog's droplets: fp.size.w)
+    // Better hash for jitter: uses a 2D integer hash with step index to avoid
+    // visible grid patterns. The old hash created a coarse checker pattern in
+    // the fog around headlamps at night. We now generate a base hash per pixel
+    // and derive per-step jitter from it + temporal noise.
+    let p = floor(in.clip.xy);
+    let base_hash = hash2(p);
+    let ign = base_hash;
+    // camera.post.y holds frame time for temporal jitter
     let l = (lamp_airlight(camera.cam_pos.xyz, r.xyz, 0.0, r.w, ign) * fp.size.w + sun_shafts(camera.cam_pos.xyz, r.xyz, r.w, ign)) * enh.exposure.x;
     return vec4<f32>(clamp(l, vec3<f32>(-4000.0), vec3<f32>(4000.0)), r.w);
 }
@@ -188,30 +196,37 @@ fn sun_seen(c: vec3<f32>, s: vec3<f32>) -> f32 {
         }
         let dir = normalize(s + (a * o.x + b * o.y) * r);
         let clip = camera.view_proj * vec4<f32>(c + dir * 1000.0, 1.0);
-        if (clip.w <= 0.0) {
-            return 0.0;
+        let ndc = clip.xy / max(clip.w, 1e-6);
+        n = n + 1.0;
+        if (clip.w <= 0.0 || abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0) {
+            // Beyond the picture's edge the prepass knows nothing: whether the eye stands in
+            // the shadow of anything the sun's shadow maps hold (without shadows: seen).
+            // What stood at the edge was taken before - a house or a pole reaching the edge
+            // as the camera turned put out the whole veil at once, and sky put it back, a
+            // sheet of light over the picture switched off and on.
+            if (camera.shadow.x > 0.5) {
+                seen = seen + sun_reaches(c + dir * 0.3);
+            } else {
+                seen = seen + 1.0;
+            }
+            continue;
         }
-        let ndc = clip.xy / clip.w;
-        // (beyond the picture's edge nothing is known: what stands at the edge is taken)
         let px = vec2<f32>((ndc.x * 0.5 + 0.5) * fp.size.x, (0.5 - ndc.y * 0.5) * fp.size.y);
         let dims = vec2<i32>(textureDimensions(t_depth));
         let q = clamp(vec2<i32>(px), vec2<i32>(0), dims - vec2<i32>(1));
         seen = seen + select(0.0, 1.0, textureLoad(t_depth, q, 0) <= 0.0);
-        n = n + 1.0;
     }
     return seen / n;
 }
 
-// Glare: the eye's own scattered light round a bright source - the sun seen directly
-// blinds, a veil of light spreads over everything near it and the shadows beside it are
-// lost. The veiling luminance per unit of the source's illuminance at the eye is the CIE's
-// general disability glare function (CIE 146:2002, Vos and van den Berg): 10/theta^3 +
-// (5/theta^2 + 0.1 p/theta)(1 + (A/62.5)^4) + 0.0025 p, theta in degrees (a young eye,
-// A 25, of middle pigmentation, p 0.5). Close to the source the scattering by the lens
-// fibres and the vitreous shows as a ciliary corona of fine radial streaks and, a couple
-// of degrees out, the lenticular halo - a faint ring, red outside and blue inside
-// (Simpson 1953; Spencer, Shirley, Zimmerman and Greenberg, "Physically-based glare
-// effects for digital images", SIGGRAPH 1995).
+// Glare: the light a lens scatters round a bright source - the sun seen directly washes out
+// what is right beside it. The picture is a camera's, and the player compares it with
+// photographs: a good lens' stray light falls off as the near term of the CIE's glare
+// function, 10/theta^3 per unit of the source's illuminance (theta in degrees, CIE
+// 146:2002), a glow of a few degrees. The eye's own share - the wide veil of 5/theta^2 and
+// more that the vitreous and the eye's wall add, its ciliary streaks and its lenticular
+// halo - was drawn as well and made a white blot ten degrees round the sun of a clear day,
+// "the sun is too large" (#2400): a photograph shows none of it.
 fn sun_glare(dir: vec3<f32>) -> vec3<f32> {
     let s = camera.sun_dir.xyz;
     if (max(enh.sun.r, enh.sun.g) < 1e-5 || s.z < -0.02) {
@@ -226,26 +241,7 @@ fn sun_glare(dir: vec3<f32>) -> vec3<f32> {
     if (seen <= 0.0) {
         return vec3<f32>(0.0);
     }
-    let e = enh.sun.rgb * seen;
-    let age = 1.0 + pow(25.0 / 62.5, 4.0);
-    let pig = 0.5;
-    var f = 10.0 / (theta * theta * theta) + (5.0 / (theta * theta) + 0.1 * pig / theta) * age + 0.0025 * pig;
-    // the ciliary corona: streaks round the source, fading by some ten degrees
-    let up0 = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(s.z) > 0.9);
-    let a = normalize(cross(s, up0));
-    let b = cross(s, a);
-    let around = atan2(dot(dir, b), dot(dir, a));
-    let k = around * 57.29578 * 1.5;
-    let h1 = fract(sin(floor(k) * 12.9898) * 43758.547);
-    let h2 = fract(sin((floor(k) + 1.0) * 12.9898) * 43758.547);
-    let streak = mix(h1, h2, smoothstep(0.0, 1.0, fract(k)));
-    let corona = 1.0 + 1.2 * (pow(streak, 3.0) - 0.25) * exp(-theta / 4.0);
-    f = f * max(corona, 0.2);
-    // the lenticular halo (its radius per wavelength: 615, 550 and 465 nm)
-    let rings = vec3<f32>(2.35, 2.15, 1.9);
-    let dr = (vec3<f32>(theta) - rings) / 0.12;
-    let halo = 0.25 * (5.0 / (theta * theta)) * exp(-dr * dr);
-    return e * f + e * halo;
+    return enh.sun.rgb * seen * (10.0 / (theta * theta * theta));
 }
 
 // at full size, added onto the picture: the four nearest half-size rays, each as far as

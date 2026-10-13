@@ -45,7 +45,9 @@ impl Renderer {
         let shafts = lighting.shadows && lighting.sun_dir.z > 0.0 && self.shafts_seen(vp_mat, lighting.sun_dir);
         // (the glare goes by how much of the sun is seen, which is none with the sun behind
         // the camera - fog_lamps.wgsl `sun_seen`: then there is no glare to add)
-        let sun_ahead = ahead_of_camera(vp_mat, lighting.sun_dir);
+        // (the veil reaches 100 degrees round the sun - `sun_glare` - so the pass runs while
+        // any of the picture is within that, not only while the sun is in front of the camera)
+        let sun_ahead = nearest_ray_cos(vp_mat, lighting.sun_dir) > (100.0f32).to_radians().cos();
         let glare = lighting.sun_dir.z > -0.01 && lighting.sun_intensity > 0.0 && !f.env.no_glare && sun_ahead;
         if f.env.debug_fog_lamps {
             log::info!("fog lamps: enhanced {enhanced} prepass {prepass_on} overlays {with_overlays} masked {masked_frame} fog {:.5} lights {} shafts {shafts} glare {glare}", enhanced_weather_fog(lighting), scene.lights.len());
@@ -197,13 +199,6 @@ impl Renderer {
     }
 }
 
-/// Whether a direction (the sun's) points ahead of the camera of `vp_mat`: where the
-/// clip w of a point far along it is above zero, as the shaders' `sun_seen` needs it
-/// (with a margin: it is never said to be behind where the shader would see it).
-pub(crate) fn ahead_of_camera(vp_mat: Mat4, dir: Vec3) -> bool {
-    vp_mat.row(3).truncate().dot(dir.normalize_or_zero()) > -1e-4
-}
-
 /// The largest cosine between `dir` and any of the picture's rays (at most): the
 /// picture's rays lie in a cone round its middle one, as wide as its corners are off it.
 pub(crate) fn nearest_ray_cos(vp_mat: Mat4, dir: Vec3) -> f32 {
@@ -233,12 +228,14 @@ mod tests {
     }
 
     #[test]
-    fn the_sun_behind_the_camera_is_not_ahead_of_it() {
+    fn the_glare_is_drawn_while_any_of_the_picture_is_within_its_reach() {
+        // (100 degrees round the sun: a sun just behind the camera's plane still veils the
+        // picture's edges; one straight behind it does not)
         let vp = view_proj();
-        assert!(ahead_of_camera(vp, Vec3::new(0.0, 1.0, 0.3)));
-        assert!(ahead_of_camera(vp, Vec3::new(0.9, 0.1, 0.2)));
-        assert!(!ahead_of_camera(vp, Vec3::new(0.0, -1.0, 0.3)));
-        assert!(!ahead_of_camera(vp, Vec3::new(0.3, -0.5, 0.8)));
+        let reach = (100.0f32).to_radians().cos();
+        assert!(nearest_ray_cos(vp, Vec3::new(0.0, 1.0, 0.3)) > reach);
+        assert!(nearest_ray_cos(vp, Vec3::new(1.0, -0.2, 0.2)) > reach);
+        assert!(nearest_ray_cos(vp, Vec3::new(0.0, -1.0, 0.1)) <= reach);
     }
 
     #[test]

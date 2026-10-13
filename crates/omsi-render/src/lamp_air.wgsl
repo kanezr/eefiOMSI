@@ -44,10 +44,21 @@ fn headlamp(t: vec3<f32>, dir: vec3<f32>, low: bool) -> f32 {
 // asked how much it sends that way. The fog's extinction dims the light on its way from
 // the lamp and to the camera (taken at the nearest point). A beam's light, which reaches
 // only part of the way, is summed along the ray instead, its steps staggered by `jitter`.
-// The droplets' phase function: a strong forward peak and the back-scattered light a
-// fog's lidar ratio of some 18 sr asks for (0.055 per steradian straight back) - a single
-// Henyey-Greenstein lobe of g 0.8 gave a tenth of it, and a bus's own headlights lit no
-// wall of fog in front of the driver. Two lobes, 0.9 of g 0.85 and 0.1 of g -0.5.
+// Better 2D hash for jitter (from sky.wgsl)
+fn hash2(q: vec2<f32>) -> f32 {
+    let x = bitcast<u32>(i32(floor(q.x)));
+    let y = bitcast<u32>(i32(floor(q.y)));
+    let n = x * 1664525u + y * 1013904223u + 0x9e3779b9u;
+    let m = (n ^ (n >> 16u)) * 0x7feb352du;
+    return fract(f32(m ^ (m >> 15u)) * 2.3283064e-10);
+}
+
+// Per-step jitter from base hash + frame index
+fn step_jitter(base: f32, step: u32, frame: f32) -> f32 {
+    return fract(base * (f32(step) + 1.0) * 17.0 + frame * 0.61803399);
+}
+
+// Wall of fog in front of the driver. Two lobes, 0.9 of g 0.85 and 0.1 of g -0.5.
 fn fog_phase(c: f32) -> f32 {
     return 0.9 * hg_phase(c, 0.85) + 0.1 * hg_phase(c, -0.5);
 }
@@ -119,16 +130,13 @@ fn lamp_airlight(c: vec3<f32>, d: vec3<f32>, start: f32, len: f32, jitter: f32) 
                 var half = 0.0;
                 if (l.extra.z != 0.0 || l.dir.w > -1.5) {
                     // a beam (a headlamp, a spot): lit only where its cone or cut-off lets
-                    // it - a sliver of the angles the lamp is seen under, which the five
-                    // nodes missed. Sixteen even steps over that angle instead (dphi =
-                    // h dt / r^2: the inverse square is in the step). (Sixteen even steps
-                    // along the way put the few next to the lamp, where nearly all of its
-                    // light is, a metre or more apart: the pixels' staggered steps came
-                    // out as a coarse checker in the fog round every headlamp.)
+                    // it - a sliver of the angles the lamp is seen under.
+                    // Use 16 steps with per-step jitter to eliminate banding.
                     let pa = atan((ta - t0) / hh);
                     let dphi = (atan((tb - t0) / hh) - pa) / 16.0;
                     for (var q = 0u; q < 16u; q = q + 1u) {
-                        let tq = t0 + hh * tan(pa + (f32(q) + jitter) * dphi);
+                        let sj = step_jitter(jitter, q, camera.post.y);
+                        let tq = t0 + hh * tan(pa + (f32(q) + sj) * dphi);
                         let to = l.pos.xyz - (c + d * tq);
                         let ld = to * inverseSqrt(max(dot(to, to), 1e-6));
                         var beam = 0.0;

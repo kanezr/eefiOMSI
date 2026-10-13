@@ -261,6 +261,7 @@ fn probe(
         cube_filled: false,
         cube_round: 0,
         cube_eye: None,
+        probe_eye: None,
         sched: SkySched::default(),
     }
 }

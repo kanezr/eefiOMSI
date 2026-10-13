@@ -160,6 +160,27 @@ fn a_clear_texture_is_an_invisible_cover() {
 }
 
 #[test]
+fn a_livery_tint_on_an_alpha_tested_layer_is_blended_a_cutout_is_not() {
+    // GPM C2's `741_vitres.tga`: the windows black at 140, stickers at 255, the rest clear
+    let mut vitres = vec![140u8; 64];
+    vitres[..8].fill(255);
+    vitres[8..16].fill(0);
+    assert!(texture_is_tint(&vitres));
+    // the model's own layer, black at 39 throughout: all of it under the cut, stays cut
+    assert!(!texture_is_tint(&vec![39u8; 64]));
+    // a cut-out (a fence, leaves): clear or solid, partial only along its outline
+    let mut fence = vec![0u8; 64];
+    fence[..40].fill(255);
+    fence[40..44].fill(200);
+    assert!(!texture_is_tint(&fence));
+    // a tint with much under the cut is not blended: the cut would show
+    let mut mixed = vec![140u8; 64];
+    mixed[..8].fill(60);
+    assert!(!texture_is_tint(&mixed));
+    assert!(!texture_is_tint(&[]));
+}
+
+#[test]
 fn a_transmapped_slot_is_see_through_by_its_transmap_not_its_reflection_mask() {
     // the stock Golf 2: diffuse alpha 0 (reflection mask), transmap opaque (#928, #932)
     assert_eq!(coverage_texture(Some("Golf2_main1_T.tga"), "Golf2_main1.tga"), "Golf2_main1_T.tga");
@@ -1037,18 +1058,21 @@ fn scenery_mouseevent_hit_and_trigger() {
     let miss = world.scenery_object_hit(DVec3::ZERO, -glam::Vec3::Y, 50.0, 0.0);
     assert!(miss.is_none());
 
-    // 3. Test click triggers toggle_switch: Switch was 0, becomes 1
-    assert_eq!(world.scripted.lock()[0].inst.var("Switch"), Some(0.0));
-    assert!(world.scenery_object_click(42, "toggle_switch"));
-    assert_eq!(world.scripted.lock()[0].inst.var("Switch"), Some(1.0));
+    // 3. Test click triggers toggle_switch: Switch was 0, becomes 1 (the simulation's list
+    // takes the placed object from the world's inbox first)
+    let mut scenery = omsi_sim::scenery::SceneryState::default();
+    world.scenery_sync(&mut scenery);
+    assert_eq!(scenery.objects()[0].inst.var("Switch"), Some(0.0));
+    assert!(world.scenery_object_click(&mut scenery, 42, "toggle_switch"));
+    assert_eq!(scenery.objects()[0].inst.var("Switch"), Some(1.0));
 
     // 4. Test drag triggers toggle_switch_drag with mouse_x
-    assert!(world.scenery_object_drag(42, "toggle_switch", 0.75, 0.0));
-    assert_eq!(world.scripted.lock()[0].inst.var("Switch"), Some(0.75));
+    assert!(world.scenery_object_drag(&mut scenery, 42, "toggle_switch", 0.75, 0.0));
+    assert_eq!(scenery.objects()[0].inst.var("Switch"), Some(0.75));
 
     // 5. Test release triggers toggle_switch_off
-    assert!(world.scenery_object_release(42, "toggle_switch"));
-    assert_eq!(world.scripted.lock()[0].inst.var("Switch"), Some(0.0));
+    assert!(world.scenery_object_release(&mut scenery, 42, "toggle_switch"));
+    assert_eq!(scenery.objects()[0].inst.var("Switch"), Some(0.0));
 
     let _ = std::fs::remove_dir_all(&dir);
 }

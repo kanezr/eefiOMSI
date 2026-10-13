@@ -56,7 +56,7 @@ impl PeopleSim {
         &mut self,
         dt: f32,
         world: &dyn World,
-        bus: Option<&VehicleInstance>,
+        bus: Option<&PlayerBusView>,
         traffic: Option<&TrafficSim>,
     ) -> bool {
         let mut mark = std::time::Instant::now();

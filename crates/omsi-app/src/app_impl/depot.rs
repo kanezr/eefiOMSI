@@ -3,43 +3,6 @@
 use super::*;
 
 impl App {
-    /// The running fuel pump or bus wash, one frame of it: its trigger with the frame's
-    /// time; done once the tank (the dirt) has not changed for `SERVICE_SETTLE` seconds, and
-    /// stopped by driving off. Either way the plugins hear of it (`service`).
-    pub(crate) fn tick_service(&mut self, dt: f32) {
-        const SERVICE_SETTLE: f32 = 1.5;
-        let Some(pumping) = self.session.pumping else { return };
-        let kind = pumping.kind;
-        let Some(p) = self.player.as_mut() else {
-            self.session.pumping = None;
-            return;
-        };
-        let (name, var) = if kind == "refuel" { ("veh_tank", "engine_tank_content") } else { ("veh_wash", "Dirt_Wiped") };
-        if p.vehicle.physics.velocity_kmh().abs() > 2.0 {
-            let now = p.vehicle.var(var).unwrap_or(0.0);
-            self.session.pumping = None;
-            self.service_msg = Some((if kind == "refuel" { "Refuelling stopped" } else { "Washing stopped" }.into(), 4.0));
-            self.service_event(kind, pumping.by, Some(if kind == "refuel" { now - pumping.from } else { now }));
-            return;
-        }
-        let before = p.vehicle.var(var).unwrap_or(0.0);
-        p.vehicle.service(name, dt);
-        let now = p.vehicle.var(var).unwrap_or(0.0);
-        let idle = if (now - before).abs() > 1e-4 { 0.0 } else { pumping.idle + dt };
-        if idle > SERVICE_SETTLE {
-            self.session.pumping = None;
-            let line = if kind == "refuel" { format!("refuelled: {now:.0} l in the tank") } else { format!("washed: dirt {:.0}%", now * 100.0) };
-            log::info!("{line}");
-            self.service_msg = Some((line, 6.0));
-            self.service_event(kind, pumping.by, Some(if kind == "refuel" { now - pumping.from } else { now }));
-        } else {
-            self.session.pumping = Some(Pumping { idle, ..pumping });
-            if kind == "refuel" {
-                self.service_msg = Some((format!("Refuelling: {now:.0} l"), 1.0));
-            }
-        }
-    }
-
     /// One of the depot services of the game menu: "refuel", "wash" or "repair", asked for
     /// by `by` (the `service` event's).
     pub(crate) fn run_service(&mut self, kind: &str, by: &'static str) {
@@ -76,7 +39,7 @@ impl App {
         let repaired = (kind == "repair" && msg.iter().any(|m| m.starts_with("repaired"))).then(|| ((clock.time - self.clock.time) / 60.0) as f32);
         while clock.time >= 86400.0 {
             clock.time -= 86400.0;
-            clock.day_of_year = clock.day_of_year % omsi_sim::clock::days_in_year(clock.year) + 1;
+            clock.next_day();
         }
         if !self.settings.time_sync || self.net.lan.as_ref().is_some_and(|l| l.role == omsi_net::Role::Client) {
             self.clock = clock;
@@ -108,9 +71,53 @@ impl App {
         if self.player.is_none() {
             return;
         }
-        use omsi_plugin::InfoValue::{Num, Text};
-        let mut args = vec![Text(kind.into()), Text(by.into())];
-        args.extend(amount.map(|a| Num(a as f64)));
-        crate::plugins::queue_event(&mut self.integrations.plugin_events, "service", args);
+        service_event(&mut self.integrations.plugin_events, kind, by, amount);
     }
+}
+
+impl PlayerPart<'_> {
+    /// The running fuel pump or bus wash, one frame of it: its trigger with the frame's
+    /// time; done once the tank (the dirt) has not changed for `SERVICE_SETTLE` seconds, and
+    /// stopped by driving off. Either way the plugins hear of it (`service`).
+    pub(crate) fn tick_service(&mut self, dt: f32, service_msg: &mut Option<(String, f32)>, plugin_events: &mut Vec<omsi_plugin::GameEvent>) {
+        const SERVICE_SETTLE: f32 = 1.5;
+        let Some(pumping) = *self.pumping else { return };
+        let kind = pumping.kind;
+        let Some(p) = self.player.as_mut() else {
+            *self.pumping = None;
+            return;
+        };
+        let (name, var) = if kind == "refuel" { ("veh_tank", "engine_tank_content") } else { ("veh_wash", "Dirt_Wiped") };
+        if p.vehicle.physics.velocity_kmh().abs() > 2.0 {
+            let now = p.vehicle.var(var).unwrap_or(0.0);
+            *self.pumping = None;
+            *service_msg = Some((if kind == "refuel" { "Refuelling stopped" } else { "Washing stopped" }.into(), 4.0));
+            service_event(plugin_events, kind, pumping.by, Some(if kind == "refuel" { now - pumping.from } else { now }));
+            return;
+        }
+        let before = p.vehicle.var(var).unwrap_or(0.0);
+        p.vehicle.service(name, dt);
+        let now = p.vehicle.var(var).unwrap_or(0.0);
+        let idle = if (now - before).abs() > 1e-4 { 0.0 } else { pumping.idle + dt };
+        if idle > SERVICE_SETTLE {
+            *self.pumping = None;
+            let line = if kind == "refuel" { format!("refuelled: {now:.0} l in the tank") } else { format!("washed: dirt {:.0}%", now * 100.0) };
+            log::info!("{line}");
+            *service_msg = Some((line, 6.0));
+            service_event(plugin_events, kind, pumping.by, Some(if kind == "refuel" { now - pumping.from } else { now }));
+        } else {
+            *self.pumping = Some(Pumping { idle, ..pumping });
+            if kind == "refuel" {
+                *service_msg = Some((format!("Refuelling: {now:.0} l"), 1.0));
+            }
+        }
+    }
+}
+
+/// The plugins hear of a depot service (`service`: what, asked by whom, how much).
+fn service_event(plugin_events: &mut Vec<omsi_plugin::GameEvent>, kind: &'static str, by: &'static str, amount: Option<f32>) {
+    use omsi_plugin::InfoValue::{Num, Text};
+    let mut args = vec![Text(kind.into()), Text(by.into())];
+    args.extend(amount.map(|a| Num(a as f64)));
+    crate::plugins::queue_event(plugin_events, "service", args);
 }

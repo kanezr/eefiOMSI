@@ -259,12 +259,15 @@ impl WindowWipers {
         self.films.iter().flat_map(|f| [f.material, f.snow_material])
     }
 
+    /// `rain_quality`: the rain's (see `rain::quality_of`): below high the films are drawn
+    /// half as often.
     pub fn update(
         &mut self,
         renderer: &Renderer,
         scene: &mut Scene,
         vehicle: &VehicleInstance,
         instances: &[usize],
+        rain_quality: u8,
     ) {
         if self.films.is_empty() {
             return;
@@ -408,7 +411,7 @@ impl WindowWipers {
                 }
             }
             // (painted and uploaded 30 times a second; 15 at a lower rain quality)
-            let every = if crate::rain::quality() >= 2 { 1.0 / 30.0 } else { 1.0 / 15.0 };
+            let every = if rain_quality >= 2 { 1.0 / 30.0 } else { 1.0 / 15.0 };
             film.paint_time += dt;
             if film.paint_time >= every {
                 film.paint_time %= every;

@@ -16,12 +16,14 @@ omsi-content = { path = "../omsi-content" }
 omsi-scenery = { path = "../omsi-scenery" }
 omsi-map = { path = "../omsi-map" }
 omsi-timetable = { path = "../omsi-timetable" }
+omsi-world = { path = "../omsi-world" }
 glam.workspace = true
 log.workspace = true
 anyhow.workspace = true
 hashbrown.workspace = true
 rayon.workspace = true
 parking_lot = { workspace = true }
+arc-swap.workspace = true
 
 [dev-dependencies]
 # (the tests and examples read pictures with the game's decoder, see `image_decode`)

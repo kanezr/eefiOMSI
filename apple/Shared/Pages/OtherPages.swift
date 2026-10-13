@@ -296,7 +296,7 @@ struct ControlsPage: View {
                     }
                 }
                 Card("Key bindings") {
-                    Notice(text: String(localized: "The keys of the game (OMSI's Inputs/keyboard.cfg) are set in the Cross-Platform Launcher's Controls page, which reads and writes the same file."))
+                    Notice(text: String(localized: "The keys of the game are OMSI's Inputs/keyboard.cfg: the openOMSI launcher of Windows and Linux sets them on its Controls page, which reads and writes the same file."))
                     SettingSelect(label: "Driving keys", key: "drive_keys", options: [("omsi", "Custom controls"), ("simple", "W A S D + arrows"), ("wasd", "W A S D only"), ("arrows", "Arrow keys only")])
                 }
             } right: {
@@ -554,9 +554,6 @@ struct SetupPage: View {
                         Button { store.act("reload") } label: { Label("Read the content again", systemImage: "arrow.clockwise") }.buttonStyle(.secondary)
                     }
                 }
-            }
-            Card("The game's own launcher") {
-                LauncherChoice()
             }
         }
         .onAppear { root = store.snapshot.config.root }

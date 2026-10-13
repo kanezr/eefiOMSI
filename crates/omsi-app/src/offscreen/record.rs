@@ -31,7 +31,8 @@ pub(super) struct Recorder {
 
 impl Recorder {
     /// A recorder for the run writing to `out`, when `OMSI_RECORD` asks for one.
-    pub(super) fn new(out: &Path, player: Option<&mut Player>, root: &Path) -> Option<Recorder> {
+    /// `doppler`: OMSI's `sound_doppler` setting.
+    pub(super) fn new(out: &Path, player: Option<&mut Player>, root: &Path, doppler: bool) -> Option<Recorder> {
         let fps = omsi_cfg::flags::OMSI_RECORD.parse::<f32>().filter(|f| *f > 0.0 && *f <= 60.0)?;
         let from = omsi_cfg::flags::OMSI_RECORD_FROM.parse::<f32>().unwrap_or(0.0).max(0.0);
         let stem = out.file_stem().and_then(|s| s.to_str()).unwrap_or("film").to_string();
@@ -41,6 +42,7 @@ impl Recorder {
             return None;
         }
         let audio = omsi_audio::AudioEngine::capture(RATE);
+        audio.set_doppler(doppler);
         if let Some(p) = player {
             p.load_sounds(&audio);
         }
@@ -95,7 +97,7 @@ impl Offscreen<'_> {
     /// A picture of this moment (as `--snapshots` takes it) and its camera.
     pub(super) fn picture_now(&mut self) -> Result<(Vec<u8>, Camera)> {
         if let Some(t) = self.traffic.as_mut() {
-            view_sync::sync(ViewSync::traffic(t), &mut self.sim_view, &self.world, &self.renderer, &mut self.scene);
+            view_sync::sync(ViewSync::traffic(t, &mut self.scenery), &mut self.sim_view, &self.world, &self.renderer, &mut self.scene);
         }
         let cam = self.camera_now();
         if let Some(h) = self.humans_off.as_mut() {
@@ -113,6 +115,7 @@ impl Offscreen<'_> {
         self.spray.sprites(cam.position, &mut self.scene.smoke);
         let lighting = self.lighting_now(&cam);
         self.world.finish_texture_upgrades(&self.renderer, &mut self.scene);
+        crate::view_sync::digest::log_scene_digest(&self.scene, Some(&self.sim_view), "snapshot");
         let pixels = self.renderer.render_to_image(&mut self.scene, self.w, self.h, &cam, &lighting)?;
         Ok((pixels, cam))
     }
@@ -145,7 +148,7 @@ impl Offscreen<'_> {
         }
         let street = crate::weather_setup::street_condition(&self.weather, self.wetness);
         if let Some(t) = self.traffic.as_mut() {
-            t.update_audio(a, cam.position, street, inside, None);
+            t.update_audio(a, cam.position, street, inside, None, self.settings.vol_ai);
         }
         let daylight = omsi_sim::Daylight::compute(&self.run_clock, self.envir.as_ref());
         let people = self.humans_off.as_ref().map(|h| h.people.iter().filter(|p| (p.position - cam.position).length() < 40.0).count() as u32).unwrap_or(0);
@@ -186,7 +189,7 @@ impl Offscreen<'_> {
                 rec.samples.push((x * 32767.0).round().clamp(-32768.0, 32767.0) as i16);
             }
         }
-        if i.is_multiple_of(30) {
+        if i.is_multiple_of(super::steps_in(1.0)) {
             log::info!("record: {:.1} s", t_s);
         }
         // the pictures: one each 1/fps second of film

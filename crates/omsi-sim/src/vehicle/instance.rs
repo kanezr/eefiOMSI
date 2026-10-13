@@ -286,7 +286,7 @@ impl VehicleInstance {
             cabin_air: None,
             ai_visuals: true,
             ai_visuals_missed: 0.0,
-            var_index,
+            var_index: std::sync::Arc::new(var_index),
             props_plan: PropsPlan::default(),
             pax_vars: std::sync::OnceLock::new(),
             engine_ids: std::sync::OnceLock::new(),

@@ -615,6 +615,7 @@ impl Renderer {
             texture_aspect: None,
             last_frame: None,
             instant_exposure: false,
+            depth_readback: false,
             overlay_pipeline_1x,
             xr_ui_pipeline,
             // (OMSI_RENDER_CLOCK=<s>: the animations' clock starts that far on - offscreen
@@ -653,6 +654,7 @@ impl Renderer {
             gpu_timers,
             stats: Default::default(),
             counts: Default::default(),
+            frame_draws: (0, 0),
             profiling: omsi_cfg::flags::OMSI_PROFILE.is_set(),
             draw_audit_at: std::time::Instant::now(),
             encoding_pool: if omsi_cfg::flags::OMSI_NO_RENDER_POOL.is_set() {

@@ -39,9 +39,27 @@ impl VehicleInstance {
             .map(|i| self.state.vars[i as usize])
     }
 
+    /// The variables' names (lower case) and slots in `state.vars`, shared (the view reads a
+    /// copy of the values by them: `crate::view_events::CarLooks`).
+    pub fn var_index(&self) -> &std::sync::Arc<HashMap<String, omsi_script::VarId>> {
+        &self.var_index
+    }
+
     /// Whether variable `name` was declared in the vehicle's script set (as opposed to built-in host variables).
     pub fn has_script_var(&self, name: &str) -> bool {
         self.ty.program.has_script_var(name)
+    }
+
+    /// The door release to fire now: the bus's own, the C2's switch turned over, else `bus_dooraft`.
+    pub fn door_release_trigger(&self) -> Option<&'static str> {
+        let p = &self.ty.program;
+        if let Some(t) = ["bus_doorall", "CG_active", "C2_CP_doorall_1"].into_iter().find(|t| p.trigger(t).is_some()) {
+            return Some(t);
+        }
+        if p.trigger("C2_CP_Tuerfreigabe_1").is_some() && p.trigger("C2_CP_Tuerfreigabe_0").is_some() {
+            return Some(if self.var("C2_CP_Tuerfreigabe").is_some_and(|x| x > 0.5) { "C2_CP_Tuerfreigabe_0" } else { "C2_CP_Tuerfreigabe_1" });
+        }
+        p.trigger("bus_dooraft").is_some().then_some("bus_dooraft")
     }
 
     /// The name of script variable `index` (lower case), for diagnostics and key helpers.
@@ -69,7 +87,7 @@ impl VehicleInstance {
         if !self.set_var(name, v) {
             let id = self.state.vars.len() as omsi_script::VarId;
             self.state.vars.push(v);
-            self.var_index.insert(name.to_ascii_lowercase(), id);
+            std::sync::Arc::make_mut(&mut self.var_index).insert(name.to_ascii_lowercase(), id);
             self.pax_vars = std::sync::OnceLock::new();
             self.engine_ids = std::sync::OnceLock::new();
         }

@@ -41,7 +41,7 @@ pub(super) fn lever_knob(positions: &[Vec3], pivot: Option<Vec3>) -> Option<(Vec
 /// nearest winning. `OMSI_DRIVER_SHIFTER=<part of a variable or file name>` forces the pick.
 /// The hand that works it is the one on the lever's side of the seat (the lever stands right
 /// of a left-hand-drive driver and left of a right-hand-drive one).
-pub(super) fn find_shifter(v: &VehicleInstance, hip: Vec3, heading: f32) -> Option<Shifter> {
+pub(super) fn find_shifter(v: &impl DriverCar, hip: Vec3, heading: f32) -> Option<Shifter> {
     const STRONG: &[&str] = &[
         "gearlever",
         "gear_lever",
@@ -87,7 +87,7 @@ pub(super) fn find_shifter(v: &VehicleInstance, hip: Vec3, heading: f32) -> Opti
         }
     };
     let positions_of = |i: usize| -> Vec<Vec3> {
-        let vm = &v.ty.meshes[i];
+        let vm = &v.ty().meshes[i];
         let have: &[Vec3] = &vm.data.positions;
         if have.len() >= 12 {
             have.to_vec()
@@ -100,8 +100,8 @@ pub(super) fn find_shifter(v: &VehicleInstance, hip: Vec3, heading: f32) -> Opti
     };
     let shoulder = hip + Vec3::Z * 0.5;
     let mut best: Option<(f32, usize, Vec<String>, Vec3, Vec3)> = None;
-    for (i, vm) in v.ty.meshes.iter().enumerate() {
-        let def = &v.ty.model.meshes[vm.def_index];
+    for (i, vm) in v.ty().meshes.iter().enumerate() {
+        let def = &v.ty().model.meshes[vm.def_index];
         let mut grade_of_mesh = 0u8;
         let mut pivot: Option<Vec3> = None;
         let mut vars: Vec<String> = Vec::new();
@@ -166,10 +166,10 @@ pub(super) fn find_shifter(v: &VehicleInstance, hip: Vec3, heading: f32) -> Opti
 /// The steering wheel: the mesh turned by `Axle_Steering_*` with the largest factor (a
 /// road wheel turns by the steering angle itself, a steering wheel by 15-20 times it) that
 /// lies within arm's reach of the seat.
-pub(super) fn find_wheel(v: &VehicleInstance, hip: Vec3) -> Option<Wheel> {
+pub(super) fn find_wheel(v: &impl DriverCar, hip: Vec3) -> Option<Wheel> {
     let mut best: Option<(f32, usize, Mat4, String, f32)> = None;
-    for (i, vm) in v.ty.meshes.iter().enumerate() {
-        let def = &v.ty.model.meshes[vm.def_index];
+    for (i, vm) in v.ty().meshes.iter().enumerate() {
+        let def = &v.ty().model.meshes[vm.def_index];
         for a in &def.animations {
             if !a.variable.to_ascii_lowercase().starts_with("axle_steering")
                 || a.factor.abs() < 200.0
@@ -210,7 +210,7 @@ pub(super) fn find_wheel(v: &VehicleInstance, hip: Vec3) -> Option<Wheel> {
     // nearer; a few stray vertices are left out). An AI copy of a bus keeps no vertices on
     // the CPU: its wheel is read from the file (a guessed size left the AI drivers' hands
     // floating over the rim).
-    let vm = &v.ty.meshes[mesh];
+    let vm = &v.ty().meshes[mesh];
     let loaded;
     let positions: &[Vec3] = if vm.data.positions.len() >= 12 {
         &vm.data.positions

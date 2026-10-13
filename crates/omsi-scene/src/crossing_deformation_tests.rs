@@ -256,7 +256,7 @@ fn ai_lane_heights_are_independent_of_visual_vertex_coverage() {
                 covered_vertices && field_sign != 0.0
             );
 
-            let lanes = world.lanes.lock();
+            let lanes = world.traffic_inbox.peek(omsi_sim::world_data::TrafficArrivals::lanes_of);
             assert_eq!(lanes.len(), 1, "the map's artificial [path] is placed");
             let lane = &lanes[0];
             assert_eq!(lane.points.len(), 6);

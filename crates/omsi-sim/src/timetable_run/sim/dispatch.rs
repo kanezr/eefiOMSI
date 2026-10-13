@@ -297,7 +297,6 @@ impl ScheduleSim {
                                 .fold((f64::MAX, 0), |a, b| if b.0 < a.0 { b } else { a });
                             log::info!("layover stand {first} at ({:.0}, {:.0}): shared {v}, nearest served station {} at {:.0} m", here.x, here.y, nearest.1, nearest.0);
                         }
-                        drop(positions);
                         self.shared_stand.insert(first, v);
                         v
                     }

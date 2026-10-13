@@ -54,7 +54,7 @@ fn check_obstacles(world: &World, traffic: Option<&traffic::Traffic>) {
     // obstacle boxes it runs into - the "invisible walls" a player meets on an open road
     if omsi_cfg::flags::OMSI_CHECK_OBSTACLES.is_set() {
         if let Some(t) = traffic.as_ref() {
-            let boxes = world.collision.lock().clone();
+            let boxes = world.data.peek().lists.collision.clone();
             // (parked cars stand beside the lanes by design; the traffic steers round them)
             let parked: std::collections::HashSet<i64> = world.tile_state.lock().values().flat_map(|st| st.parked_boxes.iter().map(|b| b.id).collect::<Vec<_>>()).collect();
             let mut hits: std::collections::BTreeMap<i64, (omsi_sim::collision::Obb, usize, DVec3)> = Default::default();
@@ -131,9 +131,9 @@ fn check_wheels(world: &World, traffic: Option<&traffic::Traffic>) {
                         points += 1;
                         // (from the ground under the wheel, as the tyre probes: 0.8 of a
                         // half-metre radius over it)
-                        let g = crate::scene::drive_probe(&world.terrains, &world.surfaces, w.x, w.y, p.z + 0.4);
+                        let g = world.data.peek().drive_probe(w.x, w.y, p.z + 0.4);
                         let g = match g.below {
-                            Some(b) => crate::scene::drive_probe(&world.terrains, &world.surfaces, w.x, w.y, b + 0.4),
+                            Some(b) => world.data.peek().drive_probe(w.x, w.y, b + 0.4),
                             None => g,
                         };
                         let on_lane = g.below.is_some_and(|b| (b - p.z).abs() <= 0.3);
@@ -213,8 +213,10 @@ fn check_roads(world: &World, traffic: Option<&traffic::Traffic>) {
                     let lx = (p.x - tx as f64 * omsi_map::tile_size()) as f32;
                     let ly = (p.y - ty as f64 * omsi_map::tile_size()) as f32;
                     let road = world
+                        .data
+                        .peek()
+                        .ground
                         .surfaces
-                        .read()
                         .get(&(tx, ty))
                         .and_then(|su| su.sample_road(lx, ly).or_else(|| su.sample(lx, ly)))
                         .map(|h| h as f64);
@@ -308,8 +310,10 @@ fn buried_roads(world: &World, t: &traffic::Traffic) {
             };
             // ground that is cut away under the road is not in the way
             if world
+                .data
+                .peek()
+                .ground
                 .surfaces
-                .read()
                 .get(&(tx, ty))
                 .map(|su| su.cut_at(lx, ly, ground as f32, 0.12))
                 .unwrap_or(false)
@@ -365,7 +369,7 @@ fn wheel_faces(world: &World, t: &traffic::Traffic) {
     // (a lane's own height is not always its road's: on some ramps it runs a metre
     // below the surface)
     let surface = |p: DVec3| {
-        scene::drive_probe(&world.terrains, &world.surfaces, p.x, p.y, p.z + 1.5).below
+        world.data.peek().drive_probe(p.x, p.y, p.z + 1.5).below
     };
     for l in t
         .net
@@ -384,9 +388,7 @@ fn wheel_faces(world: &World, t: &traffic::Traffic) {
                 continue;
             };
             rolled += 1;
-            let wheel = scene::drive_probe(
-                &world.terrains,
-                &world.surfaces,
+            let wheel = world.data.peek().drive_probe(
                 p.x,
                 p.y,
                 g + climb,
@@ -464,13 +466,13 @@ fn probe_grid(world: &World) {
         let v: Vec<f64> = spec.split(',').filter_map(|t| t.trim().parse().ok()).collect();
         if v.len() >= 4 {
             let (cx, cy, half, step) = (v[0], v[1], v[2], v[3].max(0.001));
-            let mid = scene::drive_probe(&world.terrains, &world.surfaces, cx, cy, 1e6).below.unwrap_or(0.0);
+            let mid = world.data.peek().drive_probe(cx, cy, 1e6).below.unwrap_or(0.0);
             let n = (half / step).round() as i64;
             for j in (-n..=n).rev() {
                 let row: String = (-n..=n)
                     .map(|i| {
                         let (x, y) = (cx + i as f64 * step, cy + j as f64 * step);
-                        match scene::drive_probe(&world.terrains, &world.surfaces, x, y, mid + 1.0).below {
+                        match world.data.peek().drive_probe(x, y, mid + 1.0).below {
                             Some(z) if z < mid - 0.05 => '#',
                             Some(z) if (z - mid).abs() <= 0.02 => '.',
                             Some(_) => '+',
@@ -502,17 +504,21 @@ fn probe_line(world: &World) {
                 let lx = (x - tx as f64 * omsi_map::tile_size()) as f32;
                 let ly = (y - ty as f64 * omsi_map::tile_size()) as f32;
                 let terrain = world
+                    .data
+                    .peek()
+                    .ground
                     .terrains
-                    .read()
                     .get(&(tx, ty))
                     .map(|t| t.sample(lx, ly));
                 let surface = world
+                    .data
+                    .peek()
+                    .ground
                     .surfaces
-                    .read()
                     .get(&(tx, ty))
                     .and_then(|s| s.sample(lx, ly));
                 let top = terrain.map(|t| t as f64 + 30.0).unwrap_or(1e6);
-                let wheel = scene::drive_probe(&world.terrains, &world.surfaces, x, y, top);
+                let wheel = world.data.peek().drive_probe(x, y, top);
                 log::info!("probe ({x:.1}, {y:.1}) tile ({tx}, {ty}) local ({lx:.1}, {ly:.1}): terrain {terrain:?} surface {surface:?} wheels {:?}", wheel.below);
             }
         }

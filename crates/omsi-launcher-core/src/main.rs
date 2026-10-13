@@ -1,6 +1,6 @@
 //! `openomsi-launcher`: the launcher's commands for a terminal (`--cli <command> [json]`), and
-//! otherwise the launcher window - which is the game binary beside this one, started with
-//! `--launcher` (the window draws the bus with the game's own renderer).
+//! otherwise the game binary beside this one with the same arguments (a plain start of it
+//! opens the desktop launcher, `openomsi-launcher-app`).
 
 fn main() {
     omsi_cfg::migrate_legacy_data_dir();
@@ -23,7 +23,7 @@ fn main() {
     } else {
         std::path::PathBuf::from(game)
     };
-    match std::process::Command::new(&game).arg("--launcher").args(&args[1..]).status() {
+    match std::process::Command::new(&game).args(&args[1..]).status() {
         Ok(s) => std::process::exit(s.code().unwrap_or(0)),
         Err(e) => {
             eprintln!("starting {}: {e}", game.display());

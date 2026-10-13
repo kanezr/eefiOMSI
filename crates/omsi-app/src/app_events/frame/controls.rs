@@ -67,6 +67,12 @@ impl App {
         if let Some(n) = ctl.notice.take() {
             self.service_msg = Some((n, 8.0));
         }
+        // a device set up by itself: kept for the next start and the launcher's page
+        if let Some(cfg) = ctl.auto_saved.take() {
+            if let Err(e) = crate::controllers::save_cfg(&cfg) {
+                log::warn!("game controllers: the automatic set-up could not be saved: {e}");
+            }
+        }
         // the bus's force feedback (OMSI's FF_Vib_Amp, and on a wheel its forces)
         // (in every view of the bus - the wheel went slack outside and in the
         // passenger view)
@@ -148,7 +154,7 @@ impl App {
         let bus_view = self.mouse_steers_in_view();
         // (the plugins' panels having the mouse hold the wheel and the pedals as
         // looking round does: the cursor goes to their buttons)
-        let panels_mouse = self.plugin_focus() || self.game_panels_mouse();
+        let panels_mouse = self.integrations.plugin_focus() || self.game_panels_mouse();
         // (the cursor locked while a mouse button looks round, held while the mouse steers,
         // let go when it is wanted: mouse_grab.rs)
         self.sync_look_hold();

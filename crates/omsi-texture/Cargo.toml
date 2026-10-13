@@ -8,6 +8,8 @@ description = "Texture loading (bmp/tga/dds/jpg/png) with OMSI's lookup rules an
 [dependencies]
 omsi-cfg = { path = "../omsi-cfg" }
 image.workspace = true
+# the block formats of newer tools (BC4-BC7) and of phones (ETC, ASTC) in DDS and KTX files
+texture2ddecoder = "0.1"
 thiserror.workspace = true
 log.workspace = true
 parking_lot.workspace = true

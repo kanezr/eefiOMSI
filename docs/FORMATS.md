@@ -844,7 +844,11 @@ Regional = https://example.org/regional.mp3 | 97.9
 ## Script textures and the IBIS callbacks
 
 `[scripttexture] w h` (model.cfg) declares an RGBA image per index; `[useScriptTexture] n`
-puts it on a material, `[matl_transmap] \S:n` uses its alpha as transparency map. The
+puts it on a material, `[matl_transmap] \S:n` uses its alpha as transparency map.
+`[htmltexture] w h file` declares a page the engine draws (see `HTMLTEXTURE.md`); `lit` on
+the line after the page's path makes it a **surface** - shaded by the world's light as every
+other material is - where a page is a display, drawn unlit at its own brightness, by default.
+An openOMSI extension; Omsi.exe draws such a slot unlit either way. The
 scripts draw with `(M.V.ST…)` callbacks, arguments pushed in order (index first):
 `STNewTex(i)`, `STLock(i)`, `STUnlock(i)` (upload), `STFilter(i)`, `STSetColor(i, a, r, g, b)`,
 `STDrawPixel(i, x, y)`, `STDrawRect(i, x1, y1, x2, y2)`, `STTextOut(i, x, y, font, mode,

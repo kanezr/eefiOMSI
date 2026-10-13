@@ -95,27 +95,34 @@ impl World {
                     .collect::<Vec<_>>()
             );
         }
+        let data = Arc::new(omsi_sim::world_data::WorldCell::new(omsi_sim::world_data::WorldData {
+            map: Arc::new(omsi_sim::world_data::MapFacts {
+                root: root.to_path_buf(),
+                map_dir: map_dir.clone(),
+                raw_tiles: global.raw_tiles.clone(),
+                tiles: global.tiles.iter().map(|t| ((t.x, t.y), t.file.clone())).collect(),
+                ailists,
+                date,
+                chrono_dirs,
+            }),
+            ..Default::default()
+        }));
         Ok(World {
             root: root.to_path_buf(),
             global,
             map_dir,
             parklist: Mutex::new(HashMap::new()),
+            settings: Default::default(),
             mirror_textures: Mutex::new(Vec::new()),
             mirror_aspect: Mutex::new(Vec::new()),
             mirror_glass: Mutex::new(Vec::new()),
-            chrono_dirs: parking_lot::RwLock::new(chrono_dirs),
-            ailists,
-            date,
             ticket_pack,
             object_types: Mutex::new(HashMap::new()),
             spline_types: Mutex::new(HashMap::new()),
             object_type_loads: Default::default(),
             spline_type_loads: Default::default(),
             textures: Arc::new(TextureCache::new()),
-            object_positions: Mutex::new(HashMap::new()),
-            object_dups: Mutex::new(HashMap::new()),
-            terrains: Arc::new(RwLock::new(HashMap::new())),
-            surfaces: Arc::new(RwLock::new(HashMap::new())),
+            data,
             vehicle_gpu: Mutex::new(HashMap::new()),
             vehicle_textures: Default::default(),
             vehicle_meshes: Default::default(),
@@ -126,13 +133,10 @@ impl World {
             freetex_upgrades: Default::default(),
             texture_limit: Default::default(),
             budget_checked: Default::default(),
-            lanes: Mutex::new(Vec::new()),
-            lane_tiles: Mutex::new(Vec::new()),
-            traffic_lights: Mutex::new(Vec::new()),
+            traffic_inbox: Default::default(),
             controller_of_object: Mutex::new(HashMap::new()),
             light_objects: Mutex::new(Vec::new()),
-            scripted: Mutex::new(Vec::new()),
-            collision: Mutex::new(Default::default()),
+            scripted: Mutex::new(ScriptedSet::default()),
             poles: Mutex::new(HashMap::new()),
             fallen_poles: Mutex::new(HashMap::new()),
             parked_objects: Mutex::new(HashMap::new()),
@@ -145,14 +149,8 @@ impl World {
             edit_objects: Mutex::new(HashMap::new()),
             object_edits: Mutex::new(HashMap::new()),
             terrain_edits: Mutex::new(HashMap::new()),
-            bus_stops: Mutex::new(Vec::new()),
-            waiting_places: Mutex::new(Vec::new()),
             waiting_cabins: Mutex::new(HashMap::new()),
             tiles_generation: std::sync::atomic::AtomicU64::new(0),
-            parked_cars: Mutex::new(Vec::new()),
-            parked_boxes: Mutex::new(Arc::new(Vec::new())),
-            petrol_stations: Mutex::new(Vec::new()),
-            reverb_zones: Mutex::new(Vec::new()),
             light_maps: Mutex::new(HashMap::new()),
             light_maps_generation: std::sync::atomic::AtomicU64::new(0),
             light_map_atlas: Mutex::new(None),
@@ -536,7 +534,7 @@ impl World {
     /// all their traffic paths on invisible splines).
     pub fn navigation_map(&self) -> NavigationMap {
         let tiles: Vec<(i32, i32, PathBuf)> = self.map_tiles().into_iter().map(|(_, x, y, p)| (x, y, p)).collect();
-        navigation_map_of(&self.root, &tiles, &self.chrono_dirs.read())
+        navigation_map_of(&self.root, &tiles, &self.chrono_dirs())
     }
 }
 

@@ -288,25 +288,7 @@ pub(super) fn heightprofile_ground() -> bool {
     *ON.get_or_init(|| omsi_cfg::flags::OMSI_HEIGHTPROFILE_GROUND.is_set())
 }
 
-pub(super) fn surface_flush() -> f32 {
-    // (global: an environment setting read once per process; also asked by `drawn_ground`
-    // and the drive probe, which run without a `World`)
-    static V: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        omsi_cfg::flags::OMSI_SURFACE_FLUSH.parse()
-            .unwrap_or(0.12)
-    })
-}
-
-/// Whether this session's weather lies as snow (`[snow]` in the `.owt`), set by the app
-/// when it reads the weather and asked while the vehicles go onto the GPU.
-/// (Global: `weather_setup` and `input_script` set it, before and apart from any `World`;
-/// every session sets it again when it reads its weather.)
-pub static SNOW_WEATHER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-pub(super) fn snowing() -> bool {
-    SNOW_WEATHER.load(std::sync::atomic::Ordering::Relaxed)
-}
+pub(super) use omsi_sim::world_data::surface_flush;
 
 /// Whether a texture name resolves to the season's own copy of it (`texture\WinterSnow\…`,
 /// or a folder the season falls back to):

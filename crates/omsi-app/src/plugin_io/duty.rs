@@ -136,19 +136,20 @@ pub(crate) fn tiles(app: &App) -> Vec<op::Tile> {
 
 pub(crate) fn stops(app: &App) -> Vec<op::MapStop> {
     let Some(w) = app.world.as_ref() else { return Vec::new() };
-    let list = w.bus_stops.lock().clone();
+    let list = w.data.peek().lists.bus_stops.clone();
     list.into_iter().map(|(id, p, h, name)| op::MapStop { id, name, pos: [p.x, p.y, p.z, h] }).collect()
 }
 
 pub(crate) fn object(app: &App, id: i64) -> Option<[f64; 4]> {
     let w = app.world.as_ref()?;
-    let (p, r) = *w.object_positions.lock().get(&id)?;
+    let (p, r) = *w.data.peek().objects.get(&id)?;
     Some([p.x, p.y, p.z, r[0]])
 }
 
 pub(crate) fn objects_near(app: &App, x: f64, y: f64, r: f64) -> Vec<(i64, [f64; 4])> {
     let Some(w) = app.world.as_ref() else { return Vec::new() };
-    let all = w.object_positions.lock();
+    let data = w.data.peek();
+    let all = &data.objects;
     all.iter().filter(|(_, (p, _))| (p.x - x).hypot(p.y - y) <= r).map(|(id, (p, rot))| (*id, [p.x, p.y, p.z, rot[0]])).collect()
 }
 

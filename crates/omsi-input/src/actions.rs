@@ -28,6 +28,11 @@ pub fn door_action(name: &str) -> Option<usize> {
     n.strip_prefix("door_").and_then(|d| d.parse::<usize>().ok()).filter(|d| (1..=9).contains(d))
 }
 
+/// The door release on any bus, `doors_release` (see `Player::door_release`).
+pub fn is_door_release(name: &str) -> bool {
+    name.eq_ignore_ascii_case("doors_release")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

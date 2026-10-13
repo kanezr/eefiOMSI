@@ -10,8 +10,8 @@ import { Icon } from '../icons.js';
 import { Spinner, Toggle, Slider } from '../ui.js';
 import { BusPreview } from '../preview.js';
 import { RouteMap } from '../routemap.js';
-import { choose, curMap, curBus, curLine, curTour, pickedTrip, realTime, realDate, start } from '../data.js';
-import { hms, mapPicture, tripAt, depotRun, pickTrip, setSeason, SEASONS, PHASES } from '../pages/drive.js';
+import { choose, curMap, curBus, curLine, curTour, pickedTrip, realTime, realDate, start, weatherName, weatherOfItsOwn, askJoined, noServerBus, mapName, serverBuses, busFile } from '../data.js';
+import { hms, mapPicture, tripAt, depotRun, pickTrip, lineMatches, findTours, chooseLine, chooseTour, setSeason, localNow, SEASONS, PHASES } from '../pages/drive.js';
 import { MultiplayerPage } from '../pages/multiplayer.js';
 import { ProfilePage } from '../pages/profile.js';
 import { ModsPage } from '../pages/mods.js';
@@ -68,7 +68,12 @@ function MobileDrive() {
   const [sheet, setSheet] = useState(null);
   const [busy, setBusy] = useState(false);
   const c = s.choice;
+  useEffect(() => {
+    askJoined();
+  }, [c?.lan_mode, c?.lan_addr]);
   if (!c) return null;
+  const joined = c.lan_mode === 'join';
+  const srv = c.lan_server || {};
   const m = curMap();
   const v = curBus();
   const line = curLine();
@@ -76,35 +81,42 @@ function MobileDrive() {
   const trips = tour?.trips || [];
   const picked = pickedTrip();
   const trip = c.free ? null : picked != null ? trips.find((x) => x.index === picked) : trips[tripAt(tour || { trips: [] }, c.time * 60)];
-  const ready = m && v && (c.free || (line && tour));
-  const weather = s.weather?.find((x) => x.file === c.weather);
+  const ready = m && v && (c.free || (line && tour)) && !noServerBus();
+  const mapLabel = joined && c.lan_map ? mapName(c.lan_map.replace(/\\/g, '/')) : m ? m.friendly || m.name : '-';
   const go = async (extra) => {
     setBusy(true);
     await start(extra);
     setBusy(false);
   };
-  const row = (id, icon, label, value, sub) => html`<button class="m-row" onClick=${() => setSheet(id)}>
+  const row = (id, icon, label, value, sub, locked) => html`<button class="m-row" disabled=${locked} onClick=${() => !locked && setSheet(id)}>
     <span class="m-row-icon"><${Icon} name=${icon} /></span>
     <span class="m-row-label">${t(label)}${sub && html`<small>${sub}</small>`}</span>
-    <span class="m-row-value">${value}</span><${Icon} name="right" />
+    <span class="m-row-value">${value}</span>${!locked && html`<${Icon} name="right" />`}
   </button>`;
   return html`<div class="m-drive">
     <section class="m-stage">
       ${v ? html`<${BusPreview} class="m-preview" look=${{ bus: v.file, paint: c.paint, map: c.map, weather: c.weather, time: c.time, date: c.date }} />` : html`<div class="viewer m-preview"><div class="state"><${Spinner} /></div></div>`}
       <div class="m-chips">
-        <button class="m-chip" onClick=${() => setSheet('map')}><${Icon} name="map" size=${16} />${m ? m.friendly || m.name : '-'}</button>
-        <button class="m-chip" onClick=${() => setSheet('time')}><${Icon} name="clock" size=${16} />${hhmm(c.time)}</button>
+        <button class="m-chip" disabled=${joined} onClick=${() => setSheet('map')}><${Icon} name="map" size=${16} />${mapLabel}</button>
+        <button class="m-chip" disabled=${joined} onClick=${() => setSheet('time')}><${Icon} name="clock" size=${16} />${joined ? srv.time || '-' : hhmm(c.time)}</button>
       </div>
       <div class="m-go">
         ${trip && !depotRun(trip) ? html`<div class="sign"><span class="no">${trip.line}</span><span class="to">${trip.terminus}</span></div>` : c.free && html`<div class="sign"><span class="no"><${Icon} name="route" /></span><span class="to">${t('Free drive')}</span></div>`}
         <button class="m-start" disabled=${!ready || busy} onClick=${() => go()}>
-          <${Icon} name="play" size=${24} />${busy ? t('Starting…') : c.free ? t('Start driving') : t('Start the duty')}
+          <${Icon} name="play" size=${24} />${busy ? t('Starting…') : joined ? t('Join and drive') : c.free ? t('Start driving') : t('Start the duty')}
         </button>
       </div>
     </section>
     <section class="m-list">
+      ${joined && html`<div class="m-group">
+        <button class="m-row" onClick=${() => choose({ lan_mode: 'off' })}>
+          <span class="m-row-icon"><${Icon} name="users" /></span>
+          <span class="m-row-label">${t('Joining {server}', { server: srv.name || c.lan_addr })}${noServerBus() && html`<small>${t('The server offers none of the vehicles installed here')}</small>`}</span>
+          <span class="m-row-value">${t('Leave the server')}</span>
+        </button>
+      </div>`}
       <div class="m-group">
-        ${row('map', 'map', 'Map', m ? m.friendly || m.name : '-')}
+        ${row('map', 'map', 'Map', mapLabel, joined ? t('Set by {server}', { server: srv.name || c.lan_addr }) : null, joined)}
         ${row('bus', 'bus', 'Bus', v ? v.name : s.vehicles || !s.boot?.root ? '-' : html`<${Spinner} />`)}
         ${v && row('paint', 'sun', 'Paint', c.paint || v.default_paint || t('Standard'))}
       </div>
@@ -119,8 +131,8 @@ function MobileDrive() {
         ${row('entry', 'person', 'Start at', c.entry < 0 ? t('Automatic') : m?.entry_points[c.entry]?.name || '-')}
       </div>
       <div class="m-group">
-        ${row('time', 'clock', 'Time and date', `${hhmm(c.time)} - ${c.date}`, rt(c))}
-        ${row('weather', 'cloud', 'Weather', weather?.name || t('Natural weather'))}
+        ${row('time', 'clock', 'Time and date', joined ? srv.time || '-' : `${hhmm(c.time)} - ${c.date}`, joined ? t("(the server's clock)") : rt(c), joined)}
+        ${row('weather', 'cloud', 'Weather', joined ? srv.weather || t("the map's (the server's)") : weatherName(c.weather, s.weather), null, joined)}
       </div>
       <div class="m-group m-pad">
         <${Slider} label="Cars around" value=${c.traffic} min=${0} max=${120} step=${1} onChange=${(traffic) => choose({ traffic })} format=${(x) => (x ? String(Math.round(x)) : t('None'))} />
@@ -129,7 +141,7 @@ function MobileDrive() {
         <${Toggle} checked=${c.autostart} onChange=${(autostart) => choose({ autostart })} label="Bus ready to go" />
         <${Toggle} checked=${c.on_foot} onChange=${(on_foot) => choose({ on_foot })} label="Start on foot" />
       </div>
-      ${s.situations?.length > 0 && html`<div class="m-group">
+      ${!joined && s.situations?.length > 0 && html`<div class="m-group">
         ${s.situations.slice(0, 3).map((x) => html`<button class="m-row" onClick=${() => !busy && go({ situation: x.file })}>
           <span class="m-row-icon"><${Icon} name="history" /></span><span class="m-row-label">${t(x.name)}</span><${Icon} name="play" />
         </button>`)}
@@ -176,7 +188,8 @@ function MapSheet({ close }) {
 function BusSheet({ close }) {
   const s = useStore();
   const [q, setQ] = useState('');
-  const list = (s.vehicles || []).filter((v) => !q || `${v.name} ${v.manufacturer}`.toLowerCase().includes(q.toLowerCase())).sort((a, b) => (a.manufacturer || '').localeCompare(b.manufacturer || '') || a.name.localeCompare(b.name));
+  const allowed = serverBuses(s.choice);
+  const list = (s.vehicles || []).filter((v) => !allowed || allowed.has(busFile(v.file))).filter((v) => !q || `${v.name} ${v.manufacturer}`.toLowerCase().includes(q.toLowerCase())).sort((a, b) => (a.manufacturer || '').localeCompare(b.manufacturer || '') || a.name.localeCompare(b.name));
   return html`<div>
     <input class="m-search" value=${q} placeholder=${t('Search buses')} onInput=${(e) => setQ(e.currentTarget.value)} />
     ${list.map((v) => pick(v.file === s.choice.bus, () => (choose({ bus: v.file, paint: '', number: '', hof_manual: false }), close()), html`<span class="m-pick-text"><b>${v.name}</b><small>${[v.manufacturer, v.paints.length ? t('{n} paints', { n: v.paints.length + 1 }) : null].filter(Boolean).join(' - ')}</small></span>`))}
@@ -192,24 +205,34 @@ function PaintSheet({ close }) {
 
 function LineSheet({ close }) {
   const s = useStore();
-  const lines = (s.lines.list || []).filter((l) => l.user_allowed && l.tours.length);
-  return html`<div>${lines.map((l) => pick(l.name === s.choice.line, () => {
-    const tr = l.tours.find((x) => x.runs) || l.tours[0];
-    choose({ line: l.name, tour: tr?.number ?? null, start_trip: null });
-    close();
-  }, html`<span class="line-badge">${l.name}</span><span class="m-pick-text"><b>${l.termini.join(' - ')}</b><small>${t('{n} tours', { n: l.tours.length })}</small></span>`))}</div>`;
+  const [q, setQ] = useState('');
+  const lines = (s.lines.list || []).filter((l) => l.user_allowed && l.tours.length && lineMatches(l, q.trim().toLowerCase()));
+  return html`<div>
+    <input class="m-search" value=${q} placeholder=${t('Filter lines...')} onInput=${(e) => setQ(e.currentTarget.value)} />
+    ${lines.length === 0 && html`<p class="muted small" style="padding:8px">${t('No line matches.')}</p>`}
+    ${lines.map((l) => pick(l.name === s.choice.line, () => (chooseLine(l), close()), html`<span class="line-badge">${l.name}</span><span class="m-pick-text"><b>${l.termini.join(' - ')}</b><small>${t('{n} tours', { n: l.tours.length })}</small></span>`))}
+  </div>`;
 }
 
 function TourSheet({ close }) {
   const s = useStore();
+  const [q, setQ] = useState('');
+  const [showEnded, setShowEnded] = useState(false);
   const line = curLine();
   if (!line) return null;
-  return html`<div>${line.tours.map((x) => pick(x.number === s.choice.tour, () => {
-    const patch = { tour: x.number, start_trip: null };
-    if (!x.runs && x.next_run && !realDate()) patch.date = x.next_run;
-    choose(patch);
-    close();
-  }, html`<span class="m-pick-text"><b>${t('Tour')} ${x.number}</b><small>${x.days} - ${x.trips.length} ${t('trips')}${x.trips.length ? ` - ${hms(x.first)}-${hms(x.last)}` : ''}${!x.runs ? ` - ${t('not on this day')}` : ''}</small></span>`, x.runs ? '' : ' dim'))}</div>`;
+  const tq = q.trim().toLowerCase();
+  const { shown, endedCount } = findTours(line, s.choice.time * 60, tq, showEnded, s.choice.tour);
+  return html`<div>
+    <input class="m-search" value=${q} placeholder=${t('Filter tours: number, route, stop...')} onInput=${(e) => setQ(e.currentTarget.value)} />
+    ${endedCount > 0 && html`<div style="padding:4px 4px 10px"><${Toggle} checked=${showEnded} onChange=${setShowEnded} label=${t('Show ended tours ({n})', { n: endedCount })} /></div>`}
+    ${shown.length === 0 && html`<p class="muted small" style="padding:8px">${t(tq ? 'No tour has a trip still to come that matches.' : 'No tour left at this time: show the ended tours, or start earlier.')}</p>`}
+    ${shown.map(({ tour: x, ended, at, via }) => {
+      const trip = x.trips[at];
+      const found = tq && trip && !x.number.toLowerCase().includes(tq);
+      const what = found ? `${hms(trip.departure)} ${trip.from} → ${trip.terminus}${via ? ` (${t('via {stop}', { stop: via })})` : ''}` : `${x.days} - ${x.trips.length} ${t('trips')}${x.trips.length ? ` - ${hms(x.first)}-${hms(x.last)}` : ''}`;
+      return pick(x.number === s.choice.tour, () => (chooseTour(x, found ? trip : null), close()), html`<span class="m-pick-text"><b>${t('Tour')} ${x.number}</b><small>${what}${!x.runs ? ` - ${t('not on this day')}` : ended ? ` - ${t('ended')}` : ''}</small></span>`, x.runs && !ended ? '' : ' dim');
+    })}
+  </div>`;
 }
 
 function TripSheet({ close }) {
@@ -258,11 +281,13 @@ function TimeSheet() {
       <button onClick=${() => step(-60)} disabled=${realTime()}>-1 h</button><button onClick=${() => step(-5)} disabled=${realTime()}>-5</button>
       <b class="num">${hhmm(c.time)}</b>
       <button onClick=${() => step(5)} disabled=${realTime()}>+5</button><button onClick=${() => step(60)} disabled=${realTime()}>+1 h</button>
+      ${!realTime() && html`<button title=${t('Current time')} onClick=${() => choose({ time: localNow().time })}><${Icon} name="clock" /></button>`}
     </div>
     <div class="m-dial">
       <button onClick=${() => day(-7)} disabled=${realDate()}>-7</button><button onClick=${() => day(-1)} disabled=${realDate()}>-1</button>
       <b>${longDate(c.date)}</b>
       <button onClick=${() => day(1)} disabled=${realDate()}>+1</button><button onClick=${() => day(7)} disabled=${realDate()}>+7</button>
+      ${!realDate() && html`<button title=${t('Current date')} onClick=${() => choose({ date: localNow().date, season: 'auto', own_date: null })}><${Icon} name="calendar" /></button>`}
     </div>
     <div class="m-seg">${SEASONS.map(([v, l]) => html`<button class=${c.season === v ? 'on' : ''} onClick=${() => setSeason(v, c.phase)}>${t(l)}</button>`)}</div>
     ${c.season !== 'auto' && html`<div class="m-seg">${PHASES.map(([v, l]) => html`<button class=${c.phase === v ? 'on' : ''} onClick=${() => setSeason(c.season, v)}>${t(l)}</button>`)}</div>`}
@@ -273,6 +298,7 @@ function WeatherSheet({ close }) {
   const s = useStore();
   return html`<div>
     ${pick(!s.choice.weather, () => (choose({ weather: '' }), close()), html`<span class="m-pick-text"><b>${t('Natural weather')}</b><small>${t('Develops by itself through the day and the season')}</small></span>`)}
+    ${weatherOfItsOwn(s.choice.weather) && pick(true, close, html`<span class="m-pick-text"><b>${weatherName(s.choice.weather)}</b></span>`)}
     ${(s.weather || []).map((w) => pick(s.choice.weather === w.file, () => (choose({ weather: w.file }), close()), html`<span class="m-pick-text"><b>${w.name}</b><small>${Math.round(w.temp)} °C - ${w.precip} - ${w.fog_m >= 20000 ? t('clear air') : `${Math.round(w.fog_m)} m`}</small></span>`))}
   </div>`;
 }

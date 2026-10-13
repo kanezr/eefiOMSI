@@ -8,9 +8,9 @@ impl World {
     pub fn surface_under(&self, at: DVec3) -> Option<u8> {
         let key = tile_key(at.x, at.y);
         let (lx, ly) = ((at.x - key.0 as f64 * tile_size()) as f32, (at.y - key.1 as f64 * tile_size()) as f32);
-        let terrain = self.terrains.read().get(&key).map(|t| t.sample(lx, ly));
-        let surfaces = self.surfaces.read();
-        let s = surfaces.get(&key)?;
+        let data = self.data.peek();
+        let terrain = data.ground.terrains.get(&key).map(|t| t.sample(lx, ly));
+        let s = data.ground.surfaces.get(&key)?;
         Some(s.surface_under(lx, ly, at.z as f32, terrain))
     }
 }
@@ -22,7 +22,8 @@ impl World {
         let mut g = omsi_soundscape::place::Gather::new(ear);
         let reach = (omsi_soundscape::place::SPOT_REACH / tile_size()).ceil() as i32;
         let key = tile_key(ear.x, ear.y);
-        let surfaces = self.surfaces.read();
+        let data = self.data.peek();
+        let surfaces = &data.ground.surfaces;
         for dy in -reach..=reach {
             for dx in -reach..=reach {
                 let k = (key.0 + dx, key.1 + dy);

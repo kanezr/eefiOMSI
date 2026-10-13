@@ -488,6 +488,10 @@ impl Renderer {
     /// OMSI_PROFILE: the frame's counts, and every ten seconds what each asset costs.
     pub(crate) fn count_draws(&mut self, scene: &Scene, with_overlays: bool, visible: usize, plan: &DrawPlan, shadow_batches: &[Vec<Batch>; SHADOW_LISTS]) {
         let DrawPlan { main_batches, prepass_batches, main_draws, .. } = plan;
+        if with_overlays {
+            self.frame_draws.0 += main_batches.len() + prepass_batches.len() + shadow_batches.iter().map(Vec::len).sum::<usize>();
+            self.frame_draws.1 += visible;
+        }
         if self.profiling && !with_overlays {
             let mut c = self.counts.borrow_mut();
             *c.entry("mirror pictures").or_default() += 1.0;
@@ -502,6 +506,14 @@ impl Renderer {
             *c.entry("opaque draws").or_default() += main_draws[0] as f64;
             *c.entry("blended draws").or_default() += main_draws[1] as f64;
             *c.entry("main batches").or_default() += main_batches.len() as f64;
+            // the state the main pass's bundles set (each part starts afresh), and what an
+            // order by material within the opaque runs would set instead
+            let (pipes, binds) = state_changes(&bundle_chunks(self.encoding_pool.as_ref(), main_batches));
+            *c.entry("main pipeline switches").or_default() += pipes as f64;
+            *c.entry("main material binds").or_default() += binds as f64;
+            let (pipes_m, binds_m) = state_changes_by_material(main_batches);
+            *c.entry("main pipeline switches by material").or_default() += pipes_m as f64;
+            *c.entry("main material binds by material").or_default() += binds_m as f64;
             *c.entry("prepass batches").or_default() += prepass_batches.len() as f64;
             *c.entry("shadow batches").or_default() +=
                 (shadow_batches[0].len() + shadow_batches[1].len()) as f64;
@@ -669,6 +681,19 @@ mod tests {
     use super::sort_blended_draws;
     use crate::{AlphaMode, MeshData, RenderOptions, Renderer};
     use glam::{DVec3, Mat4, Vec3};
+
+    #[test]
+    fn state_changes_count_what_the_encoder_sets() {
+        use crate::frame_plan::{state_changes, state_changes_by_material, Batch};
+        let b = |pipe: u8, material: u32| Batch { pipe, mesh: 0, first: 0, count: 3, material, instances: 0..1 };
+        // opaque culled (pipe 2) and not culled (pipe 0) of two looks, then a blended one
+        let batches = [b(0, 1), b(0, 2), b(2, 1), b(2, 2), b(8, 1)];
+        assert_eq!(state_changes(&[&batches]), (3, 5));
+        // two parts: each sets its own state
+        assert_eq!(state_changes(&[&batches[..3], &batches[3..]]), (4, 5));
+        // by material: 1 1 2 2 then blended 1 - fewer binds, more pipeline switches
+        assert_eq!(state_changes_by_material(&batches), (5, 3));
+    }
 
     #[test]
     fn recycled_display_layers_keep_model_order_after_distance_and_camera_rank() {

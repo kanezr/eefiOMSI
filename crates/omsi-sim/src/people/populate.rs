@@ -94,7 +94,6 @@ impl PeopleSim {
             }
             spots.push(WaitSpot { pos: *p, face: *face, height: *height });
         }
-        drop(objects);
         // the gather point (+0x48): (1, 0, 1) or (-1, 0, 1) through the stop's turn
         let x = if (side == 1) == left { 1.0 } else { -1.0 };
         let (fwd, right) = (DVec2::new(h.sin(), h.cos()), DVec2::new(h.cos(), -h.sin()));

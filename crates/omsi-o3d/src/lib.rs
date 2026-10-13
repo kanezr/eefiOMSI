@@ -2,12 +2,19 @@
 //!
 //! * `.o3d` - OMSI's own binary format (unit `mc_o3dfiles`), see `docs/FORMATS.md`.
 //! * `.x`   - DirectX text meshes, still used by a handful of stock objects and the helper meshes.
+//! * `.glb` / `.gltf`, `.fbx`, `.obj` - the formats of today's modelling tools and asset
+//!   libraries (see [`import`]): openOMSI reads them wherever OMSI reads a mesh, with their
+//!   textures (embedded ones too), skins and blend shapes.
 //!
-//! Both produce the same [`Mesh`]. Coordinates are OMSI's: X right, Y forward, Z up, metres.
+//! All of them produce the same [`Mesh`]. Coordinates are OMSI's: X right, Y forward, Z up, metres.
 
 use glam::{Mat4, Vec2, Vec3};
 use std::path::Path;
 
+pub mod fbx;
+pub mod gltf;
+pub mod import;
+pub mod obj;
 pub mod xfile;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -58,6 +65,27 @@ pub struct Mesh {
     pub has_transform: bool,
     pub bones: Vec<Bone>,
     pub version: u8,
+    /// The skeleton of a skinned import (glTF, FBX): every joint with its parent and its
+    /// rest position in the mesh frame. An `.o3d` names its bones only.
+    pub joints: Vec<Joint>,
+    /// Blend shapes (morph targets) of an import: offsets of some vertices.
+    pub morphs: Vec<Morph>,
+}
+
+/// A joint of a skeleton (see [`Mesh::joints`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Joint {
+    pub name: String,
+    pub parent: Option<usize>,
+    pub position: Vec3,
+}
+
+/// A blend shape: what it moves and how far at full weight, in the mesh frame.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Morph {
+    pub name: String,
+    /// (vertex, position offset, normal offset)
+    pub offsets: Vec<(u32, Vec3, Vec3)>,
 }
 
 impl Default for Material {
@@ -78,6 +106,8 @@ pub enum O3dError {
     Io(#[from] std::io::Error),
     #[error(".x parse error: {0}")]
     XFile(String),
+    #[error("{0}")]
+    Import(String),
 }
 
 struct Cur<'a> {
@@ -285,16 +315,40 @@ fn unscramble(s: u16, p: &mut Vec3, n: &mut Vec3, uv: &mut Vec2) {
     }
 }
 
-/// Load a mesh by file name, choosing the parser by extension.
+/// Load a mesh by file name, choosing the parser by content (the formats' own signatures)
+/// and else by extension: a model renamed by hand reads as what it is.
 pub fn load_mesh(path: &Path) -> Result<Mesh, O3dError> {
     let bytes = omsi_cfg::vfs::read(path)?;
+    parse_mesh(&bytes, path)
+}
+
+/// [`load_mesh`] of a file's bytes; `path` names it (relative textures are looked for
+/// beside it, embedded ones are put there in memory).
+pub fn parse_mesh(bytes: &[u8], path: &Path) -> Result<Mesh, O3dError> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    if ext == "x" {
-        xfile::parse_x(&bytes)
-    } else {
-        parse_o3d(&bytes)
+    if bytes.starts_with(b"glTF") {
+        return gltf::parse_glb_or_gltf(bytes, path);
+    }
+    if bytes.starts_with(b"Kaydara FBX Binary") || (ext == "fbx" && fbx::looks_like_ascii_fbx(bytes)) {
+        return fbx::parse_fbx(bytes, path);
+    }
+    if bytes.starts_with(b"xof ") {
+        return xfile::parse_x(bytes);
+    }
+    if bytes.first() == Some(&0x84) && bytes.get(1) == Some(&0x19) {
+        return parse_o3d(bytes);
+    }
+    match ext.as_str() {
+        "x" => xfile::parse_x(bytes),
+        "gltf" | "glb" => gltf::parse_glb_or_gltf(bytes, path),
+        "fbx" => fbx::parse_fbx(bytes, path),
+        "obj" => obj::parse_obj(bytes, path),
+        _ => parse_o3d(bytes),
     }
 }
+
+/// The mesh file formats openOMSI reads, by extension.
+pub const MESH_EXTENSIONS: [&str; 6] = ["o3d", "x", "glb", "gltf", "fbx", "obj"];
 
 impl Mesh {
     /// Leave out triangles naming a vertex the file does not have (a damaged or hand-made

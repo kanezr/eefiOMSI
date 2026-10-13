@@ -13,25 +13,6 @@ use serde_json::Value;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-/// The launcher page is shown (the APK carries it): the game's own launcher is not made at
-/// all then - no window of its own, no renderer, no shaders built under a page that hides
-/// it. Off for good once the player picks the game's own launcher instead.
-static WEB: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-pub(crate) fn set_web(on: bool) {
-    WEB.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub(crate) fn web() -> bool {
-    WEB.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// `LauncherBridge.closed()`: the page went away for the game's own launcher.
-#[no_mangle]
-pub extern "system" fn Java_org_openomsi_game_LauncherBridge_closed<'a>(_env: JNIEnv<'a>, _class: JClass<'a>) {
-    set_web(false);
-}
-
 /// `LauncherBridge`, held from its first call (a thread of this program cannot find an app
 /// class by name: the system's class loader does not know them).
 static BRIDGE: OnceLock<GlobalRef> = OnceLock::new();
@@ -100,6 +81,10 @@ pub extern "system" fn Java_org_openomsi_game_LauncherBridge_call<'a>(mut env: J
         Ok(v) => format!("1{v}"),
         Err(e) => format!("0{e}"),
     };
+    // Setup saved a new installation: out of the gallery now, not at the next start (#1632)
+    if cmd == "config_save" && out.starts_with('1') {
+        std::thread::spawn(super::android::hide_content_from_gallery);
+    }
     env.new_string(out).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 

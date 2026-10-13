@@ -9,7 +9,7 @@ use glam::{DVec3, Mat4, Vec2, Vec3, Vec4};
 use omsi_ui::paint::Align;
 use omsi_ui::{Color, Weight};
 
-use crate::launcher::ui::Ui;
+use omsi_ui::kit::Ui;
 
 /// The overlays, by their place in [`Overlays::on`].
 pub(crate) const NAMES: [&str; 10] = [

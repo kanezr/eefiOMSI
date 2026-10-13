@@ -18,8 +18,7 @@ impl App {
             .as_ref()
             .map(|d| &d.trips[d.trip_index])
             .map(|t| (t.line.as_str(), t.terminus.as_str()));
-        let frame = lan::Frame {
-            audio: self.sound.audio.as_ref(),
+        let frame = lan::LanInput {
             listener: self.camera.as_ref().map(|c| c.position),
             muffled: self.cam.in_cab || self.net.inside_remote.is_some(),
             riders: self.session.humans.as_ref().map(|h| h.riding()).unwrap_or(0),
@@ -28,22 +27,42 @@ impl App {
             walker,
             inside_of: self.net.inside_remote,
             radio_keyed,
+            figure: self.player.as_ref().and_then(|p| p.driver.as_ref()).map(|d| d.human_type().def.path.clone()),
+            drawn: self.world.is_some() && self.renderer.is_some() && self.scene.is_some(),
         };
-        let updates = lan::tick(
+        let config = self.args.lan_config();
+        let host = AppLanHost { args: &self.args, world: self.world.as_deref() };
+        let sent = {
+            let traffic = self.session.traffic.as_ref();
+            let cars = || traffic.map(|t| t.cars.iter().map(|c| lan::car_footprint(&c.vehicle)).collect()).unwrap_or_default();
+            lan::tick_send(lan, &mut self.net.remotes, dt, &config, self.player.as_ref().map(|p| &p.vehicle), &cars, duty, &frame)
+        };
+        self.net.lan_world.tick(
             lan,
-            &mut self.net.remotes,
             dt,
-            &self.args,
-            self.player.as_mut(),
+            &config,
             self.world.as_deref(),
             self.renderer.as_ref(),
             self.scene.as_mut(),
             self.session.traffic.as_mut(),
             self.session.humans.as_mut(),
             &mut self.gfx.sim_view,
-            duty,
+            self.player.as_ref().map(|p| p.vehicle.position),
+        );
+        let updates = lan::tick_receive(
+            lan,
+            &mut self.net.remotes,
+            sent,
+            dt,
+            &config,
+            &host,
+            self.player.as_mut().map(|p| &mut p.vehicle),
+            self.session.traffic.as_ref().map(|t| &t.net),
             &frame,
         );
+        if let (Some(w), Some(r), Some(scene)) = (self.world.as_deref(), self.renderer.as_ref(), self.scene.as_mut()) {
+            crate::view_sync::apply_lan(&mut self.net.remotes, &mut self.gfx.sim_view.lan, w, r, scene, self.sound.audio.as_ref(), &frame, dt);
+        }
         for u in updates {
             self.apply_world_update(u);
         }
@@ -136,5 +155,164 @@ impl App {
         if let Some(p) = self.player.as_mut() {
             p.vehicle.host.clock = self.clock.clone();
         }
+    }
+}
+
+/// A key as LAN play's chat line takes it (see `lan::ChatKey`).
+pub(crate) fn chat_key_of(code: winit::keyboard::KeyCode) -> lan::ChatKey {
+    use std::hash::{Hash, Hasher};
+    use winit::keyboard::KeyCode;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut h);
+    let role = match code {
+        KeyCode::Enter | KeyCode::NumpadEnter => lan::ChatRole::Send,
+        KeyCode::Escape => lan::ChatRole::Cancel,
+        KeyCode::Backspace => lan::ChatRole::Erase,
+        _ => lan::ChatRole::Other,
+    };
+    lan::ChatKey { id: h.finish(), role }
+}
+
+impl crate::Args {
+    /// What LAN play takes from the command line (see `omsi_lan::config::LanConfig`).
+    pub(crate) fn lan_config(&self) -> omsi_lan::config::LanConfig {
+        omsi_lan::config::LanConfig {
+            root: self.root.clone(),
+            map: self.map.clone(),
+            weather: self.weather.clone(),
+            season: self.season.clone(),
+            date: self.date.clone(),
+            day_of_year: self.day_of_year,
+            time: self.time.clone(),
+            bus: self.bus.clone(),
+            paint: self.paint.clone(),
+            driver: self.driver.clone(),
+            lan_name: self.lan_name.clone(),
+            lan_host: self.lan_host,
+            lan_join: self.lan_join.clone(),
+            server: self.server.is_some(),
+            entry: self.entry,
+            spawn: self.spawn.clone(),
+            hof: self.hof.clone(),
+            line: self.line.clone(),
+            tour: self.tour.clone(),
+            trip: self.trip.clone(),
+        }
+    }
+
+    /// Take back what LAN play changed (a joining player's map, date, time and weather, and
+    /// the spawn choices a new map drops).
+    pub(crate) fn take_lan_config(&mut self, c: &omsi_lan::config::LanConfig) {
+        self.map = c.map.clone();
+        self.weather = c.weather.clone();
+        self.season = c.season.clone();
+        self.date = c.date.clone();
+        self.day_of_year = c.day_of_year;
+        self.time = c.time.clone();
+        self.entry = c.entry;
+        self.spawn = c.spawn.clone();
+        self.hof = c.hof.clone();
+        self.line = c.line.clone();
+        self.tour = c.tour.clone();
+        self.trip = c.trip.clone();
+    }
+}
+
+/// What LAN play asks of the game (see `omsi_lan::host::LanHost`): its arguments as they
+/// are now and the world, when one is loaded.
+pub(crate) struct AppLanHost<'a> {
+    pub(crate) args: &'a crate::Args,
+    pub(crate) world: Option<&'a crate::scene::World>,
+}
+
+impl omsi_lan::host::LanHost for AppLanHost<'_> {
+    fn world(&self) -> Option<std::sync::Arc<omsi_sim::world_data::WorldData>> {
+        self.world.map(|w| w.data())
+    }
+
+    fn world_lanes(&self) -> Vec<omsi_sim::traffic::Lane> {
+        self.world.map(|w| w.traffic_inbox.peek(omsi_sim::world_data::TrafficArrivals::lanes_of)).unwrap_or_default()
+    }
+
+    fn remote_vehicle(
+        &self,
+        args: &omsi_lan::config::LanConfig,
+        ty: std::sync::Arc<omsi_sim::VehicleType>,
+        scheme: Option<usize>,
+        clock: omsi_sim::SimClock,
+    ) -> (omsi_sim::VehicleInstance, Option<std::sync::Arc<omsi_vehicle::Hof>>) {
+        let world = self.world.expect("another player's vehicle is made with a world loaded");
+        let mut host = omsi_sim::VehicleHost::new(clock);
+        host.font_lib = Some(world.fonts.clone());
+        let hof = self.depot_of(args, &ty);
+        host.hof = hof.clone();
+        host.paint_scheme = Some(scheme);
+        let mut vehicle = omsi_sim::VehicleInstance::new(ty.clone(), host);
+        vehicle.ground = None;
+        if !ty.model.text_textures.is_empty() {
+            vehicle.init_text_textures(&mut world.fonts.lock(), &|p| {
+                omsi_texture::decode_file(p)
+                    .ok()
+                    .map(|i| (i.width, i.height, i.rgba))
+            });
+        }
+        vehicle.apply_paint_vars(scheme);
+        // the coupled sections of an articulated bus (drawn by the view as they are attached)
+        let mut lead = ty.clone();
+        let mut lead_rev = false;
+        let mut seen = vec![lead.def.path.clone()];
+        for _ in 0..crate::spawn::MAX_COUPLED_PARTS {
+            let Some((path, rev)) = crate::spawn::next_coupled(&lead.def, lead_rev, true) else {
+                break;
+            };
+            if crate::spawn::chain_has_part(&seen, &path) {
+                break;
+            }
+            match omsi_sim::VehicleType::load(&args.root, &path) {
+                Ok(t) => {
+                    let t = std::sync::Arc::new(t);
+                    vehicle.attach_trailer_ex(t.clone(), rev);
+                    seen.push(path);
+                    lead = t;
+                    lead_rev = rev;
+                }
+                Err(e) => {
+                    log::warn!("LAN: rear section {}: {e}", path.display());
+                    break;
+                }
+            }
+        }
+        (vehicle, hof)
+    }
+
+    fn set_destination(&self, v: &mut omsi_sim::VehicleInstance, hof: Option<&omsi_vehicle::Hof>, line: &str, destination: &str) {
+        crate::schedule::set_ai_destination(v, hof, line, destination, &[]);
+    }
+
+    fn version(&self) -> String {
+        omsi_platform::VERSION.into()
+    }
+
+    fn publish_vehicles(&self, only: Vec<String>) {
+        crate::lan::publish_vehicles(self.args.root.clone(), only);
+    }
+
+    fn season_folders(&self, cfg: &omsi_lan::config::LanConfig) -> Option<(Option<String>, Option<String>)> {
+        let world = self.world?;
+        let mut theirs = self.args.clone();
+        theirs.take_lan_config(cfg);
+        Some((crate::season_folder(&theirs, &world.global).1, omsi_texture::season_folder()))
+    }
+
+    fn weather_without_file(&self, w: &str) -> bool {
+        crate::weather_model::is_natural(Some(w)) || w == "cycle" || crate::weather_setup::custom_weather(Some(w)).is_some()
+    }
+
+    fn weather_report(&self, w: &str) -> Option<bool> {
+        w.starts_with(crate::weather_setup::REPORT).then(|| crate::weather_setup::from_report(w).is_some())
+    }
+
+    fn depot_of(&self, cfg: &omsi_lan::config::LanConfig, ty: &omsi_sim::VehicleType) -> Option<std::sync::Arc<omsi_vehicle::Hof>> {
+        crate::find_hof_named(cfg.hof.as_deref(), self.world?, ty)
     }
 }

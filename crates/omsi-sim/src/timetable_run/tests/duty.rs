@@ -365,8 +365,8 @@ fn a_stop_placed_only_once_its_tile_loads_is_reached() {
     d.advance(glam::DVec3::new(100.0, 0.0, 0.0), 10.0);
     assert_eq!(d.next_stop, 1);
     // its tile comes: the map has it now
-    let mut positions = HashMap::new();
-    positions.insert(1i64, (glam::DVec3::new(500.0, 0.0, 0.0), [0.0; 3]));
+    let mut positions = crate::world_data::ObjectPlaces::default();
+    positions.place((0, 0), vec![(1i64, (glam::DVec3::new(500.0, 0.0, 0.0), [0.0; 3]))]);
     d.learn_loaded(&positions);
     assert_eq!(d.trips[0].stops[1].position, Some(glam::DVec3::new(500.0, 0.0, 0.0)));
     d.advance(glam::DVec3::new(500.0, 0.0, 0.0), 100.0);

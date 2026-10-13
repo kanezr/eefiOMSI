@@ -1,5 +1,6 @@
 //! [`PluginIo`]: the game's side of the plugins. The first eight methods are what an OMSI
-//! `.opl` plugin needs and every game implements them; the rest feed the Lua and WASM
+//! `.opl` plugin needs and every game implements them; the two script texture methods
+//! after them serve an `.opl`'s openOMSI-only `[scripttexturelist]`; the rest feed the Lua and WASM
 //! plugins' API (`crate::api`) and default to "the game has none of it" - a test's fake
 //! game implements what it tests, the real game (omsi-app's `plugins.rs`) all of it.
 //!
@@ -20,6 +21,18 @@ pub trait PluginIo {
     fn set_string(&mut self, name: &str, s: &str);
     /// A trigger's key went down (`true`) or came up.
     fn fire(&mut self, trigger: &str, down: bool);
+    /// The size of the player's vehicle's `[scripttexture]` number `index` (0-based, as
+    /// `[useScriptTexture]` counts), for an `.opl` plugin's `[scripttexturelist]`. None: the
+    /// vehicle has no such texture.
+    fn script_texture_size(&self, _index: usize) -> Option<(u32, u32)> {
+        None
+    }
+    /// A picture a plugin drew for that texture: `width` x `height` RGBA, top row first,
+    /// straight (not premultiplied) alpha. False when it was not taken (no such texture,
+    /// or it has another size by now).
+    fn set_script_texture(&mut self, _index: usize, _width: u32, _height: u32, _rgba: &[u8]) -> bool {
+        false
+    }
     /// Seconds of game time since the last frame (timers).
     fn dt(&self) -> f32 {
         0.0

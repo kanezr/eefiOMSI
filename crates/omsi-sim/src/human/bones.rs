@@ -32,12 +32,22 @@ impl Pose {
         let lat_walk = -0.022 * rig.scale * sway.min(1.3) * (ph - 0.25).sin() * intensity;
         let lat_idle = self.shift * still * (1.0 - s_ease);
         let run = run_factor(self.speed);
-        let bob = -0.018 * rig.scale * intensity * (1.0 + 1.8 * run) * (0.5 + 0.5 * (2.0 * ph - 0.35).cos());
+        // (each person bounces, swings the arms and leans walking in a way of their own)
+        let bob = -0.018 * rig.scale * intensity * (1.0 + 1.8 * run) * (1.0 + 0.3 * self.style[1]) * (0.5 + 0.5 * (2.0 * ph - 0.35).cos());
         let lean_acc = (self.accel * 1.8).clamp(-6.0, 7.0) * walk;
         let pelvis_roll = d(3.5) * sway * intensity * (ph - 0.35).sin()
             - d(2.2) * (self.shift / (0.03 * rig.scale)) * still * (1.0 - s_ease);
         // the hip of the leg in front leads (about z, counter-clockwise positive)
         let pelvis_yaw = -d(5.0) * intensity * ph.cos();
+        // The body turns over its feet: the person's heading turns at once (a corner of the
+        // way, the door, the seat), the feet only as they step. Standing, the hips point
+        // between the two feet (a swinging one where it is now), as in a pivot turn, and
+        // come round with the heading as the feet step - turned straight to the new heading
+        // over feet that stayed, the legs ran diagonally and the person seemed to slide.
+        // (The whole body turns with them: the trunk's counter-turn is the gait's alone.)
+        // (half as much while walking, whose steps follow the heading by themselves; none
+        // seated)
+        let body_lag = -d(((foot_yaw[0] + foot_yaw[1]) * 0.5).clamp(-80.0, 80.0)) * (1.0 - 0.5 * walk) * (1.0 - s_ease);
         // reaching for something far: bend at the hips and bring the right shoulder round
         let (reach_lean, reach_twist) = if self.reach > 0.0 {
             let v = self.reach_at - rig.shoulder[1];
@@ -72,11 +82,11 @@ impl Pose {
         // legs naturally put it instead of at the average distance - on a long bench with
         // no footwell to hide a mismatch in, a longer-legged rig forced to the average
         // distance bent its knee enough to poke through the seat ahead.
-        let seated_c = Vec3::new(
+        let seated_c = self.seat_pelvis.unwrap_or(Vec3::new(
             self.seat.x,
             -rig.seat_front() + 0.03,
             self.seat.z + rig.seat_lift,
-        );
+        ));
         let mut pc = Vec3::new(
             stand_c.x + (seated_c.x - stand_c.x) * s_back,
             stand_c.y + (seated_c.y - stand_c.y) * s_back,
@@ -85,7 +95,7 @@ impl Pose {
         // over the feet while getting up or down: the hips go a little lower and further
         pc.z -= 0.05 * bump * rig.scale;
         // the pelvis never higher than the legs can reach
-        let pelvis_q = Quat::from_rotation_z(pelvis_yaw)
+        let pelvis_q = Quat::from_rotation_z(pelvis_yaw + body_lag)
             * Quat::from_rotation_y(pelvis_roll)
             * Quat::from_rotation_x(-pelvis_tilt);
         let reach_max = (rig.thigh + rig.shin) * 0.997;
@@ -118,7 +128,7 @@ impl Pose {
         let trunk_yaw = -pelvis_yaw * 1.7
             - d((self.head.x.clamp(-90.0, 90.0) * 0.42).clamp(-30.0, 30.0)) * (1.0 - walk) * (1.0 - self.reach)
             + reach_twist;
-        let trunk_lean = d(3.0 * walk + lean_acc)
+        let trunk_lean = d((3.0 + 2.0 * self.style[3]) * walk + lean_acc)
             + d(34.0) * bump
             + d(12.0 - 4.0) * s_ease
             + d(0.7) * breath
@@ -172,12 +182,14 @@ impl Pose {
                 let flat = Vec3::new(pelvis_fwd.x, pelvis_fwd.y, 0.0).normalize_or(Vec3::Y);
                 let knee_n = hip_at + flat * rig.thigh * 0.95;
                 let hang = knee_n - Vec3::Z * rig.shin * 0.97;
-                if ankle_t[side].z < hang.z - 0.12 || (ankle_t[side] - hip_at).length() > (rig.thigh + rig.shin) * 0.99 {
-                    let blend = ((sit - 0.5) * 2.0).clamp(0.0, 1.0);
-                    let floor_z = ankle_t[side].z.max(hang.z);
-                    let target = Vec3::new(hang.x, hang.y, floor_z);
-                    ankle_t[side] = ankle_t[side] + (target - ankle_t[side]) * blend;
-                }
+                // (always, not only where the standing place is out of reach: a bench's
+                // hip point has the feet that stood up to it right under the pelvis, and the
+                // legs went straight down from the seat as if kneeling)
+                let blend = ((sit - 0.5) * 2.0).clamp(0.0, 1.0);
+                // (a floor within reach of a hanging shin is stood on: the knee bends a little more)
+                let floor_z = if ankle_t[side].z >= hang.z - 0.12 { ankle_t[side].z } else { hang.z };
+                let target = Vec3::new(hang.x, hang.y, floor_z);
+                ankle_t[side] = ankle_t[side] + (target - ankle_t[side]) * blend;
             }
             let (knee_at, ankle_at, hinge) =
                 two_bone(hip_at, rig.thigh, rig.shin, ankle_t[side], pole);
@@ -227,7 +239,7 @@ impl Pose {
 
         // --- arms ---
         let run = run_factor(self.speed);
-        let arm_amp = d(17.0) * rig.arm_swing.powf(0.7) * intensity * (1.0 + 1.1 * run);
+        let arm_amp = d(17.0) * rig.arm_swing.powf(0.7) * intensity * (1.0 + 1.1 * run) * (1.0 + 0.35 * self.style[0]);
         for side in 0..2 {
             let s = SIDE[side];
             let sh_at = trunk_m.transform_point3(rig.shoulder[side]);
@@ -408,6 +420,33 @@ impl Pose {
         let sit_w = smoothstep(0.35, 1.0, sit);
         let mut target = hang_wrist.lerp(lap, sit_w);
         let mut pole = hang_pole.normalize_or(-Vec3::Y).lerp(lap_pole, sit_w);
+        // standing still: the person's way of standing (see `Idle`), round the turned hips
+        let still = (1.0 - smoothstep(0.05, 0.4, self.walk)) * (1.0 - sit_w);
+        if still > 0.0 {
+            let mid = (posed.hip[0] + posed.hip[1]) * 0.5;
+            let up = rig.shoulder[side].z - rig.hip[side].z;
+            let way = |w: Idle| -> Option<(Vec3, Vec3)> {
+                let sc = rig.scale;
+                let (at, pole) = match w {
+                    Idle::Hang => return None,
+                    Idle::Clasped => (Vec3::new(s * 0.035, 0.17, -0.07) * sc, Vec3::new(s, -0.3, -0.6)),
+                    Idle::Behind => (Vec3::new(s * 0.04, -0.17, -0.02) * sc, Vec3::new(s, 0.3, -0.5)),
+                    Idle::Crossed => (Vec3::new(-s * 0.11 * sc, 0.21 * sc, up - 0.24 * sc + if side == 1 { 0.035 } else { 0.0 }), Vec3::new(s, -0.25, -0.35)),
+                    Idle::HandOnHip if (side == 1) == (self.style[2] > 0.0) => (Vec3::new(s * (rig.hip[1].x.abs() + 0.13 * sc), -0.02 * sc, 0.07 * sc), Vec3::new(s, -0.6, 0.1)),
+                    Idle::HandOnHip => return None,
+                    Idle::Phone if side == 1 => (Vec3::new(0.06 * sc, 0.27 * sc, up - 0.31 * sc), Vec3::new(s, -0.5, -1.0)),
+                    Idle::Phone => (Vec3::new(0.0, 0.25 * sc, up - 0.36 * sc), Vec3::new(s, -0.5, -1.0)),
+                };
+                Some((mid + pelvis_q * at, pelvis_q * pole))
+            };
+            let blend = |w: Idle| way(w).unwrap_or((target, pole));
+            let (fa, fp) = blend(self.idle_from);
+            let (ta, tp) = blend(self.idle_to);
+            let m = smoothstep(0.0, 1.0, self.idle_mix);
+            let (it, ip) = (fa.lerp(ta, m), fp.lerp(tp, m));
+            target = target.lerp(it, still);
+            pole = pole.lerp(ip, still);
+        }
         if side == 1 && self.reach > 0.0 {
             let r = smoothstep(0.0, 1.0, self.reach);
             let reach_to = self.reach_at;

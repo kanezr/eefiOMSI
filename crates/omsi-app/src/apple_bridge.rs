@@ -1,10 +1,10 @@
 //! The Swift launcher's way into the launcher's data (iPhone, iPad, Mac).
 //!
-//! Apple's systems get a launcher of their own, written in SwiftUI (`apple/Shared`), with the
-//! same pages and the same look as the launcher the game draws - but what it knows and
-//! does is not written twice: it is the very `launcher::state::State` the game's launcher
-//! keeps (the content lists, the duty chosen, the timetable, profiles, mods, servers ...),
-//! read as JSON and changed by actions through two C functions:
+//! Apple's systems get a launcher of their own, written in SwiftUI (`apple/Shared`) - but what
+//! it knows and does is not written here twice: it is the launcher's model,
+//! `launcher::state::State` (crate omsi-launcher-model: the content lists, the duty chosen, the
+//! timetable, profiles, mods, servers ...), read as JSON and changed by actions through two C
+//! functions:
 //!
 //! - `openomsi_bridge(cmd, json)` → a JSON reply `{"ok": true, "value": …}` or
 //!   `{"ok": false, "error": "…"}`, freed with `openomsi_bridge_free`;
@@ -47,7 +47,6 @@ pub(crate) fn prepare_once() {
         if let Err(e) = crate::prepare(args, true) {
             log::error!("{e:#}");
         }
-        crate::launcher_statics();
     });
 }
 
@@ -393,10 +392,6 @@ fn act(s: &mut State, a: &Value) -> anyhow::Result<Value> {
         "setting" => {
             let key = st("key");
             let value = a.get("value").cloned().unwrap_or(Value::Null);
-            if key == "cross_platform_launcher" {
-                #[cfg(target_os = "ios")]
-                crate::ios::set_cross_platform_launcher(value.as_bool().unwrap_or(false));
-            }
             s.settings[key.as_str()] = value;
             s.settings_dirty = 0.3;
         }

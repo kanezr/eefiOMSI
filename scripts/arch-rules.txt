@@ -122,7 +122,7 @@ forbid omsi-lan omsi-audio
 forbid omsi-lan omsi-ui
 forbid omsi-lan omsi-launcher-*
 
-# The platform services (updates, presence) know nothing of the game: no simulation, drawing,
+# The platform services (updates) know nothing of the game: no simulation, drawing,
 # sound or network sessions.
 forbid omsi-platform omsi-sim
 forbid omsi-platform omsi-render
@@ -139,10 +139,17 @@ forbid omsi-photo omsi-net
 forbid omsi-photo omsi-launcher-*
 
 # The launcher's data side (what `omsi-launcher --cli` offers a terminal too) knows nothing of
-# its interface: the interface crate stands on it, never the other way round.
-forbid omsi-launcher-core omsi-launcher-ui
+# its front ends: the model and the page's commands stand on it, never the other way round.
+forbid omsi-launcher-core omsi-launcher-model
+forbid omsi-launcher-core omsi-launcher-api
 forbid omsi-launcher-core omsi-ui
 forbid omsi-launcher-core omsi-render
+
+# The launcher's model has no window: the launchers that draw it (the desktop launcher's page,
+# the Swift one) are other programs.
+forbid omsi-launcher-model omsi-render
+forbid omsi-launcher-model omsi-ui
+forbid omsi-launcher-model omsi-input
 
 # The start guard runs before anything that could break: no graphics, window, game state in it.
 forbid omsi-guard omsi-render
@@ -150,7 +157,7 @@ forbid omsi-guard omsi-ui
 forbid omsi-guard omsi-sim
 forbid omsi-guard omsi-scene
 forbid omsi-guard omsi-audio
-forbid omsi-guard omsi-launcher-ui
+forbid omsi-guard omsi-launcher-model
 
 # Lines of Rust in crates/omsi-app (may grow 2 % past this; lower with --update).
 app-lines 69722

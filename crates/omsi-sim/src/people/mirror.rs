@@ -208,6 +208,7 @@ impl PeopleSim {
         if on {
             self.next_id = self.next_id.max(1 << 30);
             for p in self.people.iter_mut().filter(|p| p.puppet.is_none()) {
+                self.bodies.ops.push(BodyOp::Renamed { from: p.id, to: self.next_id });
                 p.id = self.next_id;
                 self.next_id += 1;
             }
