@@ -22,6 +22,7 @@
 and fully compatible with the existing maps, buses, scenery and mods.
 
 **eefiOMSI discord server**: [eefiOMSI Discord](https://discord.gg/unmX7BXuB8)
+
 **Official openOMSI discord server**: [openOMSI Discord](https://discord.gg/VG2EKVafYG)
 
 > [!IMPORTANT]
