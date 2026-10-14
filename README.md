@@ -9,7 +9,7 @@
   <a href="https://github.com/kanezr/eefiOMSI/releases/latest"><img alt="Version" src="https://img.shields.io/github/v/release/kanezr/eefiOMSI?label=version&color=f47f30&style=for-the-badge"></a>
   <a href="https://github.com/kanezr/eefiOMSI/actions/workflows/release.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/kanezr/eefiOMSI/release.yml?branch=main&style=for-the-badge&label=build"></a>
   <a href="https://discord.gg/unmX7BXuB8"><img alt="Discord" src="https://img.shields.io/badge/discord-join%20us-5865F2?style=for-the-badge&logo=discord&logoColor=white"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/openOMSI-org/openOMSI?style=for-the-badge"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/kanezr/eefiOMSI?style=for-the-badge"></a>
 </p>
 
 > [!WARNING]
@@ -33,7 +33,7 @@ and fully compatible with the existing maps, buses, scenery and mods.
 ## Download
 
 Every commit to `main` is built by GitHub Actions and published on the
-[**Releases**](https://github.com/openOMSI-org/openOMSI/releases) page:
+[**Releases**](https://github.com/kanezr/eefiOMSI/releases) page:
 
 | Platform | File |
 | --- | --- |
@@ -153,7 +153,6 @@ git clone https://github.com/openOMSI-org/openOMSI.git && cd openOMSI
 scripts/build-macos.sh        # macOS   → dist/macos/openOMSI.app
 scripts\build-windows.cmd     # Windows → dist\windows\openomsi.exe
 scripts/build-linux.sh        # Linux   → dist/linux/openomsi
-scripts/build-android.sh      # Android → dist/android/openOMSI-<version>.apk
 scripts/build-server.sh       # server  → dist/server
 ```
 
@@ -188,4 +187,4 @@ openOMSI/
 Issues and pull requests are welcome - see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
-openOMSI is a fork. The original code is MIT-licensed (Copyright (c) 2026 usonskyyyy); the changes and additions made in this repository are All Rights Reserved and may be used only as part of this program. See [LICENSE](LICENSE) for the exact terms. OMSI and OMSI 2 are trademarks of their respective owners. openOMSI is an independent project and is not affiliated with them.
+openOMSI is a fork. The original code is AGPL-3.0-licensed (Copyright (c) 2026 usonskyyyy); the changes and additions made in this repository are All Rights Reserved and may be used only as part of this program. See [LICENSE](LICENSE) for the exact terms. OMSI and OMSI 2 are trademarks of their respective owners. openOMSI is an independent project and is not affiliated with them.
