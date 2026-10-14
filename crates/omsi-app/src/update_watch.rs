@@ -35,10 +35,10 @@ impl UpdateWatch {
         let text = std::fs::read_to_string(omsi_launcher_lib::data_dir().join("settings.cfg")).ok();
         let s = omsi_launcher_lib::settings_from_text(text.as_deref());
         let on = |k: &str, d: bool| s.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
-        let testing = omsi_cfg::flags::OMSI_UPDATE_URL.is_set();
+        let testing = omsi_cfg::env::var_os("OMSI_UPDATE_URL").is_some();
         let installable = testing || updater::install_place().is_ok() || cfg!(target_os = "android");
         let enabled = on("update_check", true)
-            && !omsi_cfg::flags::OMSI_NO_UPDATE.is_set()
+            && omsi_cfg::env::var_os("OMSI_NO_UPDATE").is_none()
             && !updater::is_test_build(updater::current_version())
             && updater::asset_name(updater::current_version()).is_some()
             && installable;

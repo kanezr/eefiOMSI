@@ -1,6 +1,6 @@
 # Building from source
 
-Releases for every commit are on the [Releases](https://github.com/openOMSI-org/openOMSI/releases)
+Releases for every commit are on the [Releases](https://github.com/openOMSI-Project/openOMSI/releases)
 page; build from source only to work on openOMSI itself.
 
 All scripts live in `scripts/`, run from any folder (paths with spaces are fine) and put the
@@ -17,11 +17,8 @@ there.
   with C++* and the Windows SDK. CMake is needed to build the OpenXR dependency;
   it must be on `PATH`. Vulkan or DirectX 12 is used for drawing.
 * **Linux** (Debian/Ubuntu names):
-  `sudo apt install build-essential pkg-config libasound2-dev libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libssl-dev libwebkit2gtk-4.1-dev` (WebKitGTK for the desktop launcher).
+  `sudo apt install build-essential pkg-config libasound2-dev libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libssl-dev`.
   Vulkan drivers (Mesa, NVIDIA) are needed to play.
-* **Android**: the `aarch64-linux-android` Rust target, JDK 17, and an Android SDK with
-  platform 34 or newer, build-tools and the NDK. `scripts/build-android.sh` looks for them
-  through `android/env.sh` (`ANDROID_HOME`, `ANDROID_NDK_HOME`).
 
 ## Build
 
@@ -31,7 +28,6 @@ there.
 | Windows | `scripts\build-windows.cmd` | `dist\windows\openomsi.exe`, `openomsi-launcher.exe` |
 | Windows, from a Mac | `scripts/build-windows-cross.sh` (needs `brew install mingw-w64`) | `dist/windows/` |
 | Linux | `scripts/build-linux.sh` | `dist/linux/openomsi`, `openomsi-launcher`, `.desktop` file |
-| Android | `scripts/build-android.sh` | `dist/android/openOMSI-<version>.apk` |
 | Dedicated server | `scripts/build-server.sh [folder]` | `dist/server/` with `start.sh` |
 | 32-bit plugin host | `scripts/build-plugin-host.sh` | `dist/omsi-plugin-host32.exe` (see [PLUGINS.md](PLUGINS.md)) |
 
@@ -39,17 +35,11 @@ Plain cargo works too: `cargo build --release -p omsi-app` builds `target/releas
 
 ## The programs
 
-* `openomsi` (`crates/omsi-app`) - the game. Started with no arguments it opens the desktop
-  launcher beside it, `openomsi-launcher-app` (`launcher/`, see its README), and says so
-  where that is missing; with arguments it starts a session directly (see
-  [USER_GUIDE.md](USER_GUIDE.md)); with `--server server.cfg` it is the dedicated server.
-* `openomsi-launcher-app` (`launcher/src-tauri`, a workspace of its own) - the launcher. A
-  development build finds it when it is built into the same target folder as the game:
-  `CARGO_TARGET_DIR=target cargo build --manifest-path launcher/src-tauri/Cargo.toml` puts it
-  into `target/debug` beside `openomsi` (`--release` for `target/release`).
+* `openomsi` (`crates/omsi-app`) - the game. Started with no arguments it opens the launcher
+  window; with arguments it starts a session directly (see [USER_GUIDE.md](USER_GUIDE.md));
+  with `--server server.cfg` it is the dedicated server.
 * `openomsi-launcher` (`crates/omsi-launcher-core`) - the launcher's commands for a terminal
-  (`openomsi-launcher --cli maps`, `--cli install '{"path":"mod.zip"}'` …); without `--cli`
-  it starts the game beside it with the same arguments.
+  (`openomsi-launcher --cli maps`, `--cli install '{"path":"mod.zip"}'` …).
 * `omsi-check` (`tools/omsi-check`) - loads every content file of an installation and reports
   what failed: `cargo run --release -p omsi-check -- "/path/to/OMSI 2"`.
 

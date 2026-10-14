@@ -137,9 +137,9 @@ impl FontLibrary {
         Some(sibling.clone())
     }
 
-    /// `get` with the registered picture decoder (`crate::image_decode`).
+    /// `get` with the built-in image decoder.
     pub fn load(&mut self, name: &str) -> Option<Arc<FontAtlas>> {
-        self.get(name, &|p| crate::image_decode::decode(p).ok().map(|i| (i.width, i.height, i.rgba)))
+        self.get(name, &|p| omsi_texture::decode_file(p).ok().map(|i| (i.width, i.height, i.rgba)))
     }
 
     /// Fonts are looked up by their `[newfont]` name across all `Fonts/*.oft` files of every
@@ -193,7 +193,6 @@ fn color_at_alpha_pixels(color: &[u8], cw: u32, ch: u32, aw: u32, ah: u32) -> Ve
 }
 
 /// Runtime state of one `[texttexture]`.
-#[derive(Clone)]
 pub struct TextTextureState {
     pub def: TextTexture,
     pub atlas: Option<Arc<FontAtlas>>,

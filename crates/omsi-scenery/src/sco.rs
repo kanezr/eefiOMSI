@@ -381,7 +381,8 @@ impl SceneryObject {
                 "carpark_p" => o.is_car_park = true,
                 "trafficlight" => o.is_traffic_light = true,
                 "signal" => o.is_signal = true,
-                "helparrow" => o.is_help_arrow = true,
+                // [ROLLBACK helper-93] mods spell it their own way: all are route arrows, hidden with them
+                "helparrow" | "routearrow" | "route_arrow" | "help_arrow" | "helperarrow" | "helper_arrow" | "helper" => o.is_help_arrow = true,
                 "depot" => o.is_depot = true,
                 "petrolstation" => o.is_petrol_station = true,
                 "tree" => {

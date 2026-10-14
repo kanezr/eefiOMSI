@@ -13,8 +13,6 @@ pub(crate) struct LogState {
     t: f32,
     frames: u32,
     worst_dt: f32,
-    /// The support snapshot of this game is kept (see `support_bundle::record`).
-    support_recorded: bool,
 }
 
 /// The machine, the program and its settings, once at the start.
@@ -33,13 +31,7 @@ pub(crate) fn log_system(settings: &crate::settings::Settings) {
     log::info!("all settings: {settings:?}");
 }
 
-/// The system's name and version (asked once: on macOS and Windows a program is run for it).
-pub(crate) fn os_version() -> String {
-    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    VERSION.get_or_init(ask_os_version).clone()
-}
-
-fn ask_os_version() -> String {
+fn os_version() -> String {
     #[cfg(target_os = "macos")]
     {
         if let Ok(o) = std::process::Command::new("sw_vers").arg("-productVersion").output() {
@@ -66,27 +58,20 @@ fn ask_os_version() -> String {
 impl App {
     /// Once a frame: what changed on the screen, and every minute where things stand.
     pub(crate) fn log_frame(&mut self, dt: f32) {
-        if !self.perf.log_state.support_recorded && self.renderer.is_some() {
-            crate::support_bundle::record(self);
-            self.perf.log_state.support_recorded = true;
+        let msg = self.service_msg.as_ref().map(|m| m.0.clone());
+        if msg.is_some() && msg != self.log_state.last_msg {
+            log::info!("on screen: {}", msg.as_deref().unwrap_or_default());
         }
-        // (compared in place: the message was copied every frame it stood on the screen)
-        if self.service_msg.as_ref().map(|m| &m.0) != self.perf.log_state.last_msg.as_ref() {
-            let msg = self.service_msg.as_ref().map(|m| m.0.clone());
-            if msg.is_some() {
-                log::info!("on screen: {}", msg.as_deref().unwrap_or_default());
-            }
-            self.perf.log_state.last_msg = msg;
-        }
-        if self.view != self.perf.log_state.last_view {
+        self.log_state.last_msg = msg;
+        if self.view != self.log_state.last_view {
             log::info!("view: {}", self.view);
-            self.perf.log_state.last_view = self.view.clone();
+            self.log_state.last_view = self.view.clone();
         }
-        if self.paused != self.perf.log_state.last_paused {
+        if self.paused != self.log_state.last_paused {
             log::info!("{}", if self.paused { "paused" } else { "resumed" });
-            self.perf.log_state.last_paused = self.paused;
+            self.log_state.last_paused = self.paused;
         }
-        let s = &mut self.perf.log_state;
+        let s = &mut self.log_state;
         s.t += dt;
         s.frames += 1;
         s.worst_dt = s.worst_dt.max(dt);
@@ -102,7 +87,7 @@ impl App {
             format!("bus at ({:.1}, {:.1}, {:.1}) heading {:.0}, {:.0} km/h", v.position.x, v.position.y, v.position.z, v.heading, v.physics.velocity_kmh())
         });
         let cam = self.camera.as_ref().map(|c| format!("camera at ({:.0}, {:.0}, {:.0})", c.position.x, c.position.y, c.position.z));
-        let traffic = self.session.traffic.as_ref().map(|t| t.cars.len()).unwrap_or(0);
+        let traffic = self.traffic.as_ref().map(|t| t.cars.len()).unwrap_or(0);
         let time = self.clock.time;
         let gpu = match (self.renderer.as_ref(), self.scene.as_ref()) {
             (Some(r), Some(sc)) => format!(", GPU memory: textures {:.0} MB, meshes {:.0} MB", r.texture_bytes(sc) as f64 / 1e6, r.mesh_bytes(sc) as f64 / 1e6),

@@ -2,10 +2,8 @@
 //!
 //! OMSI looks a texture up by *file name* in a search order: the object's `texture` folder,
 //! then the global `Texture` folder, trying a same-stem DDS first, the exact name, then other supported
-//! extensions (OMSI's `.dds`, `.bmp`, `.tga`, `.jpg`, `.png`, and what openOMSI reads besides:
-//! `.jpeg`, `.webp`, `.tif`, `.gif`, `.ktx2`, `.ktx`, `.qoi`, `.hdr`, `.exr`, `.pnm`), plus
-//! seasonal (`Texture\Spring` …) and `_LOW` variants. A `<texture>.cfg` sidecar carries
-//! per-texture flags.
+//! extensions (`.dds`, `.bmp`, `.tga`, `.jpg`, `.png`), plus seasonal (`Texture\Spring` …) and
+//! `_LOW` variants. A `<texture>.cfg` sidecar carries per-texture flags.
 
 use hashbrown::HashMap;
 use parking_lot::Mutex;
@@ -13,9 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub mod bc;
-pub mod blocks;
 pub mod dds;
-pub mod ktx;
 pub mod gpu;
 pub mod tga;
 
@@ -26,8 +22,6 @@ mod format_tests;
 pub const MAX_DIMENSION: usize = 16384;
 
 pub mod pbr;
-pub mod season_mix;
-pub use season_mix::{find_texture_in_look, mixed_look, season_mix, set_season_mix, SeasonMix};
 pub use gpu::{gpu_options, set_gpu_options, GpuOptions, PixelFormat, TextureData};
 
 #[derive(Debug, Clone)]
@@ -66,8 +60,6 @@ pub struct TextureCfg {
     /// `[surface]`: 0 asphalt, 1 concrete, 2 cobblestone, 3 dirt, 4 grass, 5 gravel,
     /// 6 snow, 7 deep snow. This is the id the scripts see as `Axle_SurfaceID_`.
     pub surface: i32,
-    /// The file has a `[surface]` at all (else the id is OMSI's default, asphalt).
-    pub surface_given: bool,
 }
 
 impl TextureCfg {
@@ -81,10 +73,7 @@ impl TextureCfg {
                     "terrainmapping_alpha" => c.terrain_mapping_alpha = true,
                     "puddles" => c.puddles = true,
                     "moisture" => c.moisture = true,
-                    "surface" => {
-                        c.surface = r.i32();
-                        c.surface_given = true;
-                    }
+                    "surface" => c.surface = r.i32(),
                     _ => {}
                 }
             }
@@ -101,13 +90,40 @@ pub enum TextureError {
     Decode(PathBuf, String),
 }
 
-/// The picture formats a texture is looked for in, OMSI's first.
-pub const EXTENSIONS: [&str; 16] = ["dds", "bmp", "tga", "jpg", "png", "jpeg", "webp", "tif", "tiff", "gif", "ktx2", "ktx", "qoi", "hdr", "exr", "pnm"];
+pub const EXTENSIONS: [&str; 5] = ["dds", "bmp", "tga", "jpg", "png"];
 
 /// Decode an image file into RGBA8.
 pub fn decode_file(path: &Path) -> Result<Image, TextureError> {
     let bytes = omsi_cfg::vfs::read(path).map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?;
     decode_bytes(&bytes, path)
+}
+
+/// A picture as 16-bit RGB, for pictures that are data rather than looks (a lamp's beam cookie):
+/// row-major, top-left origin, three values a pixel.
+pub struct Rgb16 {
+    pub width: u32,
+    pub height: u32,
+    pub data: Vec<u16>,
+}
+
+/// Decode an image file into 16-bit RGB: a PNG keeps all its precision (gray or colour, 8 or 16
+/// bits), any other format is read as `decode_file` reads it and widened.
+pub fn decode_file_rgb16(path: &Path) -> Result<Rgb16, TextureError> {
+    let bytes = omsi_cfg::vfs::read(path).map_err(|e| TextureError::Decode(path.to_path_buf(), e.to_string()))?;
+    decode_bytes_rgb16(&bytes, path)
+}
+
+pub fn decode_bytes_rgb16(bytes: &[u8], path: &Path) -> Result<Rgb16, TextureError> {
+    if bytes.starts_with(b"\x89PNG") {
+        if let Ok(img) = image::load_from_memory_with_format(bytes, image::ImageFormat::Png) {
+            let rgb = img.into_rgb16();
+            let (width, height) = (rgb.width(), rgb.height());
+            return Ok(Rgb16 { width, height, data: rgb.into_raw() });
+        }
+    }
+    let img = decode_bytes(bytes, path)?;
+    let data = img.rgba.chunks_exact(4).flat_map(|p| [p[0] as u16 * 257, p[1] as u16 * 257, p[2] as u16 * 257]).collect();
+    Ok(Rgb16 { width: img.width, height: img.height, data })
 }
 
 pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
@@ -116,9 +132,6 @@ pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
     // BMP is common. Sniff the signatures first and fall back to the extension (TGA has none).
     if bytes.starts_with(b"DDS ") {
         return dds::decode(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e));
-    }
-    if ktx::is_ktx(bytes) {
-        return ktx::decode(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e));
     }
     let is_tga_ext = matches!(ext.as_str(), "tga");
     let looks_tga = bytes.len() > 18 && (1..=3).contains(&(bytes[2] & 7)) && bytes[2] & 0xF0 == 0 && matches!(bytes[16], 8 | 15 | 16 | 24 | 32);
@@ -131,8 +144,6 @@ pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
         image::ImageFormat::Jpeg
     } else if bytes.starts_with(b"\x89PNG") {
         image::ImageFormat::Png
-    } else if let Some(f) = sniff_other(bytes) {
-        f
     } else if looks_tga {
         // a TGA under another name (NEOMAN's `W_Bader_KR498_disp.png`): D3DX reads it by content
         return tga::decode(bytes).map_err(|e| TextureError::Decode(path.to_path_buf(), e));
@@ -166,33 +177,6 @@ pub fn decode_bytes(bytes: &[u8], path: &Path) -> Result<Image, TextureError> {
         has_alpha = bmp32_alpha(bytes, width, height, &mut rgba);
     }
     Ok(Image { width, height, rgba, has_alpha })
-}
-
-/// The formats beyond OMSI's by their signatures (WebP, GIF, TIFF, QOI, OpenEXR, Radiance
-/// HDR, icons, PNM): a picture is read as what it is, whatever its name says.
-fn sniff_other(b: &[u8]) -> Option<image::ImageFormat> {
-    use image::ImageFormat as F;
-    Some(if b.len() > 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" {
-        F::WebP
-    } else if b.starts_with(b"GIF87a") || b.starts_with(b"GIF89a") {
-        F::Gif
-    } else if b.starts_with(b"II*\0") || b.starts_with(b"MM\0*") {
-        F::Tiff
-    } else if b.starts_with(b"qoif") {
-        F::Qoi
-    } else if b.starts_with(&[0x76, 0x2F, 0x31, 0x01]) {
-        F::OpenExr
-    } else if b.starts_with(b"#?RADIANCE") || b.starts_with(b"#?RGBE") {
-        F::Hdr
-    } else if b.starts_with(&[0, 0, 1, 0]) && b.len() > 6 && b[4] > 0 {
-        F::Ico
-    } else if b.len() > 2 && b[0] == b'P' && (b'1'..=b'7').contains(&b[1]) && b[2].is_ascii_whitespace() {
-        F::Pnm
-    } else if b.starts_with(b"farbfeld") {
-        F::Farbfeld
-    } else {
-        return None;
-    })
 }
 
 /// A copy of a palette bitmap whose colour count (`biClrUsed`, `biClrImportant`) is cut to
@@ -331,19 +315,73 @@ pub fn find_texture(name: &str, dirs: &[&Path]) -> Option<PathBuf> {
 }
 
 fn find_texture_uncached(name: &str, dirs: &[&Path]) -> Option<PathBuf> {
-    // A name is looked for in the folders the model asks it from and the OMSI `Texture`
-    // folder, as Omsi.exe looks for it: one that is nowhere there is missing and its slot is
-    // drawn bare. Searching a same-named file in *another* folder (675f3d90, St-Servan's
-    // white pavements) painted signs and crossings with pictures the original leaves blank -
-    // the GG2 gantries with the pack's stock sign, the Grundorf Island `Sign` plates and
-    // tunnel signs with the `Road` folder's road textures, the `Generic` objects with a
-    // London bus stop's `text.bmp` - so it is not done.
-    find_texture_in_season(name, dirs, season_folder().as_deref()).or_else(|| {
-        // a picture that came with a glTF / FBX / OBJ model, beside it or packed into it
-        let bare = name.trim().replace('\\', "/");
-        let bare = bare.rsplit('/').next().unwrap_or(&bare);
-        omsi_cfg::model_texture(bare).filter(|p| omsi_cfg::vfs::is_file(p))
-    })
+    find_texture_in_season(name, dirs, season_folder().as_deref()).or_else(|| find_texture_elsewhere(name, dirs))
+}
+
+/// A spline's or object's texture missing from its folders: the nearest same-named file under `Splines`/`Sceneryobjects`.
+fn find_texture_elsewhere(name: &str, dirs: &[&Path]) -> Option<PathBuf> {
+    let name = name.trim();
+    if name.is_empty() || name.contains(['/', '\\']) {
+        return None;
+    }
+    let first = dirs.first()?;
+    let top = first.ancestors().find_map(|a| {
+        a.file_name().and_then(|f| f.to_str()).filter(|f| f.eq_ignore_ascii_case("Splines") || f.eq_ignore_ascii_case("Sceneryobjects")).map(|f| f.to_ascii_lowercase())
+    })?;
+    static INDEX: std::sync::OnceLock<Mutex<HashMap<String, (u64, Arc<HashMap<String, Vec<PathBuf>>>)>>> = std::sync::OnceLock::new();
+    let generation = omsi_cfg::content_generation();
+    let index = {
+        let mut all = INDEX.get_or_init(|| Mutex::new(HashMap::new())).lock();
+        match all.get(&top) {
+            Some((g, i)) if *g == generation => i.clone(),
+            _ => {
+                let i = Arc::new(texture_index(&top));
+                all.insert(top.clone(), (generation, i.clone()));
+                i
+            }
+        }
+    };
+    let key = |p: &Path| p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase());
+    let want = Path::new(name);
+    if !want.extension().and_then(|x| x.to_str()).is_some_and(|x| ["dds", "bmp", "jpg", "jpeg", "png", "tga"].iter().any(|t| x.eq_ignore_ascii_case(t))) {
+        return None;
+    }
+    let candidates = index.get(&key(want)?)?;
+    let shared = |p: &Path| p.components().zip(first.components()).take_while(|(a, b)| a == b).count();
+    let in_texture = |p: &Path| p.parent().and_then(|d| d.file_name()).and_then(|f| f.to_str()).is_some_and(|f| f.eq_ignore_ascii_case("texture"));
+    let same_ext = |p: &Path| p.extension().zip(want.extension()).is_some_and(|(a, b)| a.eq_ignore_ascii_case(b));
+    let found = candidates.iter().max_by_key(|p| (in_texture(p), shared(p), same_ext(p)))?.clone();
+    static SAID: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    if SAID.get_or_init(Default::default).lock().insert(name.to_ascii_lowercase()) {
+        log::info!("texture {name} is not in its folders ({}); taken from {}", first.display(), found.display());
+    }
+    Some(found)
+}
+
+/// Image files under `top` (`splines`/`sceneryobjects`) of every content root and mounted archive, by stem.
+fn texture_index(top: &str) -> HashMap<String, Vec<PathBuf>> {
+    let mut out: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    let mut stack: Vec<PathBuf> = omsi_cfg::content_roots()
+        .into_iter()
+        .filter_map(|r| {
+            let (name, _) = omsi_cfg::vfs::list_dir(&r)?.into_iter().find(|(n, d)| *d && n.to_str().is_some_and(|n| n.eq_ignore_ascii_case(top)))?;
+            Some(r.join(name))
+        })
+        .collect();
+    while let Some(dir) = stack.pop() {
+        let Some(entries) = omsi_cfg::vfs::list_dir(&dir) else { continue };
+        for (name, is_dir) in entries {
+            let p = dir.join(name);
+            if is_dir {
+                stack.push(p);
+            } else if p.extension().and_then(|x| x.to_str()).is_some_and(|x| ["dds", "bmp", "jpg", "png", "tga"].iter().any(|t| x.eq_ignore_ascii_case(t))) {
+                if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                    out.entry(stem.to_ascii_lowercase()).or_default().push(p);
+                }
+            }
+        }
+    }
+    out
 }
 
 fn find_texture_in_season(name: &str, dirs: &[&Path], season: Option<&str>) -> Option<PathBuf> {
@@ -444,9 +482,6 @@ pub struct TextureCache {
     gpu: Mutex<HashMap<PathBuf, Arc<TextureData>>>,
     misses: Mutex<HashMap<String, ()>>,
     alpha: Mutex<HashMap<PathBuf, bool>>,
-    /// The sidecars read, by the name asked for and the file found, with the content
-    /// generation they were read in (`omsi_cfg::content_generation`).
-    cfgs: Mutex<HashMap<(String, PathBuf), (u64, TextureCfg)>>,
 }
 
 /// Where the `.cfg` sidecar of a texture is. OMSI names it after the texture as the model
@@ -477,7 +512,7 @@ pub fn cfg_path(requested: &str, found: &Path) -> Option<PathBuf> {
         }
         for n in names {
             let c = d.join(&n);
-            if omsi_cfg::vfs::is_file(&c) {
+            if c.is_file() {
                 return Some(c);
             }
         }
@@ -492,26 +527,14 @@ impl TextureCache {
 
     /// The `<texture>.cfg` sidecar of a texture, if it has one: `[moisture]` marks a
     /// surface that darkens in the wet, `[puddles]` one that collects puddles.
-    /// Read once per texture while the content stays as it was: every material slot of
-    /// every placed type asked, each time looking for the sidecar under four names and
-    /// reading it.
     pub fn cfg(&self, name: &str, dirs: &[&Path]) -> TextureCfg {
-        let Some(p) = find_texture(name, dirs) else {
-            return TextureCfg::default();
-        };
-        let generation = omsi_cfg::content_generation();
-        let key = (name.to_string(), p);
-        if let Some((g, c)) = self.cfgs.lock().get(&key) {
-            if *g == generation {
-                return c.clone();
-            }
-        }
-        let c = match cfg_path(name, &key.1) {
-            Some(c) => TextureCfg::load(&c),
+        match find_texture(name, dirs) {
+            Some(p) => match cfg_path(name, &p) {
+                Some(c) => TextureCfg::load(&c),
+                None => TextureCfg::default(),
+            },
             None => TextureCfg::default(),
-        };
-        self.cfgs.lock().insert(key, (generation, c.clone()));
-        c
+        }
     }
 
     /// Load (or fetch from cache) a texture found through `find_texture`.
@@ -749,37 +772,21 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// A texture that is nowhere in the model's own folders is missing, as in Omsi.exe: it is
-    /// not taken from another folder, however near - the GG2 gantries' `[matl_freetex]`
-    /// placeholder `gantry_m1_2_1.tga` used to draw the pack's `texture\gantry\...png` sign,
-    /// and the Grundorf Island `Sign` plates and tunnel signs the `Road` folder's
-    /// `hks_bridge_concrete.bmp`, `hw1.bmp`, `str_asphdrk_*.bmp` and `bysign.png`, which the
-    /// original leaves bare.
     #[test]
-    fn a_missing_texture_is_not_taken_from_another_folder() {
-        let dir = std::env::temp_dir().join(format!("omsi-elsewhere-none-{}", std::process::id()));
-        let own = dir.join("Sceneryobjects/GG2/texture");
-        let nested = own.join("gantry");
-        let sibling = dir.join("Sceneryobjects/Other/texture");
-        let spline = dir.join("Splines/Pack/Roads/texture");
-        let spline_deep = spline.join("sub");
-        let spline_sibling = dir.join("Splines/Pack/Paths/texture");
-        for d in [&nested, &sibling, &spline_deep, &spline_sibling] {
-            std::fs::create_dir_all(d).unwrap();
-        }
-        for d in [&nested, &sibling] {
-            std::fs::write(d.join("gantry_m1_2_1.png"), b"x").unwrap();
-        }
-        for d in [&spline_deep, &spline_sibling] {
-            std::fs::write(d.join("gehweg.bmp"), b"x").unwrap();
-        }
+    fn a_spline_texture_missing_from_its_folders_comes_from_another_spline_folder() {
+        let dir = std::env::temp_dir().join(format!("omsi-elsewhere-{}", std::process::id()));
+        let (own, other) = (dir.join("Splines/Pack/Roads/texture"), dir.join("Splines/Pack/Paths/texture"));
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(other.join("gehweg.bmp"), b"x").unwrap();
+        std::fs::write(other.join("0.png"), b"x").unwrap();
         omsi_cfg::add_content_root(dir.clone());
-        assert_eq!(find_texture_uncached("gantry_m1_2_1.tga", &[&own]), None);
-        assert_eq!(find_texture_uncached("gehweg.bmp", &[&spline]), None);
-        // and a picture installed while the game runs stays missing too
-        std::fs::write(nested.join("late.bmp"), b"x").unwrap();
+        assert_eq!(find_texture_uncached("gehweg.bmp", &[&own]), Some(other.join("gehweg.bmp")));
+        assert_eq!(find_texture_uncached("0", &[&own]), None);
+        // content installed while the game runs is indexed again
+        std::fs::write(other.join("late.bmp"), b"x").unwrap();
         omsi_cfg::content_changed();
-        assert_eq!(find_texture_uncached("late.bmp", &[&own]), None);
+        assert_eq!(find_texture_uncached("late.bmp", &[&own]), Some(other.join("late.bmp")));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -794,22 +801,6 @@ mod tests {
         let upper = find_texture("ANZ-OBEN.JPG .", &[tex.as_path()]).map(|p| p.to_string_lossy().to_lowercase());
         assert_eq!(upper, Some(tex.join("anz-oben.jpg").to_string_lossy().to_lowercase()));
         assert_eq!(find_texture("texture.\\anz-oben.bmp", &[dir.as_path()]), Some(tex.join("anz-oben.jpg")));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    /// A `[matl_freetex]` name of a bus stop sign (`\New Territories East\Freetex_Lolipop\x.bmp`)
-    /// is rooted at `texture\`, however its leading backslash reads as a path root.
-    #[test]
-    fn a_leading_backslash_names_a_texture_below_the_folder() {
-        let dir = std::env::temp_dir().join(format!("omsi-freetex-root-{}", std::process::id()));
-        let tex = dir.join("texture");
-        let sub = tex.join("New Territories East/Freetex_Lolipop");
-        std::fs::create_dir_all(&sub).unwrap();
-        std::fs::write(sub.join("x.bmp"), b"x").unwrap();
-        assert_eq!(
-            find_texture("\\New Territories East\\Freetex_Lolipop\\x.bmp", &[tex.as_path()]),
-            Some(sub.join("x.bmp"))
-        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -891,6 +882,3 @@ mod tests {
         assert_eq!((h.width, h.height), (3, 1));
     }
 }
-
-#[cfg(test)]
-mod transparency_tests;

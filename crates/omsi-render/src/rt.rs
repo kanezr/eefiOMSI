@@ -6,9 +6,7 @@
 //! The window's picture then traces, per pixel of the depth prepass, the sun's shadow and
 //! the sky's occlusion (rt.wgsl); the main pass takes them in place of the shadow map and
 //! the screen-space AO where they are there. What a hit looks like - for the reflections -
-//! comes from a record per geometry: its material's colour and textures, which the hit reads
-//! from small copies of them at its triangle's texture coordinates (rt_tex.rs), or their mean
-//! colours until those are made.
+//! comes from a record per geometry: its material's colour and its texture's mean colour.
 //!
 //! OMSI_NO_RT=1 opens no ray queries (Enhanced+ draws as Enhanced), OMSI_NO_RT_FRAME=1 keeps
 //! them but traces nothing, OMSI_NO_RT_GRADE=1 leaves out Enhanced+'s grade, and
@@ -29,7 +27,7 @@ const SUN_CONE: f32 = 0.012;
 /// brings hundreds of meshes; they come into the shadows over a few frames instead of a hitch.
 const BLAS_BUDGET: usize = 320;
 /// Texture means worked out per frame at most.
-pub(super) const AVG_BUDGET: usize = 128;
+const AVG_BUDGET: usize = 128;
 /// Frames a pixel's rays are accumulated over at most.
 const HISTORY: f32 = 24.0;
 const NO_TEX: u32 = u32::MAX;
@@ -50,52 +48,6 @@ struct BlasKey {
     glass: u64,
 }
 
-/// A `BlasKey` made of borrowed buffers, to look one up without cloning them (hashed the
-/// same: the same fields in the same order).
-#[derive(Hash)]
-struct BlasKeyRef<'a> {
-    vb: &'a wgpu::Buffer,
-    ib: &'a wgpu::Buffer,
-    gen: u64,
-    first_vertex: u32,
-    first_index: u32,
-    vertex_count: u32,
-    solid: u64,
-    cut: u64,
-    glass: u64,
-}
-
-impl hashbrown::Equivalent<BlasKey> for BlasKeyRef<'_> {
-    fn equivalent(&self, k: &BlasKey) -> bool {
-        *self.vb == k.vb
-            && *self.ib == k.ib
-            && (self.gen, self.first_vertex, self.first_index, self.vertex_count, self.solid, self.cut, self.glass)
-                == (k.gen, k.first_vertex, k.first_index, k.vertex_count, k.solid, k.cut, k.glass)
-    }
-}
-
-impl BlasKeyRef<'_> {
-    fn to_key(&self) -> BlasKey {
-        BlasKey {
-            vb: self.vb.clone(),
-            ib: self.ib.clone(),
-            gen: self.gen,
-            first_vertex: self.first_vertex,
-            first_index: self.first_index,
-            vertex_count: self.vertex_count,
-            solid: self.solid,
-            cut: self.cut,
-            glass: self.glass,
-        }
-    }
-}
-
-/// What a kept bind group was made with: `RayTracer::bind_gen` and the textures it names.
-type RtBindKey = (u64, Vec<wgpu::TextureView>);
-
-/// A top-level instance as last built: its structure, transform, record base and mask.
-type TlasItem = (wgpu::Blas, [f32; 12], u32, u8);
-
 struct BlasEntry {
     blas: wgpu::Blas,
     sizes: Vec<wgpu::BlasTriangleGeometrySizeDescriptor>,
@@ -113,14 +65,9 @@ struct Record {
     tex: u32,
     trans: u32,
     flags: u32,
-    uvs: u32,
+    pad: u32,
     color: [f32; 4],
-    uvt: [f32; 4],
 }
-
-/// The size of the shaders' `Record` (for the shader test).
-#[cfg(test)]
-pub(super) const RECORD_SIZE: usize = std::mem::size_of::<Record>();
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -139,7 +86,16 @@ struct Params {
     vehicle_centre: [f32; 4],
     sky: [f32; 4],
     sun_light: [f32; 4],
+    /// x 1: the sun's shadow is traced (0: only the occlusion is; the shadow map holds the shadows)
+    flags: [f32; 4],
+    /// [ROLLBACK rtspot-112] the spot lights nearest the camera, two entries each: xyz the lamp
+    /// (render-origin relative) and w its range; xyz its direction and w the cosine of its
+    /// outer cone. The reflections leave out what they light (rt_reflect.wgsl `spot_lit`).
+    spots: [[f32; 4]; RT_SPOTS * 2],
 }
+
+/// How many spot lights the reflections know of (rt_reflect.wgsl `RT_SPOTS`).
+const RT_SPOTS: usize = 12;
 
 /// The traced lighting's textures for one picture size (all rgba16float: r the ambient
 /// occlusion, g the view depth it was traced at, b the sun's visibility (< 0: not traced),
@@ -153,29 +109,16 @@ pub(super) struct Targets {
 }
 
 pub(super) struct RayTracer {
-    blas: hashbrown::HashMap<BlasKey, BlasEntry>,
+    blas: HashMap<BlasKey, BlasEntry>,
     /// Meshes whose vertices changed (skinned people): their structures are built again.
     dirty: std::cell::RefCell<std::collections::HashSet<MeshId>>,
     tlas: wgpu::Tlas,
     tlas_cap: u32,
     tlas_used: usize,
-    /// The instances the top level was last built with (`tlas_built`): a frame with the same
-    /// ones, and no structure built again, keeps it as it is.
-    tlas_last: Vec<TlasItem>,
-    tlas_built: bool,
-    /// What the records buffer holds.
-    records_sent: Vec<Record>,
-    /// Bumped whenever a buffer or the top level the bind groups name is made anew; the
-    /// lighting's and the reflections' bind groups are kept while it and their textures stay.
-    bind_gen: u64,
-    trace_groups: Option<(RtBindKey, [wgpu::BindGroup; 2])>,
-    refl_groups: Option<(RtBindKey, [wgpu::BindGroup; 2])>,
     records: Vec<Record>,
     records_buf: wgpu::Buffer,
     tex_avg: wgpu::Buffer,
     tex_gen: Vec<u64>,
-    /// The textures' small copies and the meshes' texture coordinates, for the reflections.
-    tex: rt_tex::TexStore,
     avg_stride: u64,
     avg_layout: wgpu::BindGroupLayout,
     avg_pipeline: wgpu::ComputePipeline,
@@ -202,7 +145,7 @@ pub(super) struct RayTracer {
 
 /// One reflection ray per this many pixels each way (OMSI_RT_REFL_HALF=1: per 2 x 2).
 fn refl_div() -> u32 {
-    if omsi_cfg::flags::OMSI_RT_REFL_HALF.is_set() { 2 } else { 1 }
+    if omsi_cfg::env::var_os("OMSI_RT_REFL_HALF").is_some() { 2 } else { 1 }
 }
 
 /// The traced lighting's shader: the shared ray tracing and its own.
@@ -270,7 +213,7 @@ impl RayTracer {
                     count: None,
                 },
                 texture_entry(2, wgpu::TextureSampleType::Depth),
-                storage_buffer(3, true, false, 48),
+                storage_buffer(3, true, false, 32),
                 storage_buffer(4, true, false, 256),
                 texture_entry(5, wgpu::TextureSampleType::Float { filterable: false }),
                 texture_entry(6, wgpu::TextureSampleType::Float { filterable: false }),
@@ -293,21 +236,18 @@ impl RayTracer {
                 module: &module,
                 entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions { constants: &constants, ..Default::default() },
-                cache: crate::pipeline_cache::get(device).as_ref(),
+                cache: None,
             })
         };
         let trace = pipeline("cs_trace", None);
         let temporal = pipeline("cs_denoise", None);
         let avg_stride = (device.limits().min_storage_buffer_offset_alignment as u64).max(256);
-        let atlas_entries = rt_tex::TexStore::avg_entries();
         let avg_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("texture means"),
             entries: &[
                 texture_entry(0, wgpu::TextureSampleType::Float { filterable: true }),
                 wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
-                storage_buffer(2, false, true, 32),
-                atlas_entries[0],
-                atlas_entries[1],
+                storage_buffer(2, false, true, 16),
             ],
         });
         let avg_module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("texture means"), source: wgpu::ShaderSource::Wgsl(include_str!("rt_avg.wgsl").into()) });
@@ -318,7 +258,7 @@ impl RayTracer {
             module: &avg_module,
             entry_point: Some("cs_tex_avg"),
             compilation_options: Default::default(),
-            cache: crate::pipeline_cache::get(device).as_ref(),
+            cache: None,
         });
         let vis = wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT;
         let tex = |binding, sample_type, view_dimension, visibility| wgpu::BindGroupLayoutEntry {
@@ -341,7 +281,7 @@ impl RayTracer {
                 },
                 wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::AccelerationStructure { vertex_return: false }, count: None },
                 tex(2, wgpu::TextureSampleType::Depth, d2, vis),
-                storage_buffer(3, true, false, 48),
+                storage_buffer(3, true, false, 32),
                 storage_buffer(4, true, false, 256),
                 tex(5, unfilt, d2, vis),
                 tex(6, unfilt, d2, vis),
@@ -356,8 +296,13 @@ impl RayTracer {
                     count: None,
                 },
                 tex(12, unfilt, d2, vis),
-                storage_buffer(13, true, false, 16),
-                tex(14, filt, d2, wgpu::ShaderStages::COMPUTE),
+                tex(13, filt, wgpu::TextureViewDimension::D2Array, wgpu::ShaderStages::COMPUTE),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 14,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
             ],
         });
         let refl_module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("ray-traced reflections"), source: wgpu::ShaderSource::Wgsl(reflect_source().into()) });
@@ -370,7 +315,7 @@ impl RayTracer {
                 module: &refl_module,
                 entry_point: Some(entry),
                 compilation_options: wgpu::PipelineCompilationOptions { constants: &div, ..Default::default() },
-                cache: crate::pipeline_cache::get(device).as_ref(),
+                cache: None,
             })
         };
         let reflect = refl_compute("cs_reflect");
@@ -389,26 +334,19 @@ impl RayTracer {
                 compilation_options: wgpu::PipelineCompilationOptions { constants: &div, ..Default::default() },
             }),
             multiview_mask: None,
-            cache: crate::pipeline_cache::get(device).as_ref(),
+            cache: None,
         });
         let tlas_cap = 8192;
         RayTracer {
-            blas: hashbrown::HashMap::new(),
+            blas: HashMap::new(),
             dirty: Default::default(),
             tlas: Self::make_tlas(device, tlas_cap),
             tlas_cap,
             tlas_used: 0,
-            tlas_last: Vec::new(),
-            tlas_built: false,
-            records_sent: Vec::new(),
-            bind_gen: 0,
-            trace_groups: None,
-            refl_groups: None,
             records: Vec::new(),
             records_buf: Self::make_records(device, 1 << 16),
             tex_avg: Self::make_avg(device, 4096, avg_stride),
             tex_gen: Vec::new(),
-            tex: rt_tex::TexStore::new(device),
             avg_stride,
             avg_layout,
             avg_pipeline,
@@ -514,6 +452,33 @@ impl Renderer {
         (solid, cut, glass)
     }
 
+    /// The light the saloon lamps give a surface of this instance on average, in the picture's
+    /// own terms (0..1, as `interior_lamps` in shader.wgsl adds it): the traced reflections'
+    /// hits add `albedo * this`, so that a lit saloon is lit in a reflection of what is off the
+    /// screen as well (there the picture has no colour to take, and the sun and sky alone
+    /// left it black by night). Taken at the mesh's centre with the lamps' fall-off and an
+    /// average N.L of a half.
+    fn lamp_level(scene: &Scene, inst: &Instance, ro: DVec3, centre: Vec3) -> f32 {
+        let code = inst.interior_lamps;
+        if code == 0 {
+            return inst.interior.clamp(0.0, 0.99);
+        }
+        let first = (code / LAMP_CODE_STRIDE) as usize;
+        let count = (code % LAMP_CODE_STRIDE) as usize;
+        let mut sum = 0.0f32;
+        for l in scene.interior_lights.iter().skip(first).take(count) {
+            let d = (l.position - ro).as_vec3() - centre;
+            let dist2 = d.length_squared().max(1e-4);
+            if l.intensity <= 0.0 || dist2 >= l.radius * l.radius {
+                continue;
+            }
+            let core = l.core.max(0.01);
+            let lum = 0.2126 * l.color[0] + 0.7152 * l.color[1] + 0.0722 * l.color[2];
+            sum += lum * l.intensity * (core * core / dist2) * 0.5;
+        }
+        sum.clamp(0.0, 1.0)
+    }
+
     /// The frame's ray-tracing input: the instances near the camera with their structures
     /// (made for meshes met for the first time) and the records of their geometries, and the
     /// shaders' parameters. False when there is nothing to trace with.
@@ -534,23 +499,13 @@ impl Renderer {
                 }
             }
         }
+        // [ROLLBACK tree-rt-92] the camera is inside the player's vehicle (F1 / F2 views)
+        let in_cabin = lighting.inside.as_ref().is_some_and(|v| point_in_vehicle_box(camera.position, v));
         rt.to_build.clear();
         rt.records.clear();
-        let mut chosen: Vec<TlasItem> = Vec::new();
-        // The blocks of instances wholly out of reach, passed by as the culling does (a
-        // block's sphere holds each of its instances' spheres; a metre to spare for the
-        // rounding): the whole map's instances were measured one by one every frame.
-        let far: Vec<bool> = Self::cull_blocks(scene)
-            .map(|b| b.iter().map(|&(c, r)| (c - cam).length() - r > RT_RANGE + 1.0).collect())
-            .unwrap_or_default();
-        for (k, inst) in scene.instances.iter().enumerate() {
-            if far.get(k / CULL_BLOCK).copied().unwrap_or(false) {
-                continue;
-            }
-            // (a decal - a surface object lying on the road - is no geometry for the rays,
-            // but what such an object raises and casts a shadow from is: the Spandau depot's
-            // halls, one object with its yard, lost their shadow close up in Enhanced+, #1783)
-            if !inst.visible || inst.blob || (inst.decal && !inst.casts_shadow) || inst.ground_layer {
+        let mut chosen: Vec<(BlasKey, [f32; 12], u32, u8)> = Vec::new();
+        for inst in &scene.instances {
+            if !inst.visible || inst.blob || inst.decal || inst.ground_layer {
                 continue;
             }
             let m = &scene.meshes[inst.mesh];
@@ -563,6 +518,7 @@ impl Renderer {
                 }
             }
             let (c, r) = Self::bounding_sphere(scene, inst);
+            let sphere_centre = c;
             let d = (c - cam).length();
             if d - r > RT_RANGE {
                 continue;
@@ -577,10 +533,21 @@ impl Renderer {
                     continue;
                 }
             }
-            let (solid, cut, glass) = Self::traced_ranges(scene, inst);
+            let (solid, mut cut, glass) = Self::traced_ranges(scene, inst);
+            // [ROLLBACK tree-rt-92] seen from inside the player's vehicle the crossed tree
+            // cards (which may stand in the road's clearance) are left out of the traced
+            // scene: a ray meeting one next to the windscreen made the reflections warp
+            if in_cabin && cut != 0 {
+                for (ri, (_, _, slot)) in m.ranges.iter().enumerate().take(64) {
+                    if cut & (1 << ri) != 0 && inst.materials.get(*slot as usize).and_then(|&id| scene.materials.get(id)).is_some_and(|mat| mat.is_tree()) {
+                        cut &= !(1 << ri);
+                    }
+                }
+            }
             if solid | cut | glass == 0 {
                 continue;
             }
+            let lamp = Self::lamp_level(scene, inst, ro, sphere_centre);
             let caster = inst.casts_shadow && !(self.options.omsi_shadow_casters && !inst.omsi_caster);
             let seen = !inst.mirror_only;
             let t = Mat4::from_translation((inst.origin - ro).as_vec3()) * inst.transform;
@@ -594,16 +561,14 @@ impl Renderer {
                 let mask = match kind {
                     0 => (caster as u8) | ((seen as u8) << 1),
                     1 => (seen as u8) << 2,
-                    // (the panes also stop the reflections' rays: a car beside the bus mirrors
-                    // its windows, not the seats behind them in the sun and the open sky)
-                    _ => ((caster as u8) << 3) | ((seen as u8) << 4),
+                    _ => (caster as u8) << 3,
                 };
                 if bits == 0 || mask == 0 {
                     continue;
                 }
-                let key = BlasKeyRef {
-                    vb: &m.vertex_buf,
-                    ib: &m.index_buf,
+                let key = BlasKey {
+                    vb: m.vertex_buf.clone(),
+                    ib: m.index_buf.clone(),
                     gen: m.gen,
                     first_vertex: m.base_vertex.max(0) as u32,
                     first_index: m.first_index,
@@ -639,7 +604,7 @@ impl Renderer {
                             &wgpu::CreateBlasDescriptor { label: None, flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE, update_mode: wgpu::AccelerationStructureUpdateMode::Build },
                             wgpu::BlasGeometrySizeDescriptors::Triangles { descriptors: sizes.clone() },
                         );
-                        rt.blas.entry(key.to_key()).or_insert(BlasEntry { blas, sizes, spans, mesh: inst.mesh, built: false, used: frame })
+                        rt.blas.entry(key.clone()).or_insert(BlasEntry { blas, sizes, spans, mesh: inst.mesh, built: false, used: frame })
                     }
                 };
                 entry.used = frame;
@@ -648,15 +613,14 @@ impl Renderer {
                         continue;
                     }
                     entry.built = true;
-                    rt.to_build.push(key.to_key());
+                    rt.to_build.push(key.clone());
                 }
                 // the geometries' records, in the structure's order
                 let base = rt.records.len() as u32;
                 if base >= (1 << 24) - 64 {
                     break;
                 }
-                let uvs = rt.tex.mesh_uvs(&self.device, inst.mesh, m, frame);
-                for (ri, (first, _, slot)) in m.ranges.iter().enumerate().take(64) {
+                for (ri, (_, _, slot)) in m.ranges.iter().enumerate().take(64) {
                     if bits & (1 << ri) == 0 {
                         continue;
                     }
@@ -676,23 +640,9 @@ impl Renderer {
                     if from_trans {
                         flags |= 4;
                     }
-                    flags |= rt_tex::address_mode(mat.address) << 3;
-                    // (a [matl_transmap] whose alpha is not taken: the slot is opaque, see the
-                    // main pass)
-                    if mat.uniform.params[2] > 0.5 && mat.uniform.params[3] < 0.5 {
-                        flags |= 32;
-                    }
-                    if kind == 2 {
-                        flags |= 64;
-                    }
-                    // (a range's triangles are the mesh's from its first on: a range that
-                    // starts within a triangle has none)
-                    let uvs = uvs.filter(|_| first % 3 == 0).map_or(rt_tex::NO_UV, |b| b + first / 3);
-                    let off = inst.slot_uv.get(*slot as usize).copied().unwrap_or([0.0; 2]);
-                    let repeat = if mat.uniform.extra[0] > 0.5 { mat.uniform.extra[2] } else { 1.0 };
-                    rt.records.push(Record { tex, trans, flags, uvs, color: mat.color, uvt: [repeat, off[0], off[1], 0.0] });
+                    rt.records.push(Record { tex, trans, flags, pad: lamp.to_bits(), color: mat.color });
                 }
-                chosen.push((entry.blas.clone(), rows, base, mask));
+                chosen.push((key, rows, base, mask));
             }
         }
         // the top level: grown when the instances outnumber it
@@ -700,52 +650,30 @@ impl Renderer {
             rt.tlas_cap = (chosen.len() as u32).next_power_of_two();
             rt.tlas = RayTracer::make_tlas(&self.device, rt.tlas_cap);
             rt.tlas_used = 0;
-            rt.tlas_built = false;
-            rt.bind_gen += 1;
         }
-        // (the same instances where they were, and no structure built again: the top level
-        // is kept - a bus standing at a stop with the traffic parked round it)
-        let same = |a: &TlasItem, b: &TlasItem| a.0 == b.0 && a.1.map(f32::to_bits) == b.1.map(f32::to_bits) && a.2 == b.2 && a.3 == b.3;
-        let unchanged = rt.tlas_built
-            && rt.to_build.is_empty()
-            && chosen.len() == rt.tlas_last.len()
-            && chosen.iter().zip(&rt.tlas_last).all(|(a, b)| same(a, b));
-        if !unchanged {
-            for (i, (blas, rows, base, mask)) in chosen.iter().enumerate() {
-                rt.tlas[i] = Some(wgpu::TlasInstance::new(blas, *rows, *base, *mask));
-            }
-            for i in chosen.len()..rt.tlas_used {
-                rt.tlas[i] = None;
-            }
-            rt.tlas_used = chosen.len();
-            rt.tlas_built = false;
+        for (i, (key, rows, base, mask)) in chosen.iter().enumerate() {
+            let blas = &rt.blas[key].blas;
+            rt.tlas[i] = Some(wgpu::TlasInstance::new(blas, *rows, *base, *mask));
         }
+        for i in chosen.len()..rt.tlas_used {
+            rt.tlas[i] = None;
+        }
+        rt.tlas_used = chosen.len();
         rt.instances = chosen.len();
-        rt.tlas_last = chosen;
-        if rt.tex.grown() {
-            rt.bind_gen += 1;
-        }
-        // the records, in a buffer grown as needed; only from the first that changed to the last
+        // the records, in a buffer grown as needed
         let bytes: &[u8] = bytemuck::cast_slice(&rt.records);
         if bytes.len() as u64 > rt.records_buf.size() {
             rt.records_buf = RayTracer::make_records(&self.device, (rt.records.len() as u64).next_power_of_two());
-            rt.records_sent.clear();
-            rt.bind_gen += 1;
         }
-        let differs = |k: &usize| rt.records_sent.get(*k).is_none_or(|r| bytemuck::bytes_of(r) != bytemuck::bytes_of(&rt.records[*k]));
-        if let Some(first) = (0..rt.records.len()).find(differs) {
-            let last = (first..rt.records.len()).rev().find(differs).unwrap_or(first);
-            let unit = std::mem::size_of::<Record>();
-            self.queue.write_buffer(&rt.records_buf, (first * unit) as u64, &bytes[first * unit..(last + 1) * unit]);
+        if !bytes.is_empty() {
+            self.queue.write_buffer(&rt.records_buf, 0, bytes);
         }
-        rt.records_sent.clone_from(&rt.records);
         // structures nobody used for a while are let go
         if frame % 240 == 0 {
             rt.blas.retain(|_, e| frame - e.used < 1200);
-            rt.tex.retain(frame);
         }
-        if omsi_cfg::flags::OMSI_DEBUG_RT.is_set() && frame % 30 == 1 {
-            log::info!("ray tracing: {} instances, {} geometries, {} structures ({} built this frame)", rt.instances, rt.records.len(), rt.blas.len(), rt.to_build.len());
+        if omsi_cfg::env::var_os("OMSI_DEBUG_RT").is_some() && frame % 30 == 1 {
+            log::info!("ray tracing: {} instances, {} geometries, {} structures ({} built this frame)", chosen.len(), rt.records.len(), rt.blas.len(), rt.to_build.len());
         }
         // --- the parameters
         let sun = lighting.sun_dir.normalize_or_zero();
@@ -765,7 +693,36 @@ impl Renderer {
             ),
             _ => ([0.0; 4], [0.0; 4], [0.0; 4], [0.0; 4]),
         };
-        let debug = omsi_cfg::flags::OMSI_DEBUG_RT.parse::<f32>().unwrap_or(0.0);
+        let debug = omsi_cfg::env::var("OMSI_DEBUG_RT").ok().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+        // [ROLLBACK rtspot-112] the spot lights (vehicles' headlamps, beam cookies too) nearest the
+        // camera: the pools they lay on the road and the grass are not shown in the paint
+        let mut spots = [[0.0f32; 4]; RT_SPOTS * 2];
+        {
+            let mut near: Vec<(f32, &PointLight)> = scene
+                .lights
+                .iter()
+                .filter(|l| {
+                    l.radius > 0.0
+                        && l.intensity > 0.0
+                        && l.direction.length_squared() > 1e-6
+                        && l.mode != LightMode::Vanilla
+                })
+                .map(|l| ((l.position - ro).as_vec3().distance_squared(cam), l))
+                .collect();
+            near.sort_by(|a, b| a.0.total_cmp(&b.0));
+            for (k, (_, l)) in near.iter().take(RT_SPOTS).enumerate() {
+                let at = (l.position - ro).as_vec3();
+                let dir = l.direction.normalize();
+                // (a beam cookie reaches wider than its cone says)
+                let outer = if l.cookie > 0 {
+                    l.cone[1].min(0.5)
+                } else {
+                    l.cone[1]
+                };
+                spots[2 * k] = [at.x, at.y, at.z, l.radius];
+                spots[2 * k + 1] = [dir.x, dir.y, dir.z, outer];
+            }
+        }
         let p = Params {
             inv_view_proj: view_proj.inverse().to_cols_array_2d(),
             view_proj: view_proj.to_cols_array_2d(),
@@ -781,9 +738,19 @@ impl Renderer {
             vehicle_centre,
             sky: [0.0; 4],
             sun_light: [0.0; 4],
+            flags: [if self.options.rt_shadows { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+            spots,
         };
         self.queue.write_buffer(&rt.params, 0, bytemuck::bytes_of(&p));
         rt.prev = Some((view_proj, ro, vehicle));
+        // the world probe's anchor, from where the render origin is now
+        if let Some(c) = self.cab_probe.as_mut() {
+            let off = c.anchor.map_or([0.0; 4], |a| (a - ro).as_vec3().extend(0.0).to_array());
+            if c.data.anchor != off {
+                c.data.anchor = off;
+                self.queue.write_buffer(&c.uniform, 0, bytemuck::bytes_of(&c.data));
+            }
+        }
         true
     }
 
@@ -799,7 +766,6 @@ impl Renderer {
             let bigger = RayTracer::make_avg(&self.device, (scene.textures.len() as u64).next_power_of_two(), rt.avg_stride);
             encoder.copy_buffer_to_buffer(&rt.tex_avg, 0, &bigger, 0, rt.tex_avg.size());
             rt.tex_avg = bigger;
-            rt.bind_gen += 1;
         }
         let mut wanted: Vec<usize> = Vec::new();
         for r in &rt.records {
@@ -822,23 +788,16 @@ impl Renderer {
         if wanted.is_empty() {
             return;
         }
-        if rt.tex.ensure_atlas(&self.device, encoder, &wanted) {
-            rt.bind_gen += 1;
-        }
-        rt.tex.write_tiles(&self.queue, &wanted);
         let groups: Vec<wgpu::BindGroup> = wanted
             .iter()
             .map(|&t| {
-                let [atlas, tile] = rt.tex.avg_bindings();
                 self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("texture mean"),
                     layout: &rt.avg_layout,
                     entries: &[
                         wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&scene.textures[t].view) },
-                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.tone.lin_sampler) },
-                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &rt.tex_avg, offset: 0, size: wgpu::BufferSize::new(32) }) },
-                        atlas,
-                        tile,
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.lin_sampler) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &rt.tex_avg, offset: 0, size: wgpu::BufferSize::new(16) }) },
                     ],
                 })
             })
@@ -846,8 +805,8 @@ impl Renderer {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("texture means"), timestamp_writes: None });
             pass.set_pipeline(&rt.avg_pipeline);
-            for (k, (&t, bg)) in wanted.iter().zip(&groups).enumerate() {
-                pass.set_bind_group(0, bg, &[(t as u64 * rt.avg_stride) as u32, rt.tex.tile_offset(k)]);
+            for (&t, bg) in wanted.iter().zip(&groups) {
+                pass.set_bind_group(0, bg, &[(t as u64 * rt.avg_stride) as u32]);
                 pass.dispatch_workgroups(1, 1, 1);
             }
         }
@@ -861,10 +820,9 @@ impl Renderer {
     pub(super) fn encode_ray_tracing(&mut self, encoder: &mut wgpu::CommandEncoder, scene: &Scene, queries: Option<&wgpu::QuerySet>, timed: &mut Vec<&'static str>) {
         self.encode_texture_means(encoder, scene);
         let Some(rt) = self.rt.as_mut() else { return };
-        rt.tex.encode_uvs(&self.device, &self.queue, encoder);
-        let Some(depth) = self.targets.ao.as_ref().map(|a| &a.depth_view) else { return };
+        let Some(depth) = self.ao.as_ref().map(|a| &a.depth_view) else { return };
         let Some(t) = rt.targets.as_ref() else { return };
-        if !rt.to_build.is_empty() || !rt.tlas_built {
+        {
             let entries: Vec<wgpu::BlasBuildEntry> = rt
                 .to_build
                 .iter()
@@ -892,7 +850,6 @@ impl Renderer {
                 })
                 .collect();
             encoder.build_acceleration_structures(entries.iter(), std::iter::once(&rt.tlas));
-            rt.tlas_built = true;
         }
         let group = |inp: &wgpu::TextureView, raw: &wgpu::TextureView, out: &wgpu::TextureView| {
             self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -907,18 +864,15 @@ impl Renderer {
                     wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(inp) },
                     wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(raw) },
                     wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(out) },
-                    wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(&self.tone.lin_sampler) },
+                    wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(&self.lin_sampler) },
                 ],
             })
         };
         // (each pass's input never is its output)
-        let key: RtBindKey = (rt.bind_gen, vec![depth.clone(), t.tmp.clone(), t.raw.clone(), t.out.clone()]);
-        if rt.trace_groups.as_ref().is_none_or(|g| g.0 != key) {
-            rt.trace_groups = Some((key, [group(&t.tmp, &t.tmp, &t.raw), group(&t.raw, &t.tmp, &t.out)]));
-        }
-        let [trace_bg, denoise_bg] = &rt.trace_groups.as_ref().expect("made above").1;
+        let trace_bg = group(&t.tmp, &t.tmp, &t.raw);
+        let denoise_bg = group(&t.raw, &t.tmp, &t.out);
         let (gx, gy) = (t.size.0.div_ceil(8), t.size.1.div_ceil(8));
-        for (label, pipe, bg) in [("rt trace", &rt.trace, trace_bg), ("rt denoise", &rt.temporal, denoise_bg)] {
+        for (label, pipe, bg) in [("rt trace", &rt.trace, &trace_bg), ("rt denoise", &rt.temporal, &denoise_bg)] {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some(label),
                 timestamp_writes: pass_timer(queries, timed, label).map(|t| wgpu::ComputePassTimestampWrites {
@@ -934,11 +888,213 @@ impl Renderer {
     }
 }
 
+/// The cabin probe's pictures are this many pixels square.
+const CAB_SIZE: u32 = 512;
+/// The faces' field of view: wider than a cube's 90 degrees, so that they overlap.
+const CAB_FOV: f32 = 100.0;
+/// Yaw (added to the vehicle's heading) and pitch of the six faces: ahead, right, behind,
+/// left, up, down (a pitch of exactly 90 has no "up" to look with).
+const CAB_FACES: [(f32, f32); 6] = [(0.0, 0.0), (90.0, 0.0), (180.0, 0.0), (270.0, 0.0), (0.0, 88.0), (0.0, -88.0)];
+
+/// The probes in the vehicle's frame, while the camera is inside it: the eye, the middle of the
+/// vehicle and its rear, six faces each.
+const CAB_VEHICLE_FACES: usize = 18;
+/// All the faces: those, and six more of the probe at the camera in the world's own frame (the
+/// camera outside the vehicle).
+const CAB_FACE_COUNT: usize = 24;
+/// Farther than this from the world probe's anchor and its faces are forgotten (metres).
+const CAB_ANCHOR_RANGE: f64 = 250.0;
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct CabUniform {
+    /// Each face: a point in the vehicle's frame (x right, y ahead, z up, from its origin) to clip space.
+    vp: [[[f32; 4]; 4]; CAB_FACE_COUNT],
+    /// Each face's centre in its frame (the vehicle's, or for the world probe's faces the anchor's);
+    /// w 1 once a face of the vehicle's frame has been drawn, 2 for one of the world's.
+    centre: [[f32; 4]; CAB_FACE_COUNT],
+    /// Where the world probe's anchor is, relative to the render origin (xyz; kept up to date every frame).
+    anchor: [f32; 4],
+}
+
+/// Six pictures of the player's vehicle from the camera inside it, drawn one a frame with the
+/// plain shading (its lamps and all), and the matrices that find a point of the vehicle in them.
+pub(super) struct CabProbe {
+    _texture: wgpu::Texture,
+    faces: Vec<wgpu::TextureView>,
+    /// What the reflections sample (binding 13).
+    array: wgpu::TextureView,
+    uniform: wgpu::Buffer,
+    data: CabUniform,
+    next: usize,
+    next_world: usize,
+    /// The world probe's frame: a point near the camera, kept while the camera stays within `CAB_ANCHOR_RANGE` of it.
+    anchor: Option<DVec3>,
+}
+
+impl Renderer {
+    /// Forget the faces in a range of the probe (they are drawn again before they are read).
+    fn forget_cab_faces(&mut self, range: std::ops::Range<usize>) {
+        let Some(c) = self.cab_probe.as_mut() else { return };
+        let mut changed = false;
+        for v in &mut c.data.centre[range] {
+            if v[3] != 0.0 {
+                v[3] = 0.0;
+                changed = true;
+            }
+        }
+        if changed {
+            self.queue.write_buffer(&c.uniform, 0, bytemuck::bytes_of(&c.data));
+        }
+    }
+
+    /// Make the cabin probe's textures (once, the first time the traced reflections are drawn).
+    pub(super) fn ensure_cab_probe(&mut self) {
+        if self.cab_probe.is_some() || self.rt.is_none() {
+            return;
+        }
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cabin probe"),
+            size: wgpu::Extent3d { width: CAB_SIZE, height: CAB_SIZE, depth_or_array_layers: CAB_FACE_COUNT as u32 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let faces = (0..CAB_FACE_COUNT as u32)
+            .map(|i| {
+                texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("cabin probe face"),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: i,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect();
+        let array = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("cabin probe"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let data: CabUniform = bytemuck::Zeroable::zeroed();
+        let uniform = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("cabin probe"),
+            size: std::mem::size_of::<CabUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.queue.write_buffer(&uniform, 0, bytemuck::bytes_of(&data));
+        self.cab_probe = Some(CabProbe { _texture: texture, faces, array, uniform, data, next: 0, next_world: 0, anchor: None });
+    }
+
+    /// Enhanced+ with the camera inside the player's vehicle: draw the next face of the cabin
+    /// probe (one a frame). Outside the vehicle the faces are forgotten. Returns whether one was drawn.
+    /// `OMSI_CAB_PROBE=0` (or `OMSI_CAB_REFLECTION=0`) leaves it out.
+    pub fn render_cab_probe(&mut self, scene: &mut Scene, camera: &Camera, lighting: &Lighting) -> bool {
+        let off = |name: &str| omsi_cfg::env::var(name).ok().is_some_and(|v| v.trim() == "0");
+        let active = self.rt.is_some()
+            && self.options.rt_reflections > 0
+            && !self.rt_error.load(std::sync::atomic::Ordering::Relaxed)
+            && lighting.enhanced
+            && self.hdr_pass.is_some()
+            && !off("OMSI_CAB_PROBE")
+            && !off("OMSI_CAB_REFLECTION");
+        if !active {
+            self.forget_cab_faces(0..CAB_FACE_COUNT);
+            return false;
+        }
+        let inside = lighting.inside.filter(|i| point_in_vehicle_box(camera.position, i));
+        self.ensure_cab_probe();
+        if self.cab_probe.is_none() {
+            return false;
+        }
+        let Some((origin, heading, bb)) = inside else {
+            // --- the camera is outside the vehicle: the probe at the camera, in the world's frame
+            self.forget_cab_faces(0..CAB_VEHICLE_FACES);
+            let anchor = match self.cab_probe.as_ref().and_then(|c| c.anchor) {
+                Some(a) if (camera.position - a).length() < CAB_ANCHOR_RANGE => a,
+                _ => {
+                    let a = (camera.position / 100.0).floor() * 100.0;
+                    self.forget_cab_faces(CAB_VEHICLE_FACES..CAB_FACE_COUNT);
+                    if let Some(c) = self.cab_probe.as_mut() {
+                        c.anchor = Some(a);
+                    }
+                    a
+                }
+            };
+            let Some(c) = self.cab_probe.as_ref() else { return false };
+            let face = c.next_world % 6;
+            let face_i = CAB_VEHICLE_FACES + face;
+            let view = c.faces[face_i].clone();
+            let (yaw, pitch) = CAB_FACES[face];
+            let cam = Camera { position: camera.position, yaw, pitch, roll: 0.0, fov_deg: CAB_FOV, near: 0.05, far: 300.0 };
+            self.texture_aspect = Some(1.0);
+            self.render_inner(scene, &view, CAB_SIZE, CAB_SIZE, &cam, lighting, false, None, None, false);
+            self.texture_aspect = None;
+            let m = cam.view_proj(1.0, anchor);
+            let at = (camera.position - anchor).as_vec3();
+            let Some(c) = self.cab_probe.as_mut() else { return false };
+            c.data.vp[face_i] = m.to_cols_array_2d();
+            c.data.centre[face_i] = [at.x, at.y, at.z, 2.0];
+            c.next_world = (face + 1) % 6;
+            self.queue.write_buffer(&c.uniform, 0, bytemuck::bytes_of(&c.data));
+            return true;
+        };
+        // --- the camera is inside the vehicle: the probes in its frame
+        self.forget_cab_faces(CAB_VEHICLE_FACES..CAB_FACE_COUNT);
+        let Some(c) = self.cab_probe.as_ref() else { return false };
+        let face_i = c.next % CAB_VEHICLE_FACES;
+        let (probe, face) = (face_i / 6, face_i % 6);
+        let view = c.faces[face_i].clone();
+        // (the vehicle's frame: x = d.x ch - d.y sh, y = d.x sh + d.y ch, as the shader turns a point into it)
+        let (sh, ch) = (heading as f32).to_radians().sin_cos();
+        let d = (camera.position - origin).as_vec3();
+        let eye = Vec3::new(d.x * ch - d.y * sh, d.x * sh + d.y * ch, d.z);
+        // the eye, the middle of the vehicle's box, and a quarter of its length behind that (at the eye's height)
+        let q = match probe {
+            0 => eye,
+            1 => Vec3::new(bb[3], bb[4], eye.z),
+            _ => Vec3::new(bb[3], bb[4] - 0.28 * bb[1], eye.z),
+        };
+        let position = if probe == 0 {
+            camera.position
+        } else {
+            origin + DVec3::new((q.x * ch + q.y * sh) as f64, (-q.x * sh + q.y * ch) as f64, q.z as f64)
+        };
+        let (yaw, pitch) = CAB_FACES[face];
+        let cam = Camera {
+            position,
+            yaw: (heading as f32 + yaw).rem_euclid(360.0),
+            pitch,
+            roll: 0.0,
+            fov_deg: CAB_FOV,
+            near: 0.05,
+            far: 250.0,
+        };
+        self.texture_aspect = Some(1.0);
+        self.render_inner(scene, &view, CAB_SIZE, CAB_SIZE, &cam, lighting, false, None, None, false);
+        self.texture_aspect = None;
+        // (the vehicle's frame to the world)
+        let to_world = Mat4::from_cols(glam::Vec4::new(ch, -sh, 0.0, 0.0), glam::Vec4::new(sh, ch, 0.0, 0.0), glam::Vec4::Z, glam::Vec4::W);
+        let m = cam.view_proj(1.0, origin) * to_world;
+        let Some(c) = self.cab_probe.as_mut() else { return false };
+        c.data.vp[face_i] = m.to_cols_array_2d();
+        c.data.centre[face_i] = [q.x, q.y, q.z, 1.0];
+        c.next = (face_i + 1) % CAB_VEHICLE_FACES;
+        self.queue.write_buffer(&c.uniform, 0, bytemuck::bytes_of(&c.data));
+        true
+    }
+}
+
 impl Renderer {
     /// The ray-traced reflections of the window's picture, added to `HdrTargets::view` after
     /// the main pass (and before the rain on the glass, which looks through it).
     pub(super) fn encode_rt_reflections(&mut self, encoder: &mut wgpu::CommandEncoder, w: u32, h: u32, queries: Option<&wgpu::QuerySet>, timed: &mut Vec<&'static str>) {
-        let (Some(rt), Some(hdr), Some(ao), Some(probe)) = (self.rt.as_mut(), self.targets.hdr_targets.get(&(w, h)), self.targets.ao.as_ref(), self.tone.probe.as_ref()) else { return };
+        self.ensure_cab_probe();
+        let (Some(rt), Some(hdr), Some(ao), Some(probe), Some(cab)) = (self.rt.as_mut(), self.hdr_targets.get(&(w, h)), self.ao.as_ref(), self.probe.as_ref(), self.cab_probe.as_ref()) else { return };
         let Some(gbuf) = hdr.gbuf.as_ref() else { return };
         let half = (w.div_ceil(refl_div()), h.div_ceil(refl_div()));
         if rt.refl.as_ref().is_none_or(|r| r.0 != half) {
@@ -973,22 +1129,19 @@ impl Renderer {
                     wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&gbuf[0].1) },
                     wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&gbuf[1].1) },
                     wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(out) },
-                    wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(&self.tone.lin_sampler) },
+                    wgpu::BindGroupEntry { binding: 8, resource: wgpu::BindingResource::Sampler(&self.lin_sampler) },
                     wgpu::BindGroupEntry { binding: 9, resource: wgpu::BindingResource::TextureView(scene) },
                     wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::TextureView(&probe.view) },
-                    wgpu::BindGroupEntry { binding: 11, resource: self.tone.enh_buf.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 11, resource: self.enh_buf.as_entire_binding() },
                     wgpu::BindGroupEntry { binding: 12, resource: wgpu::BindingResource::TextureView(h12) },
-                    wgpu::BindGroupEntry { binding: 13, resource: rt.tex.uvs.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 14, resource: wgpu::BindingResource::TextureView(&rt.tex.atlas_view) },
+                    wgpu::BindGroupEntry { binding: 13, resource: wgpu::BindingResource::TextureView(&cab.array) },
+                    wgpu::BindGroupEntry { binding: 14, resource: cab.uniform.as_entire_binding() },
                 ],
             })
         };
         // (no pass's output is among its inputs)
-        let key: RtBindKey = (rt.bind_gen, vec![ao.depth_view.clone(), gbuf[0].1.clone(), gbuf[1].1.clone(), raw.clone(), hdr.view.clone(), probe.view.clone(), dummy.clone()]);
-        if rt.refl_groups.as_ref().is_none_or(|g| g.0 != key) {
-            rt.refl_groups = Some((key, [group(raw, &hdr.view, dummy), group(&rt.spare, dummy, raw)]));
-        }
-        let [trace_bg, composite_bg] = &rt.refl_groups.as_ref().expect("made above").1;
+        let trace_bg = group(raw, &hdr.view, dummy);
+        let composite_bg = group(&rt.spare, dummy, raw);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("rt reflections"),
@@ -1000,7 +1153,7 @@ impl Renderer {
             });
             let (gx, gy) = (half.0.div_ceil(8), half.1.div_ceil(8));
             pass.set_pipeline(&rt.reflect);
-            pass.set_bind_group(0, trace_bg, &[]);
+            pass.set_bind_group(0, &trace_bg, &[]);
             pass.dispatch_workgroups(gx, gy, 1);
         }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1017,7 +1170,7 @@ impl Renderer {
             multiview_mask: None,
         });
         pass.set_pipeline(&rt.composite);
-        pass.set_bind_group(0, composite_bg, &[]);
+        pass.set_bind_group(0, &composite_bg, &[]);
         pass.draw(0..3, 0..1);
     }
 }

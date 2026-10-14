@@ -1,135 +1,150 @@
-//! The units the game's own texts give speeds, distances and temperatures in (the `units`
-//! setting): metric, British (miles an hour, miles and yards, degrees Celsius) or American
-//! (miles an hour, miles and feet, degrees Fahrenheit). The simulation keeps its metres and
-//! kilometres an hour; only what is shown changes. The cockpit's own instruments are the
-//! bus's and stay as its maker drew them.
+//! [ROLLBACK units-80] Metric or imperial figures on the game's own displays (the information
+//! bar, the touch panel's speed, the navigator, the names over the other players): speed in
+//! km/h or mph, distances in m / km or yd / mi, the odometer in km or mi. The `imperial_units`
+//! setting; kept in one place for the displays to ask, not passed to each of them.
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Units {
-    Metric,
-    British,
-    American,
+static IMPERIAL: AtomicBool = AtomicBool::new(false);
+
+/// km/h to mph, m to yards and to miles.
+const MPH: f32 = 0.621_371_2;
+const YARD: f64 = 1.093_613_3;
+const MILE: f64 = 0.000_621_371_2;
+
+pub fn set_imperial(on: bool) {
+    IMPERIAL.store(on, Ordering::Relaxed);
 }
 
-const METRES_PER_MILE: f64 = 1609.344;
-const METRES_PER_YARD: f64 = 0.9144;
-const METRES_PER_FOOT: f64 = 0.3048;
+pub fn imperial() -> bool {
+    IMPERIAL.load(Ordering::Relaxed)
+}
 
-static CURRENT: AtomicU8 = AtomicU8::new(0);
+/// A speed given in km/h, in the unit shown.
+pub fn speed_value(kmh: f32) -> f32 {
+    if imperial() {
+        kmh * MPH
+    } else {
+        kmh
+    }
+}
 
-impl Units {
-    /// The setting's value (`metric`, `uk`, `us`); anything else is metric.
-    pub(crate) fn from_setting(v: &str) -> Units {
-        match v.trim().to_ascii_lowercase().as_str() {
-            "uk" | "british" | "imperial_uk" => Units::British,
-            "us" | "american" | "imperial" => Units::American,
-            _ => Units::Metric,
+/// The speed unit: `metric` (the language's own writing of km/h) or "mph".
+pub fn speed_unit(metric: &'static str) -> &'static str {
+    if imperial() {
+        "mph"
+    } else {
+        metric
+    }
+}
+
+/// "50 km/h" / "31 mph".
+pub fn speed_text(kmh: f32) -> String {
+    format!("{:.0} {}", speed_value(kmh), speed_unit("km/h"))
+}
+
+fn round_to(v: f64, step: f64) -> f64 {
+    if step > 0.0 {
+        ((v / step).round() * step).max(step)
+    } else {
+        v
+    }
+}
+
+/// A distance in metres: "230 m" / "1.2 km", or "250 yd" / "0.7 mi". Short distances are rounded to
+/// `step` of the unit shown (0: not rounded).
+pub fn distance(m: f64, step: f64) -> String {
+    if imperial() {
+        let yd = m * YARD;
+        if yd >= 1000.0 {
+            format!("{:.1} mi", m * MILE)
+        } else {
+            format!("{:.0} yd", round_to(yd, step))
         }
+    } else if m >= 1000.0 {
+        format!("{:.1} km", m / 1000.0)
+    } else {
+        format!("{:.0} m", round_to(m, step))
     }
+}
 
-    /// The setting's value for these units.
-    pub(crate) fn setting(self) -> &'static str {
-        match self {
-            Units::Metric => "metric",
-            Units::British => "uk",
-            Units::American => "us",
+/// `n` with a space between the thousands: 1433243 is "1 433 243".
+pub fn grouped(n: i64) -> String {
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::new();
+    for (k, c) in digits.chars().enumerate() {
+        if k > 0 && (digits.len() - k) % 3 == 0 {
+            out.push(' ');
         }
+        out.push(c);
     }
-
-    /// The units the texts use now.
-    pub(crate) fn now() -> Units {
-        match CURRENT.load(Ordering::Relaxed) {
-            1 => Units::British,
-            2 => Units::American,
-            _ => Units::Metric,
-        }
+    if n < 0 {
+        out.insert(0, '-');
     }
+    out
+}
 
-    /// Use these units from now on (the settings read or changed).
-    pub(crate) fn set(self) {
-        CURRENT.store(self as u8, Ordering::Relaxed);
+/// The odometer as the dials write it (the tenth cut off, not rounded) from the bus's whole
+/// kilometres and the metres beyond: "1 433 243.3 km" / "890 534.6 mi".
+pub fn odometer(km: i64, m: i64) -> String {
+    let m = m.clamp(0, 999);
+    if imperial() {
+        let miles = km as f64 * 0.621_371_192 + m as f64 * 0.000_621_371_192;
+        let tenths = (miles * 10.0 + 1e-6).floor() as i64;
+        format!("{}.{} mi", grouped(tenths / 10), tenths % 10)
+    } else {
+        format!("{}.{} km", grouped(km), m / 100)
     }
+}
 
-    /// A speed's number in these units and its unit.
-    pub(crate) fn speed(self, kmh: f32) -> (f32, &'static str) {
-        match self {
-            Units::Metric => (kmh, "km/h"),
-            _ => (kmh * 1000.0 / METRES_PER_MILE as f32, "mph"),
-        }
-    }
-
-    /// A speed as text: `48 km/h`, `30 mph`.
-    pub(crate) fn speed_text(self, kmh: f32) -> String {
-        let (v, unit) = self.speed(kmh);
-        format!("{v:.0} {unit}")
-    }
-
-    /// A speed limit as a sign shows it: to the nearest five.
-    pub(crate) fn speed_limit(self, kmh: f32) -> f32 {
-        ((self.speed(kmh).0 / 5.0).round() * 5.0).max(5.0)
-    }
-
-    /// A distance on the road as a navigator says it: kilometres from one, else metres to
-    /// ten; miles from a quarter (British) or a tenth (American), else yards to ten or feet
-    /// to fifty.
-    pub(crate) fn distance(self, m: f64) -> String {
-        let m = m.max(0.0);
-        match self {
-            Units::Metric if m >= 1000.0 => format!("{:.1} km", m / 1000.0),
-            Units::Metric => format!("{:.0} m", ((m / 10.0).round() * 10.0).max(10.0)),
-            Units::British if m >= METRES_PER_MILE / 4.0 => format!("{:.1} mi", m / METRES_PER_MILE),
-            Units::British => format!("{:.0} yd", ((m / METRES_PER_YARD / 10.0).round() * 10.0).max(10.0)),
-            Units::American if m >= METRES_PER_MILE / 10.0 => format!("{:.1} mi", m / METRES_PER_MILE),
-            Units::American => format!("{:.0} ft", ((m / METRES_PER_FOOT / 50.0).round() * 50.0).max(50.0)),
-        }
-    }
-
-    /// A long distance (driven, a mileometer): `12.3 km`, `7.6 mi`.
-    pub(crate) fn long_distance(self, km: f64, decimals: usize) -> String {
-        match self {
-            Units::Metric => format!("{:.*} km", decimals, km),
-            _ => format!("{:.*} mi", decimals, km * 1000.0 / METRES_PER_MILE),
-        }
-    }
-
-    /// A temperature: `15 °C`, `59 °F`.
-    pub(crate) fn temperature(self, celsius: f32) -> String {
-        match self {
-            Units::American => format!("{:.0} °F", celsius * 1.8 + 32.0),
-            _ => format!("{celsius:.0} °C"),
-        }
+/// The scale bar's lengths (metres, text), shortest first.
+pub fn scale_steps() -> &'static [(f64, &'static str)] {
+    if imperial() {
+        &[
+            (9.144, "10 yd"),
+            (18.288, "20 yd"),
+            (45.72, "50 yd"),
+            (91.44, "100 yd"),
+            (182.88, "200 yd"),
+            (457.2, "500 yd"),
+            (804.672, "0.5 mi"),
+            (1609.344, "1 mi"),
+            (3218.688, "2 mi"),
+            (8046.72, "5 mi"),
+        ]
+    } else {
+        &[
+            (10.0, "10 m"),
+            (20.0, "20 m"),
+            (50.0, "50 m"),
+            (100.0, "100 m"),
+            (200.0, "200 m"),
+            (500.0, "500 m"),
+            (1000.0, "1 km"),
+            (2000.0, "2 km"),
+            (5000.0, "5 km"),
+        ]
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Units::*;
     use super::*;
 
     #[test]
-    fn speeds_distances_and_temperatures_in_each_unit() {
-        assert_eq!(Metric.speed_text(48.3), "48 km/h");
-        assert_eq!(British.speed_text(48.3), "30 mph");
-        assert_eq!(American.speed_limit(50.0), 30.0);
-        assert_eq!(Metric.speed_limit(48.0), 50.0);
-        assert_eq!(Metric.distance(1234.0), "1.2 km");
-        assert_eq!(Metric.distance(234.0), "230 m");
-        assert_eq!(British.distance(234.0), "260 yd");
-        assert_eq!(British.distance(805.0), "0.5 mi");
-        assert_eq!(American.distance(100.0), "350 ft");
-        assert_eq!(American.distance(400.0), "0.2 mi");
-        assert_eq!(British.long_distance(16.09344, 1), "10.0 mi");
-        assert_eq!(British.temperature(15.0), "15 °C");
-        assert_eq!(American.temperature(15.0), "59 °F");
+    fn thousands_are_set_apart() {
+        assert_eq!(grouped(0), "0");
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1000), "1 000");
+        assert_eq!(grouped(1433243), "1 433 243");
+        assert_eq!(grouped(-12345), "-12 345");
     }
 
     #[test]
-    fn the_setting_reads_back() {
-        for u in [Metric, British, American] {
-            assert_eq!(Units::from_setting(u.setting()), u);
-        }
-        assert_eq!(Units::from_setting("whatever"), Metric);
+    fn the_odometer_cuts_the_tenth_off() {
+        set_imperial(false);
+        assert_eq!(odometer(1433243, 399), "1 433 243.3 km");
+        assert_eq!(odometer(123468, 850), "123 468.8 km");
+        assert_eq!(odometer(84894, 0), "84 894.0 km");
     }
 }

@@ -128,7 +128,7 @@ impl Bridge {
     /// machine's own addresses (the LAN ones) with the session's port. Set
     /// `OMSI_NO_BRIDGE=1` to leave the internet alone (tests, a LAN party).
     pub fn start(host: bool, session: u64, local: Vec<SocketAddr>, port: u16) -> Option<Bridge> {
-        if cfg!(test) || omsi_cfg::flags::OMSI_NO_BRIDGE.live_os().is_some() {
+        if cfg!(test) || std::env::var_os("OMSI_NO_BRIDGE").is_some() {
             return None;
         }
         let shared = Arc::new(Mutex::new(Shared::default()));
@@ -403,7 +403,7 @@ fn refused(was: Duration) -> Duration {
 /// at (a Cloudflare tunnel, see `ws`): for players whose routers cannot be punched through.
 /// Posted under the session's topic as `W <url>`; call again every minute or so.
 pub fn post_tunnel(session: u64, url: &str) {
-    if cfg!(test) || omsi_cfg::flags::OMSI_NO_BRIDGE.live_os().is_some() {
+    if cfg!(test) || std::env::var_os("OMSI_NO_BRIDGE").is_some() {
         return;
     }
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(6)).user_agent("openOMSI").build();
@@ -415,7 +415,7 @@ pub fn post_tunnel(session: u64, url: &str) {
 /// Joining game: the WebSocket address the host of `session` posted last (see
 /// `post_tunnel`), if any within the last hours.
 pub fn lookup_tunnel(session: u64) -> Option<String> {
-    if cfg!(test) || omsi_cfg::flags::OMSI_NO_BRIDGE.live_os().is_some() {
+    if cfg!(test) || std::env::var_os("OMSI_NO_BRIDGE").is_some() {
         return None;
     }
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(8)).user_agent("openOMSI").build();

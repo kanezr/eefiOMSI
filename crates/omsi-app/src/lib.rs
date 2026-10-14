@@ -7,87 +7,67 @@
 //!
 //! The game is this library; `main.rs` calls [`run`], and on Android the NativeActivity
 //! calls `android_main` (see `android.rs`), which runs the launcher and the game in one
-//! window of one process. On an iPhone or an iPad the Swift app calls `openomsi_ios_main`
-//! (see `ios.rs`); its launcher, and the Mac's Swift launcher, read and change what the
-//! launcher knows through `apple_bridge`.
+//! window of one process.
 
 mod admin;
-use omsi_platform::discord;
+mod discord;
 #[cfg(steam)]
 mod steam;
-use omsi_lan::voice;
+mod voice;
+mod units;
 mod head_idle;
-use omsi_input::headtrack;
+mod headtrack;
 #[cfg(windows)]
-use omsi_xr::openxr;
+mod openxr;
+#[cfg(target_os = "macos")]
+mod mac_hid;
 #[cfg(target_os = "android")]
 mod android;
-#[cfg(target_os = "android")]
-mod android_launcher;
-#[cfg(target_os = "ios")]
-mod ios;
-#[cfg(target_os = "ios")]
-mod apple;
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-mod apple_bridge;
 mod platform;
 mod touch;
-mod units;
+mod quick_menu;
+mod trip_summary;
 mod placing;
 mod mt;
-use omsi_platform::updater;
-mod update_watch;
-use omsi_soundscape::ambience;
-mod soundscape;
-use omsi_scene::wheel_surface;
-use omsi_scene::camera_arm;
-mod cam_approach;
-use omsi_career::career;
-use omsi_input::describe;
+mod version;
+mod ambience;
+mod camera_arm;
+mod career;
+mod describe;
 mod editor;
-mod duty_book;
 mod game_lists;
-mod game_panels;
 mod game_controller_menu;
 mod rail_drive;
-use omsi_scene::driver;
+mod driver;
 mod export;
 mod hud;
 mod humans;
 mod journey;
-use omsi_input::keys;
-// (LAN play: the session is omsi-lan's `game`, see `lan_play`; the shared world's mirror
-// stays here: it drives the app's `Traffic`, `Humans` and their view directly)
-mod lan_play;
-use lan_play as lan;
+mod keys;
+mod lan;
 mod lan_world;
-use omsi_scene::lights;
+mod lights;
 mod launcher;
 mod menu;
 mod mirror_hud;
+mod view_editor;
 mod navigator;
 mod vr_navigator;
-use omsi_scene::money;
+mod money;
 mod radio;
 
-use omsi_scene::puddles;
+mod puddles;
 mod quit;
-use omsi_weather::condensation;
-use omsi_scene::{rain, window_wipers};
+mod rain;
 mod scene;
-mod season_phase;
 mod schedule;
 mod schedule_paper;
 mod real_time;
+mod devtools_proc;
 mod settings;
-mod shell;
-mod photo;
-mod devtools;
-mod telemetry;
-use omsi_scene::threads;
+mod threads;
 mod tiles;
 mod traffic;
-mod view_sync;
 mod ui;
 
 // the game itself, split by what each part does
@@ -96,42 +76,39 @@ mod applog;
 mod app_events;
 mod bus_service;
 mod camera_util;
-// the game controllers, their mappings and force feedback (`omsi-input`), at their old paths
-use omsi_input::{controllers, gamepad_profile, hpattern};
+mod controllers;
+mod hpattern;
+mod ffb_calibration;
+#[cfg(windows)]
+mod dinput;
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+mod evdev_buttons;
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+mod evdev_ff;
 mod cli;
 mod diagnostics;
-mod perf_overlay;
-mod perf_report;
-mod profile_keys;
-mod frame_stages;
-mod support_bundle;
 mod duty_start;
 mod input_script;
-mod app_impl;
 mod launcher_link;
-use omsi_lan::mods as lan_mods;
+mod lan_mods;
 mod memory;
 mod offscreen;
 mod ground_gap;
 mod on_foot;
-use omsi_scene::route_arrows;
+mod route_arrows;
 mod server;
 mod player;
-mod plugin_io;
-// the plugins' panels (`omsi-plugin-ui`) at their old path, and the app's side of their input
-use omsi_plugin_ui as plugin_ui;
-mod plugin_panels;
 mod plugins;
 mod services;
-mod sim_thread;
 mod situation;
 mod spawn;
-use omsi_input::stock_keys;
+mod stock_keys;
 mod startup;
 mod traffic_link;
 mod tutorial;
 mod weather_setup;
-use omsi_weather::{weather_cycle, weather_model};
+mod weather_cycle;
+mod weather_model;
 mod world_load;
 
 // the interface's translations (locales/app.yml; the English text is the key)
@@ -143,31 +120,9 @@ const _LOCALES: &str = include_str!("../locales/app.yml");
 /// Show the interface in `code` (the settings' ENG / DEU / FRA / RUS).
 pub(crate) fn ui_language(code: &str) {
     omsi_ui::i18n::set_lookup(|lang, text| _rust_i18n_try_translate(lang, text).map(|t| t.into_owned()));
-    static TEMPLATES: std::sync::Once = std::sync::Once::new();
-    TEMPLATES.call_once(|| omsi_ui::i18n::set_templates(locale_keys(_LOCALES)));
     let iso = omsi_launcher_lib::language_iso(code);
     omsi_ui::i18n::set_language(iso);
     omsi_sim::vehicle_api::set_locale(iso);
-}
-
-fn locale_keys(yml: &str) -> impl Iterator<Item = String> + '_ {
-    yml.lines().filter_map(|l| l.strip_prefix('"')?.strip_suffix("\":")).filter(|k| k.contains('{')).filter_map(|k| {
-        let mut out = String::new();
-        let mut chars = k.chars();
-        while let Some(c) = chars.next() {
-            if c != '\\' {
-                out.push(c);
-                continue;
-            }
-            out.push(match chars.next()? {
-                'n' => '\n',
-                't' => '\t',
-                x @ ('"' | '\\') => x,
-                _ => return None,
-            });
-        }
-        Some(out)
-    })
 }
 
 use anyhow::{anyhow, Context, Result};
@@ -203,10 +158,7 @@ use world_load::*;
 
 /// The game (and its launcher) from the command line: what `main` does.
 pub fn run() -> Result<()> {
-    view_sync::install_sim_decoder();
-    startup::install_scene_settings();
     omsi_cfg::migrate_legacy_data_dir();
-    omsi_launcher_lib::adopt_own_inputs();
     #[cfg(target_os = "macos")]
     restart_with_allocator_settings();
     #[cfg(windows)]
@@ -227,44 +179,34 @@ pub fn run() -> Result<()> {
         default_hook(info);
     }));
     log::info!(
-        "openOMSI {VERSION}, build {BUILD}{}",
+        "eefiOMSI {VERSION}, build {BUILD}{}",
         if std::env::var_os("MallocLargeCache").is_some() {
             " (large allocations returned at once)"
         } else {
             ""
         }
     );
-    // the desktop launcher's helper: no window, requests on stdin (see `launcher::service`)
-    if std::env::args().nth(1).as_deref() == Some("--launcher-service") {
-        return launcher::run_service();
+    // The developer tools window: this program started by the game for that alone (see
+    // `devtools_proc`), no command line of its own.
+    if std::env::var_os("OMSI_DEVTOOLS_WINDOW").is_some() {
+        return launcher::devtools::run(graphics_instance());
     }
     let args = Args::parse();
-    // (before the content and the graphics device are looked for: it must work without them)
-    if let Some(out) = &args.export_diagnostics {
-        let value = support_bundle::snapshot(None, &settings::Settings::load(), None, None, "cli");
-        support_bundle::export(out, &value)?;
-        println!("Support package written to {} - look inside before you attach it to an issue", out.display());
-        return Ok(());
-    }
     // Started by a double click or with no arguments at all: that is the launcher's job.
     // The launcher itself runs the game with a full command line (--no-menu, --map, ...).
     let bare = std::env::args().len() == 1;
     let Some((args, server_cfg)) = prepare(args, bare)? else { return Ok(()) };
-    if bare && !args.menu {
-        // the launcher, another program (it starts the game again with a full command
-        // line): OMSI_LAUNCHER=<program>, else the desktop launcher beside the game
-        if omsi_cfg::flags::OMSI_LAUNCHER.is_set() && open_launcher()? {
+    if args.launcher || (bare && !args.menu) {
+        // the launcher window (the game started again by it with a full command line);
+        // OMSI_LAUNCHER=<program> still opens another launcher instead
+        if omsi_cfg::env::var_os("OMSI_LAUNCHER").is_some() && open_launcher()? {
             return Ok(());
         }
-        return open_app_launcher();
+        launcher_statics();
+        return launcher::run(graphics_instance());
     }
     let Some(app) = make_app(args, server_cfg)? else { return Ok(()) };
-    // a game session's start goes into the start guard's journal (a version whose sessions
-    // keep failing before their first frames is healed at the launcher's next start)
-    if app.args.server.is_none() {
-        omsi_guard::start(omsi_guard::journal::Kind::Game);
-    }
-    let event_loop = game_event_loop()?;
+    let event_loop = EventLoop::new()?;
     // SIGTERM (the launcher's Stop) and Ctrl+C end the session the way Escape does
     let proxy = event_loop.create_proxy();
     quit::install(move |_| {
@@ -278,24 +220,19 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-/// The game's event loop. With OMSI_HIDDEN_WINDOW the process stays out of the Dock and the
-/// menu bar on macOS, as its window stays out of sight.
-fn game_event_loop() -> Result<EventLoop<()>> {
-    #[cfg(target_os = "macos")]
-    if omsi_cfg::flags::OMSI_HIDDEN_WINDOW.is_set() {
-        use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
-        return Ok(EventLoop::builder().with_activation_policy(ActivationPolicy::Accessory).build()?);
-    }
-    Ok(EventLoop::new()?)
+/// The showroom is drawn the way the game will be.
+pub(crate) fn launcher_statics() {
+    let s = settings::Settings::load();
+    ENHANCED.store(s.enhanced || omsi_cfg::env::var_os("OMSI_ENHANCED").is_some(), std::sync::atomic::Ordering::Relaxed);
+    CLASSIC.store(s.classic(), std::sync::atomic::Ordering::Relaxed);
+    CLOUDS.store(s.clouds && omsi_cfg::env::var_os("OMSI_NO_CLOUDS").is_none(), std::sync::atomic::Ordering::Relaxed);
 }
-
 
 /// Everything before a window: the language, the session's random seed, the original
 /// installation and the content roots (mods, archives). None when the program has
 /// nothing more to do (a fatal error was shown).
 pub(crate) fn prepare(mut args: Args, bare: bool) -> Result<Option<(Args, Option<server::ServerCfg>)>> {
     ui_language(&settings::Settings::load().language);
-    units::Units::from_setting(&settings::Settings::load().units).set();
     // (a server has no interface to translate)
     mt::enable(settings::Settings::load().machine_translation && args.server.is_none());
     // the dedicated server: server.cfg decides the world, the rest is a host without a window
@@ -311,8 +248,8 @@ pub(crate) fn prepare(mut args: Args, bare: bool) -> Result<Option<(Args, Option
     };
     // the scripts' `random` differs from session to session (starting air pressure, part
     // lifetimes ...); OMSI_SEED=n repeats a session's numbers
-    let seed = omsi_cfg::flags::OMSI_SEED
-        .var()
+    let seed = omsi_cfg::env::var("OMSI_SEED")
+        .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
         .unwrap_or_else(|| {
             let t = std::time::SystemTime::now()
@@ -323,7 +260,7 @@ pub(crate) fn prepare(mut args: Args, bare: bool) -> Result<Option<(Args, Option
         });
     omsi_script::set_session_seed(seed);
     log::info!("script random seed {seed} (OMSI_SEED={seed} repeats it)");
-    let launcher_mode = bare && !args.menu;
+    let launcher_mode = args.launcher || (bare && !args.menu);
     if !is_omsi_root(&args.root) {
         match find_root() {
             Some(p) => {
@@ -342,7 +279,7 @@ pub(crate) fn prepare(mut args: Args, bare: bool) -> Result<Option<(Args, Option
                 let missing = omsi_cfg::missing_original_essentials(&args.root);
                 let text = format!(
                     "The original OMSI 2 was not found.\n\n\
-                     openOMSI needs a complete installation of the original game (any version). \
+                     eefiOMSI needs a complete installation of the original game (any version). \
                      Choose its folder in the launcher (Setup), or start once with \
                      --root \"/path/to/OMSI 2\", the folder with Omsi.exe, maps and Vehicles in it.\n\n\
                      Missing in {}: {}",
@@ -352,9 +289,9 @@ pub(crate) fn prepare(mut args: Args, bare: bool) -> Result<Option<(Args, Option
                 if server_cfg.is_some() {
                     eprintln!("{text}");
                 } else {
-                    fatal_dialog("openOMSI cannot start", &text);
+                    fatal_dialog("eefiOMSI cannot start", &text);
                 }
-                if cfg!(any(target_os = "android", target_os = "ios")) {
+                if cfg!(target_os = "android") {
                     // (a phone's app is not ended from inside: back to the launcher)
                     return Ok(None);
                 }
@@ -417,9 +354,6 @@ pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) ->
     if settings::Settings::load().time_sync && args.lan_join.is_none() && args.server.is_none() && args.offscreen.is_none() {
         real_time::start_at_now(&mut args);
     }
-    // a season chosen with its phase moves the date into it (the sun, the weather and the
-    // timetable go by the date); a joining player takes the host's date below
-    season_phase::apply_season_date(&mut args);
     if args.export_glb.is_none() && args.lan_join.is_none() {
         place_on_duty(&mut args);
     }
@@ -430,11 +364,25 @@ pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) ->
     {
         args.drive_keys = settings.drive_keys.clone();
     }
-    args.session_settings = startup::SessionSettings::for_session(&settings, &args);
+    let plus = args.enhanced_plus || omsi_cfg::env::var_os("OMSI_ENHANCED_PLUS").is_some();
+    ENHANCED_PLUS.store(plus, std::sync::atomic::Ordering::Relaxed);
+    ENHANCED.store(
+        settings.enhanced || args.enhanced || plus || omsi_cfg::env::var_os("OMSI_ENHANCED").is_some(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    CLOUDS.store(settings.clouds && omsi_cfg::env::var_os("OMSI_NO_CLOUDS").is_none(), std::sync::atomic::Ordering::Relaxed);
+    SOUND_AI.store(settings.vol_ai.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    SOUND_SCENERY.store(settings.vol_scenery.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    MIRROR_SIZE.store(settings.mirror_size, std::sync::atomic::Ordering::Relaxed);
+    omsi_audio::DOPPLER.store(settings.doppler, std::sync::atomic::Ordering::Relaxed);
+    CLASSIC.store(
+        settings.classic() && !ENHANCED.load(std::sync::atomic::Ordering::Relaxed),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     // the LAN session (offscreen too, so that one game's view of another can be rendered);
     // a joining player's world is the host's (taken over again when the window loads it)
     let mut lan = if args.export_glb.is_none() {
-        lan::start(&args.lan_config(), &lan::AppLanHost { args: &args, world: None })
+        lan::start(&args)
     } else {
         None
     };
@@ -447,10 +395,8 @@ pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) ->
     // made (see `lan_mods`)
     lan_mods::remove_stale();
     if let Some(l) = lan.as_mut() {
-        let mut c = args.lan_config();
-        lan::share_mods(&mut c, l);
-        lan::take_host_map(&mut c, l);
-        args.take_lan_config(&c);
+        lan::share_mods(&mut args, l);
+        lan::take_host_map(&mut args, l);
     }
     if let (Some(cfg), Some(l)) = (server_cfg.as_ref(), lan.as_ref()) {
         lan::open_public_gateway(l, server::info_of(cfg), cfg.web_port, cfg.tunnel);
@@ -487,319 +433,218 @@ pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) ->
     }
     if let Some(out) = args.offscreen.clone() {
         if let Some(l) = lan.as_mut() {
-            let mut c = args.lan_config();
-            lan::adopt_host_world(&mut c, &crate::app_impl::lan_tick::AppLanHost { args: &args, world: None }, l, &mut lan_game);
-            args.take_lan_config(&c);
+            lan::adopt_host_world(&mut args, l, &mut lan_game);
         }
         let r = run_offscreen(&args, &out, lan, lan_game);
         lan_mods::clean_up();
         return r.map(|_| None);
     }
-    let mut app = assemble_app(args, settings);
-    app.net.lan = lan;
-    app.net.remotes = lan_game;
-    // mouse steering as the player left it (the wheel eases to the cursor for a second)
-    if app.settings.mouse_steering {
-        app.input.mouse_drive = true;
-        app.input.mouse_steer = (0.0, 1.0);
-        app.input.center_cursor = true;
-    }
-    // (the LAN status file stays while the game runs; `exiting` removes it)
-    std::mem::forget(_lan_status);
-    Ok(Some(app))
-}
-
-/// The game's App for `args` and `settings`, every part of it as it starts (the window comes
-/// later).
-fn assemble_app(args: Args, settings: settings::Settings) -> App {
     let view = args.view.clone();
     let args_root_for_keys = args.root.clone();
     let clock_note = args.clock_moved.clone();
     // (as the last session left it, #1164)
     let info_bar = settings.info_bar;
-    let is_server = args.server.is_some();
-    let sky = crate::weather_setup::SkyState { look: args.session_settings, ..Default::default() };
-    // What loads, starts or reads the clock, made one after the other in a fixed order before
-    // the App and its groups are put together (their logs and threads come in this order).
-    // Steam must be initialized before the graphics instance and window so its overlay can
-    // hook the rendering process before the first surface is created.
-    #[cfg(steam)]
-    let steam = if is_server { None } else { crate::steam::Steam::start() };
-    let instance = graphics_instance();
-    let vr_nav_profiles = crate::vr_navigator::Profiles::load(crate::vr_navigator::profiles_path().as_deref());
-    let ui = ui::Ui::new();
-    let rain = rain::Rain::new();
-    let cabin_air = crate::condensation::CabinAir::new();
-    let mut spray = puddles::Spray::new();
-    spray.graphics = args.session_settings.graphics();
-    let radio = radio::Radio::load(&args_root_for_keys);
-    let started = Instant::now();
-    let last = Instant::now();
-    let input_script = parse_input_script();
-    let game_keys = omsi_content::KeyboardCfg::load(&crate::startup::keyboard_cfg(&args_root_for_keys)).unwrap_or_default().with_game_defaults().with_vr_defaults().game;
-    let own_keys = crate::startup::own_keys(&args_root_for_keys);
-    let own_shift = crate::startup::own_bindings(&args_root_for_keys, omsi_content::input::KEY_SHIFT);
-    let fps_t = Instant::now();
-    let update_watch = crate::update_watch::UpdateWatch::new();
-    // (a server counts its players by their own games, not itself)
-    let _ = is_server;
-    let touch = touch::Touch::new();
-    App {
+    units::set_imperial(settings.imperial);
+    let mut app = App {
         args,
-        gfx: GfxState {
-            instance,
-            surface: None,
-            streamer: None,
-            spanned: false,
-            mirror_budget: 1.0,
-            mirror_dt: 0.0,
-            mirrors_seen: 2,
-            mirror_turn: 0,
-            mirror_panel_cams: Vec::new(),
-            frozen_mirrors: None,
-            mirror_hud: Default::default(),
-            window_hidden: false,
-            route_arrows: Default::default(),
-            hidden_frames: 0,
-            stand_in: None,
-            sim_view: Default::default(),
-            starting: None,
-        },
+        instance: graphics_instance(),
         window: None,
+        surface: None,
         renderer: None,
-        xr: VrState {
-            #[cfg(windows)]
-            vr: None,
-            vr_nav_profiles,
-            vr_nav_edit: None,
-            vr_cursor_physical: None,
-            vr_cursor_warp_pending: None,
-            vr_zoom_active: false,
-        },
+        #[cfg(windows)]
+        vr: None,
         scene: None,
         camera: None,
         player: None,
-        session: SessionState {
-            placed: Vec::new(),
-            scenery: Default::default(),
-            traffic: None,
-            schedule: None,
-            timetable_book: None,
-            humans: None,
-            duty: None,
-            duty_places: false,
-            rain,
-            cabin_air,
-            spray,
-            lamps_on: None,
-            populate_t: 0.0,
-            humans_populate_t: 0.0,
-            traffic_heavy_frame: false,
-            first_populate: true,
-            envir: None,
-            weather: None,
-            clock_jump: 0.0,
-            seat_bus: String::new(),
-            on_foot: None,
-            safe_pose: None,
-            safe_age: 0.0,
-            pending_time: None,
-            world_day: None,
-            autosave_t: 0.0,
-            pumping: None,
-            career: Default::default(),
-            journey: None,
-            wetness: 0.0,
-            cloud_drift: [0.0; 4],
-            weather_blend: None,
-            weather_cycle: None,
-            metar_rx: None,
-            metar_once: false,
-            metar_next: 0.0,
-            sky,
-        },
-        menus: MenuState {
-            list_dirty: false,
-            page_titles: Default::default(),
-            chooser: None,
-            editor: None,
-            vehicle_list: Vec::new(),
-            dropdown: None,
-            vehicle_meta: std::collections::HashMap::new(),
-            hud: None,
-            navigator: None,
-            menu: None,
-            hover_key: None,
-            hover: None,
-            hover_part: None,
-            hover_hand: false,
-            game_menu: None,
-            menu_top: None,
-            menu_scroll_drag: false,
-            dd_scroll_drag: None,
-            pane_scroll_drag: None,
-            pane_scroll: None,
-            teleport_pick: false,
-            game_panels: Default::default(),
-            tutorial: None,
-            wheel_acc: 0.0,
-            editor_drag: false,
-            editor_sync_t: 0.0,
-            remote_added: Default::default(),
-            placing: None,
-            admin_list: None,
-            list_kind: None,
-            key_capture: None,
-            menu_prev_pause: false,
-            info_bar,
-            timetable: false,
-            notices: Vec::new(),
-            note_watch: Default::default(),
-            loading: Default::default(),
-            menu_edit: None,
-            menu_edit_icao: false,
-            menu_edit_search: false,
-            menu_search: String::new(),
-            swap_pending: false,
-            pending_placement: None,
-            menu_drag: None,
-            menu_kbd: true,
-        },
+        placed: Vec::new(),
+        chooser: None,
+        editor: None,
+        vehicle_list: Vec::new(),
+        dropdown: None,
+        vehicle_meta: std::collections::HashMap::new(),
         world: None,
-        cam: ViewState {
-            starting: None,
-            speed: 30.0,
-            f1_reset: None,
-            view_yaw: 0.0,
-            view_fov: None,
-            head_idle_hold: Default::default(),
-            ego: false,
-            in_cab: false,
-            look: (0.0, 0.0),
-            look_smooth: (0.0, 0.0),
-            view_looks: Default::default(),
-            look_view: String::new(),
-            cam_blend: Default::default(),
-            view_zoom: Default::default(),
-            cam_zooms: Default::default(),
-            orbit: ORBIT_DEFAULT,
-        },
-        ui,
-        perf: PerfState {
-            fps: 0.0,
-            profile: Default::default(),
-            profile_prev: Default::default(),
-            total_frames: 0,
-            input_script,
-            shot: None,
-            frames: 0,
-            fps_t,
-            log_state: Default::default(),
-            spikes: 0,
-            worst_ms: 0.0,
-            governor: (0.0, 0, 0.0),
-            governor_low: 0,
-            governor_wait_prev: 0.0,
-            play_started: None,
-            cpu_mark: None,
-            thread_cpu_mark: None,
-            instructions_mark: None,
-            profile_mark: None,
-            frame_times: Vec::new(),
-            overlay: Default::default(),
-        },
-        sound: SoundState {
-            radio,
-            audio: None,
-            ambience: None,
-            soundscape: None,
-            voice: None,
-            foot_in: None,
-            voices_waiting: Vec::new(),
-        },
+        streamer: None,
+        starting: None,
+        traffic: None,
+        schedule: None,
+        humans: None,
+        duty: None,
+        duty_places: false,
+        hud: None,
+        navigator: None,
+        vr_nav_profiles: crate::vr_navigator::Profiles::load(),
+        vr_nav_edit: None,
+        spanned: false,
+        ui: ui::Ui::new(),
+        fps: 0.0,
+        rain: rain::Rain::new(),
+        spray: puddles::Spray::new(),
+        lamps_on: None,
+        menu: None,
+        populate_t: 0.0,
+        humans_populate_t: 0.0,
+        radio: radio::Radio::load(&args_root_for_keys),
+        profile: Default::default(),
+        profile_prev: Default::default(),
+        first_populate: true,
+        envir: None,
+        weather: None,
         clock: omsi_sim::SimClock::default(),
-        started,
+        started: Instant::now(),
+        total_frames: 0,
+        mirror_budget: 1.0,
+        mirrors_seen: 2,
+        mirror_turn: 0,
+        frozen_mirrors: None,
+        mirror_hud: Default::default(),
+        view_editor: Default::default(),
+        hover_key: None,
         view,
-        input: InputState {
-            cursor: (0.0, 0.0),
-            window_focused: false,
-            input_away: false,
-            keys: Default::default(),
-            door_key_triggers: Default::default(),
-            mouse_look: false,
-            buttons_held: (false, false),
-            mmb_held: false,
-            both_drag: None,
-            clock_hold: 0.0,
-            pad_look: [false; 4],
-            pad_voice_radio: false,
-            arrow_glance: false,
-            headtrack: None,
-            headtrack_failed: None,
-            headtrack_scale_last: None,
-            headtrack_scale_bias: [0.0; 6],
-            headtrack_invert_last: None,
-            controllers: None,
-            mouse_drive: false,
-            mouse_steer: (0.0, 0.0),
-            mouse_grab: Default::default(),
-            steer_cursor: None,
-            center_cursor: false,
-            cruise: None,
-            look_lock: None,
-            cursor_hidden: None,
-            last_ctl_steer: None,
-            mouse_pedals: (0.0, 0.0),
-            mouse_kmh: 0.0,
-            pad_kmh: 0.0,
-            pad_steer_target: 0.0,
-            game_keys,
-            own_keys,
-            own_shift,
-            dragging: false,
-            html_pressed: None,
-            html_object_pressed: None,
-            pressed_scenery_object: None,
-            drag_delta: (0.0, 0.0),
-            cursor_kind: 0,
-            touch,
-        },
-        last,
+        audio: None,
+        ambience: None,
+        cursor: (0.0, 0.0),
+        vr_cursor_physical: None,
+        vr_cursor_warp_pending: None,
+        window_focused: false,
+        input_away: false,
+        window_hidden: false,
+        keys: Default::default(),
+        door_key_triggers: Default::default(),
+        last: Instant::now(),
+        speed: 30.0,
+        mouse_look: false,
+        buttons_held: (false, false),
+        mmb_held: false,
+        both_drag: None,
+        f1_reset: None,
+        vr_zoom_active: false,
+        hover: None,
+        hover_part: None,
+        hover_hand: false,
+        head_idle_hold: Default::default(),
+        input_script: parse_input_script(),
+        shot: None,
         paused: false,
-        integrations: Integrations {
-            plugin_keys: Vec::new(),
-            plugin_events: Vec::new(),
-            plugin_events_ex: Vec::new(),
-            plugin_pointer: Default::default(),
-            plugin_voices: Vec::new(),
-            plugin_seen: Default::default(),
-            plugin_command: false,
-            plugin_panels: Default::default(),
-            discord: None,
-            discord_t: 0.0,
-            #[cfg(steam)]
-            steam,
-            update_watch,
-            plugins: None,
-        },
-        net: NetState {
-            remote_walkers: Vec::new(),
-            inside_remote: None,
-            is_admin: false,
-            lan: None,
-            remotes: Default::default(),
-            lan_world: Default::default(),
-        },
+        game_menu: None,
+        menu_top: None,
+        menu_scroll_drag: false,
+        dd_scroll_drag: None,
+        pane_scroll_drag: None,
+        pane_scroll: None,
+        plugin_keys: Vec::new(),
+        plugin_events: Vec::new(),
+        clock_hold: 0.0,
+        pad_look: [false; 4],
+        arrow_glance: false,
+        teleport_pick: false,
+        discord: None,
+        discord_t: 0.0,
+        #[cfg(steam)]
+        steam: None,
+        voice: None,
+        headtrack: None,
+        headtrack_failed: None,
+        controllers: None,
+        mouse_drive: false,
+        mouse_steer: (0.0, 0.0),
+        mouse_edge: 0.0,
+        steer_cursor: None,
+        center_cursor: false,
+        cursor_hidden: None,
+        last_ctl_steer: None,
+        mouse_pedals: (0.0, 0.0),
+        mouse_kmh: 0.0,
+        tutorial: None,
+        ego: false,
+        on_foot: None,
+        remote_walkers: Vec::new(),
+        in_cab: false,
+        inside_remote: None,
+        is_admin: false,
+        safe_pose: None,
+        safe_age: 0.0,
+        wheel_acc: 0.0,
+        editor_drag: false,
+        editor_sync_t: 0.0,
+        remote_added: Default::default(),
+        placing: None,
+        admin_list: None,
+        list_kind: None,
+        route_arrows: Default::default(),
+        game_keys: omsi_content::KeyboardCfg::load(&crate::startup::keyboard_cfg(&args_root_for_keys)).unwrap_or_default().with_game_defaults().with_vr_defaults().game,
+        own_keys: crate::startup::own_keys(&args_root_for_keys),
+        own_shift: crate::startup::own_bindings(&args_root_for_keys, omsi_content::input::KEY_SHIFT),
+        key_capture: None,
+        menu_prev_pause: false,
+        info_bar,
+        gui_hidden: false,
+        devtools: Default::default(),
+        pending_time: None,
+        world_day: None,
+        autosave_t: 0.0,
+        timetable: false,
+        dragging: false,
+        html_pressed: None,
+        html_object_pressed: None,
+        drag_delta: (0.0, 0.0),
+        look: (0.0, 0.0),
+        look_smooth: (0.0, 0.0),
+        view_looks: Default::default(),
+        look_view: String::new(),
+        cam_blend: Default::default(),
+        view_zoom: Default::default(),
+        orbit: ORBIT_DEFAULT,
+        frames: 0,
+        fps_t: Instant::now(),
         service_msg: clock_note.map(|m| (m, 10.0)),
+        pump: false,
+        notices: Vec::new(),
+        log_state: Default::default(),
+        plugins: None,
+        career: Default::default(),
+        journey: None,
+        wetness: 0.0,
+        cloud_drift: [0.0; 2],
+        menu_edit: None,
+        menu_edit_icao: false,
+        dest_form: Default::default(),
+        swap_pending: false,
+        placed_clear_t: 0.0,
+        menu_drag: None,
+        menu_kbd: true,
+        weather_blend: None,
+        weather_cycle: None,
+        metar_rx: None,
+        metar_once: false,
+        metar_next: 0.0,
+        cursor_kind: 0,
         settings,
+        lan: None,
+        remotes: Default::default(),
+        spikes: 0,
+        worst_ms: 0.0,
+        governor: (0.0, 0, 0.0),
+        governor_low: 0,
+        governor_wait_prev: 0.0,
+        hidden_frames: 0,
         exiting: false,
-        shell: crate::shell::Shell::new(),
-        photo: None,
-        photo_settings: None,
-        devtools: None,
-        fixed_tick: omsi_sim::tick::SimTicks::default(),
-        pipeline: Default::default(),
+        stand_in: None,
+        cpu_mark: None,
+        touch: touch::Touch::new(),
+        quick: quick_menu::QuickMenu::new(),
+        summary: trip_summary::SummaryWindow::new(),
+    };
+    app.lan = lan;
+    app.remotes = lan_game;
+    // mouse steering as the player left it (the wheel eases to the cursor for a second)
+    if app.settings.mouse_steering {
+        app.mouse_drive = true;
+        app.mouse_steer = (0.0, 1.0);
+        app.center_cursor = true;
     }
+    // (the LAN status file stays while the game runs; `exiting` removes it)
+    std::mem::forget(_lan_status);
+    Ok(Some(app))
 }
 
 #[cfg(test)]
@@ -862,50 +707,5 @@ mod tests {
             None,
         );
         assert_eq!(both, vec![DVec3::new(10.0, 20.0, 0.0), cam.position]);
-    }
-}
-
-#[cfg(test)]
-mod locale_tests {
-    use omsi_ui::i18n::{templated, templates, Piece};
-
-    #[test]
-    fn the_template_keys_of_the_tables_are_read_as_the_code_writes_them() {
-        let raw = super::_LOCALES.lines().filter(|l| l.starts_with('"') && l.contains('{')).count();
-        assert_eq!(super::locale_keys(super::_LOCALES).count(), raw);
-        let used: Vec<String> = templates(super::locale_keys(super::_LOCALES)).into_iter().map(|(k, _)| k).collect();
-        for k in ["Graphics profile \"{name}\" not found", "Mirror panel added ({} in all)", "Head tracking with opentrack (UDP port {})"] {
-            assert!(used.iter().any(|x| x == k), "{k}");
-        }
-    }
-
-    #[test]
-    fn a_translated_template_is_left_as_it_is_when_translated_again() {
-        let t = templates(super::locale_keys(super::_LOCALES));
-        for lang in super::_rust_i18n_available_locales() {
-            let tr = |key: &str| super::_rust_i18n_try_translate(&lang, key).map(|t| t.into_owned());
-            for (key, pieces) in &t {
-                // the text the code would draw: a value per placeholder, the same one for a name used twice
-                let mut names: Vec<&str> = Vec::new();
-                let sample: String = pieces
-                    .iter()
-                    .map(|p| match p {
-                        Piece::Text(s) => s.clone(),
-                        Piece::Hole(n) => {
-                            if n.is_empty() || !names.contains(&n.as_str()) {
-                                names.push(n);
-                            }
-                            format!("V{}", if n.is_empty() { names.len() } else { names.iter().position(|x| x == n).unwrap() + 1 })
-                        }
-                    })
-                    .collect();
-                let Some(once) = templated(&t, &sample, tr) else { continue };
-                // no value is lost (a named one may be used twice: "{e} electrics ... with {e}")
-                for v in sample.split('V').skip(1).filter_map(|s| s.split(|c: char| !c.is_ascii_digit()).next()) {
-                    assert!(once.contains(&format!("V{v}")), "{lang}: {key}: {once}");
-                }
-                assert!(templated(&t, &once, tr).is_none_or(|twice| twice == once), "{lang}: {key}: {once}");
-            }
-        }
     }
 }

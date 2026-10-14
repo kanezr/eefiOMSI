@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generator cookie reflektora (openOMSI)</title>
+<style>
+:root{--bg:#f6f5f1;--panel:#ffffff;--text:#1b1b19;--muted:#6a6a64;--border:#d9d7cf;--accent:#1f6feb;--accent-bg:#e6f0ff;--danger:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#161614;--panel:#1f1f1c;--text:#ecebe6;--muted:#9c9a92;--border:#3a3935;--accent:#6aa8ff;--accent-bg:#1c2b44;--danger:#ff8a80}}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--panel);flex:0 0 auto}
+header h1{margin:0;font-size:18px;font-weight:600}
+header p{margin:0;color:var(--muted);font-size:12.5px}
+.lang{display:flex;gap:4px;flex:0 0 auto}
+.lang button{padding:4px 10px;font-weight:600}
+.lang button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+main{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:minmax(330px,430px) minmax(0,1fr) minmax(0,1fr);gap:12px;padding:12px;max-width:2200px;width:100%;margin:0 auto}
+.col{min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-right:2px}
+@media (max-width:1150px){
+  html,body{height:auto}
+  main{display:flex;flex-direction:column}
+  .col{overflow:visible}
+}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px;flex:0 0 auto}
+.card h2{margin:0 0 8px;font-size:14px;font-weight:600}
+details{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:0 12px;flex:0 0 auto}
+details[open]{padding-bottom:10px}
+summary{cursor:pointer;padding:10px 0;font-weight:600;font-size:14px}
+.gtip{margin:0 0 8px;color:var(--muted);font-size:12.5px}
+.row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(90px,1.4fr) 70px;align-items:center;gap:8px;padding:2px 0}
+.row label{font-size:13px;cursor:help}
+.row input[type=range]{width:100%;margin:0}
+.row input[type=number]{width:70px;padding:3px 4px;font-size:12.5px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px}
+.row.check{grid-template-columns:1fr}
+.row.check label,.row.check span{cursor:pointer}
+.row.ov label{color:var(--accent);font-weight:600}
+.row.ov input[type=number]{border-color:var(--accent)}
+.unit{color:var(--muted);font-size:11.5px}
+button,select,input[type=text],input[type=file]{font:inherit;font-size:13.5px;color:var(--text);background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:6px 10px}
+button{cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btns{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.qgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:8px}
+.qsel{display:flex;flex-direction:column;gap:2px;font-size:12.5px;color:var(--muted)}
+.qsel select{width:100%}
+.qsel.wide{grid-column:1/-1}
+#fname{flex:1 1 220px;min-width:0}
+.stage{position:relative;background:#000;border-radius:8px;overflow:hidden}
+.stage canvas{display:block;width:100%;aspect-ratio:5/4;max-height:58vh;object-fit:contain}
+.stage canvas.wide{aspect-ratio:560/330;max-height:none}
+.hline{position:absolute;left:0;right:0;border-top:1px dashed rgba(255,255,255,.45);pointer-events:none}
+.vline{position:absolute;top:0;bottom:0;border-left:1px dashed rgba(255,255,255,.3);pointer-events:none}
+.tag{position:absolute;font-size:11.5px;color:rgba(255,255,255,.75);pointer-events:none;text-shadow:0 0 3px #000}
+.cap{margin:6px 0 0;color:var(--muted);font-size:12.5px}
+.advhead p{margin:4px 0 0}
+#adv{display:flex;flex-direction:column;gap:8px}
+.ctl{display:grid;grid-template-columns:minmax(120px,auto) 1fr auto;gap:8px;align-items:center;font-size:13px;margin-top:6px}
+.ctl input[type=range]{width:100%;margin:0}
+#status{font-size:12.5px;color:var(--muted);min-height:18px;margin:6px 0 0}
+#status.err{color:var(--danger)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 data-i18n>Generator cookie reflektora</h1>
+    <p data-h="headP"></p>
+  </div>
+  <div class="lang" role="group" data-i18n-aria="Przełącz język" aria-label="Przełącz język">
+    <button id="langPl" data-lang="pl">PL</button>
+    <button id="langEn" data-lang="en">EN</button>
+  </div>
+</header>
+<main>
+  <section id="controls" class="col" aria-label="Ustawienia">
+    <div class="card" id="quickCard">
+      <h2 data-i18n>Szybkie ustawienia</h2>
+      <div class="qgrid" id="quickSel"></div>
+      <div id="quickSliders"></div>
+      <label class="row check" style="margin-top:6px"><span><input type="checkbox" id="q_colorOn"> <span data-i18n>Podgląd i zapis w kolorze (temperatura barwowa, obwódki, wypalenie)</span></span></label>
+      <div class="btns" style="margin-top:10px">
+        <button id="btnAge" data-i18n data-i18n-title="Ustawia średnie zużycie lampy" title="Ustawia średnie zużycie lampy">Postarz</button>
+        <button id="btnNew" data-i18n data-i18n-title="Nowa, czysta lampa" title="Nowa, czysta lampa">Nowa lampa</button>
+        <button id="btnPerfect" data-i18n data-i18n-title="Bez rozrzutu produkcyjnego, brudu i pęknięć" title="Bez rozrzutu produkcyjnego, brudu i pęknięć">Idealny odbłyśnik</button>
+        <button id="btnRandom" data-i18n data-i18n-title="Losuje ziarno niedoskonałości" title="Losuje ziarno niedoskonałości">Losuj niedoskonałości</button>
+      </div>
+      <div class="btns" style="margin-top:8px">
+        <select id="combo" data-i18n-aria="Gotowe zestawy" aria-label="Gotowe zestawy"></select>
+        <button id="btnCombo" data-i18n>Zastosuj zestaw</button>
+      </div>
+      <p class="cap" data-i18n>Szybkie ustawienia wyliczają wszystkie suwaki zaawansowane poniżej. Jeśli zmienisz jakiś suwak ręcznie, zostaje on jako ręczna poprawka (podświetlona) i przeżyje zmianę typu lampy.</p>
+    </div>
+    <div class="card advhead">
+      <h2 data-i18n>Zaawansowane ustawienia</h2>
+      <p class="cap"><span data-i18n>Wszystkie parametry wiązki. </span><span id="ovInfo"></span></p>
+      <div class="btns" style="margin-top:8px">
+        <button id="btnClearOv" data-i18n>Wyczyść ręczne poprawki</button>
+        <button id="btnToggleAll" data-i18n>Zwiń / rozwiń grupy</button>
+      </div>
+    </div>
+    <div id="adv"></div>
+  </section>
+
+  <section id="colMid" class="col" aria-label="Cookie">
+    <div class="card">
+      <h2 data-i18n>Obraz (to jest plik cookie)</h2>
+      <div class="stage" id="stage1">
+        <canvas id="cvCookie" width="640" height="512"></canvas>
+        <div class="hline" id="hHorizon" style="top:37.5%"></div>
+        <div class="vline" style="left:50%"></div>
+        <span class="tag" style="left:6px;top:calc(37.5% - 18px)" data-i18n>poziom lampy (0°)</span>
+        <span class="tag" style="left:6px;top:4px">+36°</span>
+        <span class="tag" style="left:6px;bottom:4px">−60°</span>
+        <span class="tag" style="left:50%;bottom:4px;transform:translateX(-50%)" data-i18n>prosto</span>
+        <span class="tag" style="right:6px;bottom:4px" data-i18n>+60° (prawo)</span>
+      </div>
+      <p class="cap" data-i18n>Jasność pokazana jak w edytorze obrazów (sRGB). Biały to szczyt wiązki.</p>
+    </div>
+    <div class="card">
+      <h2 data-i18n>Zapis</h2>
+      <div class="btns">
+        <input type="text" id="fname" value="cookie_low" size="22" data-i18n-aria="Nazwa pliku" aria-label="Nazwa pliku">
+        <select id="fmt" data-i18n-aria="Format" aria-label="Format">
+          <option value="g8" data-i18n>PNG szary 8 bit (zalecany)</option>
+          <option value="g16" data-i18n>PNG szary 16 bit</option>
+          <option value="rgb" data-i18n>PNG kolorowy RGB 8 bit</option>
+        </select>
+        <button class="primary" id="btnPng" data-i18n>Pobierz PNG</button>
+      </div>
+      <div class="btns" style="margin-top:8px">
+        <button id="btnJson" data-i18n>Zapisz ustawienia (JSON)</button>
+        <label class="btns"><span data-i18n>Wczytaj ustawienia z JSON lub PNG:</span> <input type="file" id="fileIn" accept=".json,.png,image/png,application/json"></label>
+      </div>
+      <p id="fmtWarn" class="cap" style="color:var(--danger)"></p>
+      <p id="status" role="status"></p>
+      <p class="cap" data-h="expCap"></p>
+    </div>
+  </section>
+
+  <section id="colRight" class="col" aria-label="Symulacja">
+    <div class="card">
+      <h2 data-i18n>Symulacja rzucanego światła</h2>
+      <div class="btns">
+        <select id="scene" data-i18n-aria="Scena" aria-label="Scena">
+          <option value="road" data-i18n>Droga, widok kierowcy</option>
+          <option value="wall" data-i18n>Ściana (test w garażu)</option>
+        </select>
+        <label class="unit"><input type="checkbox" id="oneLamp"> <span data-i18n>tylko jedna lampa (prawa)</span></label>
+      </div>
+      <div class="stage" style="margin-top:8px"><canvas id="cvScene" class="wide" width="560" height="330"></canvas></div>
+      <div class="ctl"><span data-i18n>Ekspozycja</span><input type="range" id="pvExp" min="-4" max="4" step="0.1" value="0"><span id="pvExpV">0 EV</span></div>
+      <div class="ctl"><span data-i18n>Wysokość lamp</span><input type="range" id="pvLamp" min="0.4" max="1.6" step="0.05" value="0.8"><span id="pvLampV"></span></div>
+      <div class="ctl"><span data-i18n>Rozstaw lamp</span><input type="range" id="pvSpace" min="0.8" max="2.6" step="0.05" value="1.7"><span id="pvSpaceV"></span></div>
+      <div class="ctl"><span data-i18n>Odległość ściany</span><input type="range" id="pvWall" min="4" max="30" step="1" value="10"><span id="pvWallV">10 m</span></div>
+      <div class="ctl"><span data-i18n>Słabnięcie z odległością</span><input type="range" id="pvFall" min="1" max="2" step="0.05" value="1.2"><span id="pvFallV"></span></div>
+      <p class="cap" data-i18n>Podgląd przybliża to, co zrobi gra (ta sama zasada: obraz w kierunkach, spadek z odległością za 10 m, dolny wiersz i boki jak w silniku). Nie jest dokładnym odtworzeniem, jasność dopasuj ekspozycją.</p>
+    </div>
+    <div class="card">
+      <h2 data-i18n>Przekroje (jasność względna, skala logarytmiczna)</h2>
+      <canvas id="cvSlice" width="560" height="170" style="width:100%;height:auto;background:var(--bg);border-radius:6px"></canvas>
+      <div class="ctl"><span data-i18n>Przekrój w pionie przy kącie bocznym</span><input type="range" id="slH" min="-40" max="40" step="0.5" value="3"><span id="slHV">3°</span></div>
+      <div class="ctl"><span data-i18n>Przekrój w poziomie przy kącie pionowym</span><input type="range" id="slV" min="-30" max="10" step="0.25" value="-2"><span id="slVV">−2°</span></div>
+    </div>
+  </section>
+</main>
+<script>
+//CORE-BEGIN
+const PW = 1280, PH = 1024, STEP = 0.09375, HR = 60, VT = 36, VB = -60;
+const D2R = Math.PI / 180;
+const REF = { hot: 26000, mid: 7000, low: 1800, side: 350, spill: 1200, core: 52000, halo: 9000, lobe: 10000 };
+
+function ss(a, b, x) { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); }
+function gs(x, s) { return Math.exp(-0.5 * (x / s) * (x / s)); }
+function hash2(ix, iy, s) {
+  let h = Math.imul(ix, 374761393) ^ Math.imul(iy, 668265263) ^ Math.imul(s | 0, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function vnoise(x, y, s) {
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const a = hash2(ix, iy, s), b = hash2(ix + 1, iy, s), c = hash2(ix, iy + 1, s), d = hash2(ix + 1, iy + 1, s);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}
+function rng(seed) {
+  let a = (seed | 0) + 0x6D2B79F5;
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hsv2rgb(h, s, v) {
+  h = ((h % 360) + 360) % 360 / 60;
+  const i = Math.floor(h), f = h - i, p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+  switch (i % 6) { case 0: return [v, t, p]; case 1: return [q, v, p]; case 2: return [p, v, t]; case 3: return [p, q, v]; case 4: return [t, p, v]; default: return [v, p, q]; }
+}
+
+function kelvinRGB(K) {
+  const t = K / 100; let r, g, b;
+  if (t <= 66) { r = 255; g = 99.4708025861 * Math.log(t) - 161.1195681661; b = t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307; }
+  else { r = 329.698727446 * Math.pow(t - 60, -0.1332047592); g = 288.1221695283 * Math.pow(t - 60, -0.0755148492); b = 255; }
+  return [r, g, b].map(v => Math.min(255, Math.max(0, v)) / 255);
+}
+function kelvinMul(K) { const a = kelvinRGB(K), w = kelvinRGB(6500); return [a[0] / w[0], a[1] / w[1], a[2] / w[2]]; }
+
+const GROUPS = [
+  { id: 'aim', title: 'Ustawienie obrazu', open: true, tip: 'Przesuwa, obraca i rozciąga cały wzór, jakbyś inaczej ustawił lampę. Kierunek lampy w model.cfg zostaje poziomy.' },
+  { id: 'cut', title: 'Linia odcięcia', open: true, tip: 'Ostra górna granica światła mijania. Po lewej płaska, po prawej podniesiona ze schodkiem (ruch prawostronny).' },
+  { id: 'hot', title: 'Gorący punkt', tip: 'Najjaśniejszy obszar tuż pod linią odcięcia, który świeci daleko w głąb drogi.' },
+  { id: 'body', title: 'Korpus wiązki i przedpole', tip: 'Szerokie światło pod linią odcięcia oraz ogon w dół, ku zderzakowi.' },
+  { id: 'spill', title: 'Poświata boczna i światło nad odcięciem', tip: 'Słabe światło po bokach oraz nad linią odcięcia, które oświetla znaki i obiekty nad lampą.' },
+  { id: 'round', title: 'Rdzeń i halo (wiązka okrągła)', tip: 'Wiązka bez odcięcia: drogowe, reflektor roboczy, punktowy. Kształt 2 = gauss, wyższy = bardziej płaski.' },
+  { id: 'lobes', title: 'Dodatkowe płaty', tip: 'Dwa dowolne płaty światła w wybranym miejscu: np. lampa doświetlająca zakręt albo drugi projektor.' },
+  { id: 'imp', title: 'Niedoskonałości odbłyśnika', open: true, tip: 'Nierówności jak w prawdziwych lampach: fasety, żebrowanie soczewki, smugi, plamy, brud. Dotyczą jasności.' },
+  { id: 'tech', title: 'Technologia lampy (moduły LED, soczewka, żarnik)', tip: 'Cechy źródła i optyki: rozstaw modułów LED, pierścienie soczewki, ciemny środek (cień osłonki żarnika), poświata wokół odcięcia (xenon). Typy lamp ustawiają je za Ciebie.' },
+  { id: 'wear', title: 'Zużycie i uszkodzenia (wypalenie, łuszczenie, zmatowienie)', tip: 'Postarzanie lampy: wypalony środek odbłyśnika, łuszcząca się powłoka, zmatowiały i zażółcony klosz, pęknięcia. Przycisk „Postarz” ustawia wartości średnie.' },
+  { id: 'color', title: 'Kolor', tip: 'Odcień odbłyśnika i barwne obwódki linii odcięcia. Zapis kolorowy wymaga formatu RGB.' },
+  { id: 'post', title: 'Wykończenie', open: true, tip: 'Rozmycie, wygaszanie krawędzi i krzywa kontrastu. Wygaszanie brzegów usuwa twarde odcięcia światła.' },
+];
+
+const DEFS = [];
+function S(g, id, label, min, max, step, def, unit, tip) { DEFS.push({ g, id, label, min, max, step, def, unit, tip, type: 'range' }); }
+function C(g, id, label, def, tip) { DEFS.push({ g, id, label, def, tip, type: 'check' }); }
+
+S('aim', 'aimH', 'Przesunięcie w bok', -30, 30, 0.1, 0, '°', 'Przesuwa wzór w prawo (+) lub w lewo (−).');
+S('aim', 'aimV', 'Przesunięcie w pionie', -15, 15, 0.05, 0, '°', 'Przesuwa wzór w górę (+) lub w dół (−), jak regulacja pochylenia reflektora.');
+S('aim', 'roll', 'Przechył obrazu', -15, 15, 0.1, 0, '°', 'Obraca wzór (przechylona linia odcięcia).');
+S('aim', 'stretchH', 'Rozciągnięcie w bok', 30, 250, 1, 100, '%', 'Poszerza (>100) lub zwęża (<100) cały wzór.');
+S('aim', 'stretchV', 'Rozciągnięcie w pionie', 30, 250, 1, 100, '%', 'Wydłuża (>100) lub skraca (<100) wzór w pionie.');
+C('aim', 'mirror', 'Odbij w poziomie (ruch lewostronny)', false, 'Odwraca wzór lewo-prawo, np. dla mijań do ruchu lewostronnego.');
+
+C('cut', 'cutOn', 'Linia odcięcia włączona', true, 'Wyłączona: wzór nie ma górnej granicy (wiązka okrągła).');
+S('cut', 'cutL', 'Poziom po lewej', -4, 4, 0.05, -0.6, '°', 'Wysokość odcięcia po lewej stronie względem poziomu lampy.');
+S('cut', 'cutR', 'Poziom po prawej', -4, 6, 0.05, 0.9, '°', 'Wysokość odcięcia po prawej stronie.');
+S('cut', 'kink', 'Kąt schodka', 0, 60, 0.5, 15, '°', 'Nachylenie skosu łączącego oba poziomy odcięcia.');
+S('cut', 'stepPos', 'Położenie schodka', -15, 15, 0.1, 0, '°', 'W którym miejscu w poziomie zaczyna się schodek.');
+S('cut', 'cutSoft', 'Miękkość krawędzi', 0.02, 4, 0.01, 0.5, '°', 'Szerokość przejścia światło-ciemność na linii odcięcia.');
+S('cut', 'cutWave', 'Falistość linii', 0, 1.5, 0.01, 0, '°', 'Nierówność linii odcięcia (amplituda).');
+S('cut', 'cutWaveF', 'Częstość falistości', 0.2, 12, 0.1, 3, '', 'Liczba fal na całej szerokości obrazu.');
+
+S('hot', 'hotA', 'Moc', 0, 300, 1, 100, '%', 'Jasność gorącego punktu względem wzorca (100% = jak w preseie mijań).');
+S('hot', 'hotH', 'Położenie w bok', -15, 15, 0.1, 3.5, '°', 'Środek gorącego punktu w poziomie.');
+S('hot', 'hotW', 'Szerokość', 1, 30, 0.1, 8, '°', 'Rozmiar gorącego punktu w poziomie.');
+S('hot', 'hotDepth', 'Głębokość pod odcięciem', 0, 8, 0.05, 1.3, '°', 'O ile pod linią odcięcia leży środek gorącego punktu.');
+S('hot', 'hotThick', 'Grubość w pionie', 0.2, 8, 0.05, 1.2, '°', 'Wysokość gorącego punktu.');
+
+S('body', 'midA', 'Korpus: moc', 0, 300, 1, 100, '%', 'Jasność szerokiego korpusu wiązki.');
+S('body', 'midW', 'Korpus: szerokość', 2, 60, 0.5, 13, '°', 'Rozpiętość korpusu w bok.');
+S('body', 'midDecay', 'Korpus: zanik w dół', 0.5, 40, 0.1, 4.5, '°', 'Jak szybko korpus słabnie poniżej odcięcia.');
+S('body', 'lowA', 'Przedpole: moc', 0, 300, 1, 55, '%', 'Jasność światła kierowanego w dół, przed zderzak.');
+S('body', 'lowW', 'Przedpole: szerokość', 2, 80, 0.5, 24, '°', 'Rozpiętość przedpola w bok.');
+S('body', 'lowDecay', 'Przedpole: zanik w dół', 2, 80, 0.5, 16, '°', 'Jak szybko przedpole słabnie ku większym kątom w dół.');
+
+S('spill', 'sideA', 'Poświata boczna: moc', 0, 400, 1, 45, '%', 'Słabe światło po bokach wiązki.');
+S('spill', 'sideW', 'Poświata boczna: szerokość', 5, 80, 0.5, 36, '°', 'Rozpiętość poświaty bocznej.');
+S('spill', 'spillA', 'Nad odcięciem: moc', 0, 600, 1, 90, '%', 'Światło nad linią odcięcia (znaki, wiadukty, ściany powyżej lampy).');
+S('spill', 'spillW', 'Nad odcięciem: szerokość', 5, 80, 0.5, 32, '°', 'Rozpiętość tego światła w bok.');
+S('spill', 'spillDecay', 'Nad odcięciem: zanik w górę', 1, 40, 0.5, 10, '°', 'Jak szybko słabnie ze wzrostem kąta nad odcięciem.');
+
+S('round', 'coreA', 'Rdzeń: moc', 0, 300, 1, 0, '%', 'Jasność okrągłego rdzenia (0 = wyłączony).');
+S('round', 'coreH', 'Rdzeń: położenie w bok', -40, 40, 0.1, 0.3, '°', 'Środek rdzenia w poziomie.');
+S('round', 'coreV', 'Rdzeń: położenie w pionie', -40, 30, 0.1, -0.4, '°', 'Środek rdzenia w pionie.');
+S('round', 'coreW', 'Rdzeń: szerokość', 0.5, 60, 0.1, 5.5, '°', 'Rozmiar w poziomie.');
+S('round', 'coreVW', 'Rdzeń: wysokość', 0.5, 60, 0.1, 3.2, '°', 'Rozmiar w pionie.');
+S('round', 'coreP', 'Rdzeń: kształt', 1, 8, 0.1, 2, '', '2 = gauss, wyżej = płaski środek i ostrzejsza krawędź.');
+S('round', 'haloA', 'Halo: moc', 0, 400, 1, 0, '%', 'Jasność szerokiego halo wokół rdzenia.');
+S('round', 'haloW', 'Halo: szerokość', 2, 80, 0.5, 17, '°', 'Rozpiętość halo w bok.');
+S('round', 'haloV', 'Halo: położenie w pionie', -40, 30, 0.1, -1.5, '°', 'Środek halo w pionie.');
+S('round', 'haloVW', 'Halo: wysokość', 1, 60, 0.5, 7, '°', 'Rozpiętość halo w pionie.');
+
+for (const n of [1, 2]) {
+  S('lobes', 'l' + n + 'A', 'Płat ' + n + ': moc', 0, 300, 1, 0, '%', 'Jasność dodatkowego płata ' + n + ' (0 = wyłączony).');
+  S('lobes', 'l' + n + 'H', 'Płat ' + n + ': położenie w bok', -55, 55, 0.5, n === 1 ? 32 : -32, '°', 'Środek płata w poziomie.');
+  S('lobes', 'l' + n + 'V', 'Płat ' + n + ': położenie w pionie', -50, 30, 0.5, -6, '°', 'Środek płata w pionie.');
+  S('lobes', 'l' + n + 'W', 'Płat ' + n + ': szerokość', 1, 60, 0.5, 14, '°', 'Rozmiar w poziomie.');
+  S('lobes', 'l' + n + 'VW', 'Płat ' + n + ': wysokość', 1, 60, 0.5, 9, '°', 'Rozmiar w pionie.');
+  S('lobes', 'l' + n + 'P', 'Płat ' + n + ': kształt', 1, 8, 0.1, 2, '', '2 = gauss, wyżej = bardziej płaski.');
+}
+
+S('imp', 'facetS', 'Fasety: siła', 0, 100, 1, 6, '%', 'Odbłyśnik z fasetami: komórki o różnej jasności.');
+S('imp', 'facetSize', 'Fasety: wielkość', 0.5, 15, 0.1, 3, '°', 'Rozmiar jednej faski.');
+S('imp', 'facetSoft', 'Fasety: miękkość', 0, 1, 0.01, 0.5, '', '0 = ostre komórki, 1 = gładkie przejścia.');
+S('imp', 'stripeS', 'Żebrowanie: siła', 0, 100, 1, 0, '%', 'Pionowe (lub pochylone) prążki jak na soczewce Fresnela.');
+S('imp', 'stripePeriod', 'Żebrowanie: okres', 0.3, 10, 0.05, 2, '°', 'Odstęp między prążkami.');
+S('imp', 'stripeAngle', 'Żebrowanie: kierunek', 0, 180, 1, 0, '°', '0 = prążki pionowe, 90 = poziome.');
+S('imp', 'streakS', 'Smugi: siła', 0, 100, 1, 4, '%', 'Wydłużone smugi (ślady produkcyjne, rysy).');
+S('imp', 'streakScale', 'Smugi: grubość', 0.5, 20, 0.1, 3, '°', 'Szerokość smug.');
+S('imp', 'streakStretch', 'Smugi: wydłużenie', 1, 20, 0.1, 6, '', 'Ile razy smugi są dłuższe niż szerokie.');
+S('imp', 'streakAngle', 'Smugi: kierunek', 0, 180, 1, 0, '°', '0 = smugi poziome, 90 = pionowe.');
+S('imp', 'blotchS', 'Plamy: siła', 0, 100, 1, 8, '%', 'Duże, miękkie plamy jaśniejsze i ciemniejsze.');
+S('imp', 'blotchScale', 'Plamy: wielkość', 3, 60, 0.5, 25, '°', 'Rozmiar plam.');
+S('imp', 'speckN', 'Zabrudzenia: liczba', 0, 80, 1, 0, '', 'Ciemne kropki jak brud na szkle.');
+S('imp', 'speckSize', 'Zabrudzenia: wielkość', 0.2, 6, 0.1, 1.2, '°', 'Rozmiar kropek.');
+S('imp', 'speckS', 'Zabrudzenia: siła', 0, 100, 1, 35, '%', 'Jak mocno kropki przyciemniają światło.');
+S('imp', 'seed', 'Ziarno losowości', 0, 9999, 1, 1, '', 'Zmienia układ wszystkich niedoskonałości.');
+
+S('tech', 'ledHS', 'LED: modulacja modułów w poziomie', 0, 100, 1, 0, '%', 'Pionowe pasy jasności jak obrazy kolejnych modułów LED (0 = brak).');
+S('tech', 'ledHP', 'LED: rozstaw modułów w poziomie', 0.5, 12, 0.1, 4, '°', 'Odległość między środkami modułów.');
+S('tech', 'ledHSharp', 'LED: ostrość modułów', 1, 8, 0.1, 2, '', 'Wyżej = węższe, wyraźniejsze moduły.');
+S('tech', 'ledDead', 'LED: wyłączone moduły', 0, 100, 1, 0, '%', 'Odsetek modułów, które nie świecą (przepalone diody).');
+S('tech', 'ledVS', 'LED: modulacja w pionie', 0, 100, 1, 0, '%', 'Poziome pasy, jak kolejne rzędy diod lub segmenty odbłyśnika.');
+S('tech', 'ledVP', 'LED: rozstaw w pionie', 0.3, 8, 0.05, 1.2, '°', 'Odległość między pasami w pionie.');
+S('tech', 'ringsS', 'Soczewka: pierścienie, siła', 0, 100, 1, 0, '%', 'Koncentryczne pierścienie wokół gorącego punktu (soczewki projektora).');
+S('tech', 'ringsP', 'Soczewka: odstęp pierścieni', 0.3, 6, 0.05, 1.4, '°', 'Odległość między pierścieniami.');
+S('tech', 'ringsR', 'Soczewka: zasięg pierścieni', 2, 40, 0.5, 14, '°', 'Jak daleko od środka pierścienie są widoczne.');
+S('tech', 'holeS', 'Ciemny środek: siła', 0, 100, 1, 0, '%', 'Cień osłonki żarnika w środku gorącego punktu (odbłyśniki halogenowe).');
+S('tech', 'holeW', 'Ciemny środek: rozmiar', 0.5, 8, 0.1, 2.5, '°', 'Wielkość ciemnego środka.');
+S('tech', 'maskS', 'Strefa zacieniona (ADB): siła', 0, 100, 1, 0, '%', 'Ciemny pas w wiązce: zacienienie fragmentu drogowych, w którym jest inny pojazd (matrycowe drogowe).');
+S('tech', 'maskW', 'Strefa zacieniona: szerokość', 1, 40, 0.5, 7, '°', 'Szerokość ciemnego pasa.');
+S('tech', 'maskH', 'Strefa zacieniona: położenie', -30, 30, 0.5, 0, '°', 'Środek ciemnego pasa w poziomie.');
+S('tech', 'maskSoft', 'Strefa zacieniona: miękkość', 0.2, 8, 0.1, 1.5, '°', 'Szerokość przejścia na brzegach pasa.');
+S('tech', 'glowA', 'Poświata wokół odcięcia: moc', 0, 300, 1, 0, '%', 'Jasna poświata po obu stronach linii odcięcia (xenon, zmatowiałe szkło).');
+S('tech', 'glowW', 'Poświata: szerokość', 3, 50, 0.5, 20, '°', 'Rozpiętość poświaty w bok.');
+S('tech', 'glowV', 'Poświata: wysokość', 0.5, 20, 0.1, 6, '°', 'Rozpiętość poświaty w pionie.');
+
+S('wear', 'burnS', 'Wypalenie odbłyśnika: siła', 0, 100, 1, 0, '%', 'Przyciemniony, wypalony środek odbłyśnika (gorący punkt słabnie).');
+S('wear', 'burnR', 'Wypalenie: rozmiar', 1, 30, 0.5, 8, '°', 'Wielkość wypalonego obszaru.');
+S('wear', 'burnH', 'Wypalenie: położenie w bok', -20, 20, 0.1, 3.5, '°', 'Środek wypalenia w poziomie.');
+S('wear', 'burnV', 'Wypalenie: głębokość pod odcięciem', -5, 15, 0.1, 1.3, '°', 'Środek wypalenia w pionie (liczony od linii odcięcia, a bez odcięcia od poziomu lampy).');
+S('wear', 'burnBrown', 'Wypalenie: zbrązowienie', 0, 100, 1, 0, '%', 'Przebarwienie wypalonego miejsca na brąz (wymaga koloru).');
+S('wear', 'peelS', 'Łuszczenie powłoki: siła', 0, 100, 1, 0, '%', 'Ubytki powłoki odbijającej: plamy, które nie odbijają światła.');
+S('wear', 'peelScale', 'Łuszczenie: wielkość', 0.5, 15, 0.1, 3, '°', 'Wielkość łuszczących się płatów.');
+S('wear', 'peelAmount', 'Łuszczenie: pokrycie', 0, 100, 1, 25, '%', 'Jaka część powierzchni jest zniszczona.');
+S('wear', 'hazeS', 'Zmatowienie klosza: siła', 0, 100, 1, 0, '%', 'Matowe szkło rozprasza światło: miękne odcięcie, poświata, mniejszy kontrast.');
+S('wear', 'hazeYellow', 'Zażółcenie klosza', 0, 100, 1, 0, '%', 'Żółknięcie szkła (wymaga koloru).');
+S('wear', 'crackN', 'Pęknięcia: liczba', 0, 20, 1, 0, '', 'Cienkie pęknięcia szkła lub odbłyśnika.');
+S('wear', 'crackS', 'Pęknięcia: siła', 0, 100, 1, 40, '%', 'Jak mocno pęknięcia przyciemniają światło.');
+
+C('color', 'colorOn', 'Kolorowy wzór (do zapisu RGB)', false, 'Włącza podgląd i zapis koloru (gra czyta kolor z obrazu).');
+S('color', 'kelvin', 'Temperatura barwowa', 2200, 9000, 50, 6500, 'K', 'Barwa źródła: 2700-3300 K ciepłe halogeny, 4000-4500 xenon, 5500-6500 LED (6500 = bez zabarwienia).');
+S('color', 'tintHue', 'Odcień odbłyśnika', 0, 360, 1, 45, '°', 'Barwa światła: 45 = ciepła żółta, 210 = chłodna niebieska.');
+S('color', 'tintSat', 'Nasycenie odcienia', 0, 100, 1, 0, '%', 'Siła zabarwienia (0 = białe światło).');
+S('color', 'tintVar', 'Zmienność odcienia', 0, 100, 1, 0, '%', 'Plamy o innym odcieniu w odbłyśniku.');
+S('color', 'fringe', 'Barwne obwódki odcięcia', 0, 100, 1, 0, '%', 'Barwne obwódki wzdłuż linii odcięcia (aberracja chromatyczna soczewki, typowa dla LED i xenonów).');
+S('color', 'fringeW', 'Obwódki: szerokość', 0.1, 2, 0.05, 0.35, '°', 'Szerokość barwnych obwódek.');
+S('color', 'fringeUpHue', 'Obwódka nad odcięciem: odcień', 0, 360, 1, 220, '°', '220 = niebieska, 270 = fioletowa.');
+S('color', 'fringeDnHue', 'Obwódka pod odcięciem: odcień', 0, 360, 1, 40, '°', '40 = bursztynowa, 55 = żółta.');
+
+S('post', 'blur', 'Rozmycie całości', 0, 4, 0.05, 0, '°', 'Wygładza cały obraz (poza ostrością linii odcięcia ustawioną wyżej).');
+S('post', 'edgeFade', 'Wygaszanie boków', 0, 50, 0.5, 20, '°', 'Wzór gaśnie do zera przy bocznych krawędziach obrazu (bez twardego odcięcia po bokach).');
+S('post', 'topFade', 'Wygaszanie góry', 0, 40, 0.5, 0, '°', 'Wzór gaśnie ku górnej krawędzi obrazu.');
+S('post', 'bottomFade', 'Wygaszanie dołu', 0, 50, 0.5, 25, '°', 'Wzór gaśnie ku dolnej krawędzi (ziemia tuż pod zderzakiem), bo silnik przedłuża dolny wiersz.');
+S('post', 'floorPct', 'Poziom tła', 0, 10, 0.05, 0, '%', 'Dodaje stałe, słabe światło w całym obrazie.');
+S('post', 'contrast', 'Kontrast (krzywa)', 0.4, 2.5, 0.01, 1, '', '>1 zawęża wiązkę i pogłębia ciemność, <1 rozszerza ją.');
+C('post', 'normalize', 'Normalizuj do szczytu (biel = maksimum)', true, 'Zalecane: najjaśniejszy punkt dostaje wartość 255.');
+C('post', 'dither', 'Dithering przy zapisie 8 bit (usuwa pasy)', true, 'Dodaje drobny szum o amplitudzie jednego poziomu przy zaokrąglaniu do 8 bitów, dzięki czemu gładkie spadki jasności nie mają widocznych schodków (pasów). Zalecane przy PNG 8 bit.');
+
+const DEFAULTS = {};
+for (const d of DEFS) DEFAULTS[d.id] = d.def;
+
+const PRESETS = {
+  low: { name: 'Mijania, ogólne (ruch prawostronny)', file: 'cookie_low', p: {} },
+  low_lht: { name: 'Mijania, ogólne (ruch lewostronny)', file: 'cookie_low_lht', p: { mirror: true } },
+  high: { name: 'Światła drogowe', file: 'cookie_high', p: {
+    cutOn: false, hotA: 0, midA: 0, lowA: 0, sideA: 0, spillA: 0,
+    coreA: 100, coreH: 0.3, coreV: -0.4, coreW: 5.5, coreVW: 3.2, coreP: 2,
+    haloA: 100, haloW: 17, haloV: -1.5, haloVW: 7,
+    l1A: 15, l1H: 0, l1V: -3, l1W: 32, l1VW: 14, l1P: 2, bottomFade: 20, edgeFade: 20 } },
+  fog: { name: 'Przeciwmgielne', file: 'cookie_fog', p: {
+    cutOn: true, cutL: -2, cutR: -2, kink: 0, cutSoft: 0.8, hotA: 0, lowA: 0, spillA: 0,
+    midA: 79, midW: 34, midDecay: 6, sideA: 230, sideW: 45, bottomFade: 15 } },
+  flood: { name: 'Reflektor roboczy (szeroki)', file: 'cookie_flood', p: {
+    cutOn: false, hotA: 0, midA: 0, lowA: 0, sideA: 0, spillA: 0,
+    coreA: 100, coreH: 0, coreV: -8, coreW: 28, coreVW: 20, coreP: 3, bottomFade: 15, edgeFade: 20 } },
+  spot: { name: 'Reflektor punktowy (wąski)', file: 'cookie_spot', p: {
+    cutOn: false, hotA: 0, midA: 0, lowA: 0, sideA: 0, spillA: 0,
+    coreA: 100, coreH: 0, coreV: -1, coreW: 2.6, coreVW: 2.6, coreP: 2.4,
+    haloA: 18, haloW: 7, haloV: -1, haloVW: 7, bottomFade: 20, edgeFade: 20 } },
+  low_reflector: { name: 'Mijania: odbłyśnikowe halogenowe (H4/H7)', file: 'cookie_low_reflector', p: {
+    colorOn: true, kelvin: 3200, cutSoft: 1.3, hotA: 70, hotW: 11, hotThick: 1.8, midA: 115, midW: 15, spillA: 140, sideA: 60,
+    holeS: 25, holeW: 2.5, facetS: 14, facetSize: 2.4, facetSoft: 0.6, blotchS: 14, streakS: 8, fringe: 8 } },
+  low_projector: { name: 'Mijania: soczewkowe halogenowe', file: 'cookie_low_projector', p: {
+    colorOn: true, kelvin: 3500, cutSoft: 0.2, hotA: 115, hotW: 9, hotThick: 1.0, ringsS: 10, ringsP: 1.4, ringsR: 14,
+    fringe: 35, fringeW: 0.3, facetS: 3, blotchS: 5, streakS: 2 } },
+  low_xenon: { name: 'Mijania: soczewkowe xenon (D2S)', file: 'cookie_low_xenon', p: {
+    colorOn: true, kelvin: 4800, tintHue: 215, tintSat: 10, cutSoft: 0.15, hotA: 150, hotW: 10, hotThick: 1.0, spillA: 110,
+    glowA: 40, glowW: 22, glowV: 6, ringsS: 8, ringsP: 1.6, ringsR: 16, fringe: 55, fringeW: 0.35, fringeUpHue: 260, fringeDnHue: 45,
+    facetS: 2, blotchS: 4, streakS: 2 } },
+  low_led: { name: 'Mijania: LED soczewkowe', file: 'cookie_low_led', p: {
+    colorOn: true, kelvin: 5800, cutSoft: 0.2, hotA: 120, hotW: 9, hotThick: 1.0, ledHS: 22, ledHP: 3.2, ledHSharp: 2.5, ledVS: 12, ledVP: 0.9,
+    ringsS: 4, ringsP: 1.2, ringsR: 12, fringe: 70, fringeW: 0.3, fringeUpHue: 210, fringeDnHue: 55, facetS: 2, blotchS: 3, streakS: 3 } },
+  low_led_matrix: { name: 'Mijania: LED segmentowe (matrix)', file: 'cookie_low_matrix', p: {
+    colorOn: true, kelvin: 6000, cutSoft: 0.25, hotA: 110, hotW: 11, hotThick: 1.0, ledHS: 55, ledHP: 2.2, ledHSharp: 3.5,
+    fringe: 45, fringeW: 0.3, fringeUpHue: 215, fringeDnHue: 50, facetS: 1, blotchS: 3, streakS: 2 } },
+  low_aged: { name: 'Mijania: postarzony odbłyśnik (wypalony, zmatowiały)', file: 'cookie_low_aged', p: {
+    colorOn: true, kelvin: 2900, cutSoft: 1.3, hotA: 70, hotW: 11, hotThick: 1.8, midA: 115, midW: 15, spillA: 140, sideA: 60,
+    holeS: 20, holeW: 2.5, facetS: 14, facetSize: 2.4, facetSoft: 0.6, blotchS: 18, streakS: 10,
+    burnS: 55, burnR: 7, burnBrown: 70, peelS: 36, peelScale: 2.4, peelAmount: 18, hazeS: 35, hazeYellow: 50, crackN: 4, crackS: 40 } },
+  corner: { name: 'Lampa doświetlająca zakręt (prawa)', file: 'cookie_corner', p: {
+    cutOn: false, hotA: 0, midA: 0, lowA: 0, sideA: 0, spillA: 0,
+    l1A: 100, l1H: 32, l1V: -7, l1W: 15, l1VW: 9, l1P: 2.4,
+    haloA: 12, haloW: 40, haloV: -6, haloVW: 12, bottomFade: 20, edgeFade: 15 } },
+};
+
+function presetParams(key) { return Object.assign({}, DEFAULTS, PRESETS[key].p); }
+
+// ================= quick settings: kind x technology x optics x bulb, and the state of the lamp =================
+const KINDS = { low: 'Światła mijania', high: 'Światła drogowe', fog: 'Przeciwmgielne (PMG)', drl: 'Światła do jazdy dziennej (DRL)', corner: 'Doświetlanie zakrętów', work: 'Reflektor roboczy (szeroki)', spot: 'Szperacz (punktowy)', reverse: 'Światło cofania' };
+const TECHS = { halogen: 'Halogen', led: 'LED', xenon: 'Xenon (HID)', laser: 'Laser z luminoforem', incand: 'Żarówka starego typu (sealed beam)' };
+const OPTICS = { reflector: 'Odbłyśnikowa', projector: 'Soczewkowa (projektor)', matrix: 'Matrycowa (segmenty LED)', bi: 'Bi-technologia (jeden moduł: mijania i drogowe)', multi: 'Odbłyśnik wielosegmentowy (freeform)' };
+// size: emitter size (a bigger one: a bigger hot spot, a softer edge), hot: hot spot weight, shield: dark centre, k: shift of the colour temperature, soft: extra softness of the cut-off
+const BULBS = {
+  H1: { label: 'H1 (jedno włókno)', tech: ['halogen'], size: 1.0, hot: 1.05, shield: 0, k: 50, soft: 0.1 },
+  H3: { label: 'H3 (małe, do PMG i szperaczy)', tech: ['halogen'], size: 0.9, hot: 0.9, shield: 0, k: 0, soft: 0.1 },
+  H4: { label: 'H4 (dwuwłóknowa z osłonką)', tech: ['halogen'], size: 1.1, hot: 0.95, shield: 0.35, k: -50, soft: 0.25 },
+  H7: { label: 'H7 (jedno włókno wzdłuż osi)', tech: ['halogen'], size: 0.9, hot: 1.0, shield: 0, k: 0, soft: 0 },
+  H11: { label: 'H11 (PMG i mijania)', tech: ['halogen'], size: 1.0, hot: 1.0, shield: 0, k: 0, soft: 0.05 },
+  HB3: { label: 'HB3 / 9005 (drogowe)', tech: ['halogen'], size: 1.0, hot: 1.05, shield: 0, k: 100, soft: 0.05 },
+  HB4: { label: 'HB4 / 9006 (mijania, PMG)', tech: ['halogen'], size: 1.0, hot: 0.9, shield: 0, k: 50, soft: 0.1 },
+  D1S: { label: 'D1S (xenon, do projektorów)', tech: ['xenon'], size: 0.6, hot: 1.3, shield: 0, k: 0, soft: -0.05 },
+  D2S: { label: 'D2S (xenon, do projektorów)', tech: ['xenon'], size: 0.6, hot: 1.3, shield: 0, k: 0, soft: -0.05 },
+  D2R: { label: 'D2R (xenon, do odbłyśników)', tech: ['xenon'], size: 0.7, hot: 1.2, shield: 0.2, k: 0, soft: 0.1 },
+  D3S: { label: 'D3S (xenon bez rtęci)', tech: ['xenon'], size: 0.6, hot: 1.3, shield: 0, k: 150, soft: -0.05 },
+  LED1: { label: 'LED jednochipowy', tech: ['led'], size: 0.5, hot: 1.1, shield: 0, k: 0, soft: -0.05 },
+  LED2: { label: 'LED wielochipowy (moduł)', tech: ['led'], size: 0.7, hot: 1.05, shield: 0, k: 0, soft: 0 },
+  COB: { label: 'LED COB (płaska matryca)', tech: ['led'], size: 0.9, hot: 1.0, shield: 0, k: -200, soft: 0.15 },
+  LASER: { label: 'Laser z luminoforem', tech: ['laser'], size: 0.3, hot: 1.6, shield: 0, k: 0, soft: -0.08 },
+  SEALED: { label: 'Sealed beam (stare, szczelne)', tech: ['incand'], size: 1.4, hot: 0.6, shield: 0, k: -300, soft: 0.6 },
+};
+const DEFAULT_BULB = { halogen: 'H7', led: 'LED2', xenon: 'D2S', laser: 'LASER', incand: 'SEALED' };
+
+const IMP0 = { facetS: 0, stripeS: 0, streakS: 0, blotchS: 0, speckN: 0, cutWave: 0, tintVar: 0, tintSat: 0, fringe: 0, burnS: 0, burnBrown: 0, peelS: 0, hazeS: 0, hazeYellow: 0, crackN: 0, ledHS: 0, ledVS: 0, ledDead: 0, ringsS: 0, holeS: 0, glowA: 0, maskS: 0, kelvin: 6500 };
+const KIND_P = {
+  low: {}, high: PRESETS.high.p, fog: PRESETS.fog.p, corner: PRESETS.corner.p, work: PRESETS.flood.p, spot: PRESETS.spot.p,
+  drl: { cutOn: false, hotA: 0, midA: 0, lowA: 0, sideA: 0, spillA: 0, coreA: 30, coreH: 0, coreV: -2, coreW: 22, coreVW: 9, coreP: 2.2, haloA: 20, haloW: 40, haloV: -3, haloVW: 14, bottomFade: 20, edgeFade: 20 },
+  reverse: { cutOn: false, hotA: 0, midA: 0, lowA: 0, sideA: 0, spillA: 0, coreA: 60, coreH: 0, coreV: -12, coreW: 32, coreVW: 16, coreP: 2.6, haloA: 25, haloW: 50, haloV: -10, haloVW: 20, bottomFade: 15, edgeFade: 20 },
+};
+// optics for lamps with a cut-off (low beam, fog lamp) and for round beams
+const OPT_CUT = {
+  reflector: { soft: 2.6, hot: 0.7, hotW: 11, hotT: 1.8, mid: 1.15, spill: 1.4, side: 1.3, rings: 0, imp: [14, 14, 8, 2.4, 0.6] },
+  projector: { soft: 0.4, hot: 1.15, hotW: 9, hotT: 1.0, mid: 1, spill: 0.9, side: 1, rings: 8, imp: [3, 5, 2, 3, 0.5] },
+  matrix: { soft: 0.5, hot: 1.1, hotW: 11, hotT: 1.0, mid: 1, spill: 0.9, side: 1, rings: 0, ledHS: 50, ledHP: 2.2, ledHSharp: 3.5, imp: [1, 3, 2, 3, 0.5] },
+  bi: { soft: 0.6, hot: 1.1, hotW: 9.5, hotT: 1.1, mid: 1.05, spill: 1, side: 1, rings: 6, glow: 20, imp: [3, 5, 2, 3, 0.5] },
+  multi: { soft: 1.2, hot: 0.85, hotW: 10, hotT: 1.4, mid: 1.1, spill: 1.1, side: 1.1, rings: 0, imp: [18, 12, 6, 5, 0.6] },
+};
+const OPT_ROUND = {
+  reflector: { coreWm: 1.15, coreP: 2, halo: 1.3, haloWm: 1.2, rings: 0, imp: [14, 14, 8, 2.4, 0.6] },
+  projector: { coreWm: 0.85, coreP: 2.4, halo: 1, haloWm: 1, rings: 6, imp: [3, 5, 2, 3, 0.5] },
+  matrix: { coreWm: 0.9, coreP: 2.2, halo: 1, haloWm: 1, rings: 0, ledHS: 40, ledHP: 2.5, ledHSharp: 3, imp: [1, 3, 2, 3, 0.5] },
+  bi: { coreWm: 0.95, coreP: 2.3, halo: 1.1, haloWm: 1.1, rings: 5, imp: [3, 5, 2, 3, 0.5] },
+  multi: { coreWm: 1.1, coreP: 2, halo: 1.2, haloWm: 1.15, rings: 0, imp: [18, 12, 6, 5, 0.6] },
+};
+const TECH_T = {
+  halogen: { k: 3200, hot: 1.0, fr: { reflector: 6, multi: 6, projector: 25, bi: 25, matrix: 25 }, up: 220, dn: 40 },
+  led: { k: 5800, hot: 1.1, fr: { reflector: 12, multi: 15, projector: 70, bi: 60, matrix: 45 }, up: 210, dn: 55, fw: 0.3, led: true },
+  xenon: { k: 4600, hot: 1.4, tintHue: 215, tintSat: 10, fr: { reflector: 15, multi: 15, projector: 55, bi: 55, matrix: 40 }, up: 260, dn: 45, glow: 40, spill: 1.2 },
+  laser: { k: 6300, hot: 1.8, hotWm: 0.7, coreWm: 0.55, fr: { reflector: 20, multi: 20, projector: 20, bi: 20, matrix: 20 }, up: 220, dn: 50, laser: true },
+  incand: { k: 2800, hot: 0.6, soft: 0.8, midWm: 1.3, spill: 1.5, fr: { reflector: 0, multi: 0, projector: 0, bi: 0, matrix: 0 }, up: 220, dn: 40 },
+};
+const QDEF = {
+  kind: 'low', traffic: 'rht', side: 'right', tech: 'halogen', optics: 'reflector', bulb: 'H7',
+  age: 0, reflCond: 100, lensCond: 100, dirt: 0, crackQ: 0, manuf: 50,
+  width: 100, fore: 100, soft: 100, aimV: 0, aimH: 0, ledDeadQ: 0, adb: 0, colorOn: true,
+};
+const QSLIDERS = [
+  ['age', 'Wiek lampy', 0, 100, 1, '%', 'Ogólne zużycie: wpływa na odbłyśnik i klosz.'],
+  ['reflCond', 'Stan odbłyśnika', 0, 100, 1, '%', '100 = nowy, 0 = wypalony i łuszczący się.'],
+  ['lensCond', 'Stan klosza', 0, 100, 1, '%', '100 = czysty, 0 = zmatowiały i zażółcony.'],
+  ['dirt', 'Zabrudzenie szkła', 0, 100, 1, '%', 'Kropki brudu i plamy na szkle.'],
+  ['crackQ', 'Pęknięcia', 0, 100, 1, '%', 'Liczba pęknięć szkła lub odbłyśnika.'],
+  ['manuf', 'Rozrzut produkcyjny', 0, 100, 1, '%', 'Niedoskonałości wykonania odbłyśnika i soczewki (0 = idealna, 50 = typowa).'],
+  ['width', 'Szerokość wiązki', 50, 160, 1, '%', 'Zwęża lub poszerza wiązkę.'],
+  ['fore', 'Przedpole (światło w dół)', 0, 250, 1, '%', 'Ile światła pada tuż przed autobus.'],
+  ['soft', 'Miękkość odcięcia', 20, 400, 1, '%', 'Mnożnik miękkości linii odcięcia.'],
+  ['aimV', 'Regulacja pochylenia', -3, 3, 0.05, '°', 'Rozregulowanie lampy w pionie: w górę (+) lub w dół (−).'],
+  ['aimH', 'Regulacja boczna', -5, 5, 0.1, '°', 'Rozregulowanie lampy w poziomie.'],
+  ['ledDeadQ', 'Przepalone moduły LED', 0, 100, 1, '%', 'Odsetek modułów LED, które nie świecą.'],
+  ['adb', 'Strefa zacieniona ADB', 0, 100, 1, '%', 'Zacienienie pasa w wiązce (matrycowe drogowe).'],
+];
+const COMBOS = [
+  { name: 'Nowoczesne LED soczewkowe (mijania)', q: { kind: 'low', tech: 'led', optics: 'projector', bulb: 'LED2' } },
+  { name: 'LED matrix z ADB (drogowe)', q: { kind: 'high', tech: 'led', optics: 'matrix', bulb: 'LED2', adb: 60 } },
+  { name: 'Xenon soczewkowe (mijania)', q: { kind: 'low', tech: 'xenon', optics: 'projector', bulb: 'D2S' } },
+  { name: 'Bi-xenon (drogowe)', q: { kind: 'high', tech: 'xenon', optics: 'bi', bulb: 'D2S' } },
+  { name: 'Halogen H7, odbłyśnik (mijania)', q: { kind: 'low', tech: 'halogen', optics: 'reflector', bulb: 'H7' } },
+  { name: 'Halogen H4, stary odbłyśnik (mijania)', q: { kind: 'low', tech: 'halogen', optics: 'reflector', bulb: 'H4', age: 70, reflCond: 40, lensCond: 35, dirt: 40, crackQ: 20 } },
+  { name: 'Halogen H11 (PMG)', q: { kind: 'fog', tech: 'halogen', optics: 'reflector', bulb: 'H11' } },
+  { name: 'Laser (drogowe)', q: { kind: 'high', tech: 'laser', optics: 'projector', bulb: 'LASER' } },
+  { name: 'Reflektor roboczy LED', q: { kind: 'work', tech: 'led', optics: 'reflector', bulb: 'COB' } },
+  { name: 'Szperacz halogenowy H3', q: { kind: 'spot', tech: 'halogen', optics: 'reflector', bulb: 'H3' } },
+  { name: 'Sealed beam (stare, mijania)', q: { kind: 'low', tech: 'incand', optics: 'reflector', bulb: 'SEALED', age: 50, lensCond: 60 } },
+];
+
+function compose(Q) {
+  const P = Object.assign({}, DEFAULTS, IMP0, KIND_P[Q.kind] || {});
+  const cut = !!P.cutOn, o = OPTICS[Q.optics] ? Q.optics : 'reflector', t = TECHS[Q.tech] ? Q.tech : 'halogen';
+  const b = BULBS[Q.bulb] || BULBS[DEFAULT_BULB[t]];
+  const mul = (k, f) => { P[k] = P[k] * f; };
+  if (Q.kind === 'low' || Q.kind === 'fog') { if (Q.traffic === 'lht') P.mirror = !P.mirror; }
+  if (Q.kind === 'corner') P.mirror = Q.side === 'left';
+  const imp = (cut ? OPT_CUT[o] : OPT_ROUND[o]).imp;
+  if (cut) {
+    const O = OPT_CUT[o];
+    P.cutSoft = Math.min(2, P.cutSoft * O.soft);
+    if (P.hotA > 0) { mul('hotA', O.hot); P.hotW = O.hotW; P.hotThick = O.hotT; }
+    mul('midA', O.mid); mul('spillA', O.spill); mul('sideA', O.side);
+    if (O.rings) { P.ringsS = O.rings; P.ringsP = 1.4; P.ringsR = 14; }
+    if (O.glow) P.glowA = Math.max(P.glowA, O.glow);
+    if (O.ledHS) { P.ledHS = O.ledHS; P.ledHP = O.ledHP; P.ledHSharp = O.ledHSharp; }
+  } else {
+    const O = OPT_ROUND[o];
+    mul('coreW', O.coreWm); mul('coreVW', O.coreWm);
+    if (P.coreA > 0) P.coreP = Math.max(P.coreP, O.coreP);
+    mul('haloA', O.halo); mul('haloW', O.haloWm);
+    if (O.rings) { P.ringsS = O.rings; P.ringsP = 1.4; P.ringsR = 14; }
+    if (O.ledHS) { P.ledHS = O.ledHS; P.ledHP = O.ledHP; P.ledHSharp = O.ledHSharp; }
+  }
+  const T = TECH_T[t];
+  P.kelvin = T.k;
+  if (T.tintSat) { P.tintHue = T.tintHue; P.tintSat = T.tintSat; }
+  if (cut) {
+    if (P.hotA > 0) mul('hotA', T.hot);
+    P.fringe = T.fr[o] || 0; P.fringeUpHue = T.up; P.fringeDnHue = T.dn; P.fringeW = T.fw || 0.35;
+    if (T.glow) P.glowA = Math.max(P.glowA, T.glow);
+    if (T.spill) mul('spillA', T.spill);
+    if (T.soft) P.cutSoft = Math.min(2, P.cutSoft + T.soft);
+    if (T.midWm) mul('midW', T.midWm);
+    if (T.hotWm && P.hotA > 0) mul('hotW', T.hotWm);
+  } else {
+    mul('coreA', T.hot);
+    if (T.coreWm) { mul('coreW', T.coreWm); mul('coreVW', T.coreWm); }
+  }
+  if (T.led && (o === 'reflector' || o === 'multi')) { P.ledHS = Math.max(P.ledHS, 10); P.ledHP = 3.5; P.ledHSharp = 2; }
+  if (T.led && (o === 'projector' || o === 'bi')) { P.ledHS = Math.max(P.ledHS, 22); P.ledHP = 3.2; P.ledHSharp = 2.5; P.ledVS = 12; P.ledVP = 0.9; }
+  // the bulb
+  if (cut && P.hotA > 0) { mul('hotW', b.size); mul('hotThick', b.size); mul('hotA', b.hot); }
+  if (!cut) { const f = 0.9 + 0.1 * b.size; mul('coreW', f); mul('coreVW', f); mul('coreA', b.hot); }
+  if (cut) P.cutSoft = Math.min(2.5, Math.max(0.05, P.cutSoft + b.soft));
+  P.kelvin = Math.max(2200, P.kelvin + b.k);
+  if (b.shield && cut && (o === 'reflector' || o === 'multi')) { P.holeS = Math.max(P.holeS, 70 * b.shield); P.holeW = 2.5; }
+  // the quick sliders
+  const wf = Q.width / 100;
+  for (const k of ['midW', 'lowW', 'sideW', 'spillW', 'glowW', 'coreW', 'haloW', 'l1W', 'l2W']) mul(k, wf);
+  mul('hotW', 0.7 + 0.3 * wf);
+  mul('lowA', Q.fore / 100);
+  P.cutSoft = Math.min(4, P.cutSoft * Q.soft / 100);
+  P.aimV += Q.aimV; P.aimH += Q.aimH;
+  if (Q.ledDeadQ > 0) { if (P.ledHS === 0) { P.ledHS = 30; P.ledHP = 3.2; P.ledHSharp = 2.5; } P.ledDead = Q.ledDeadQ; }
+  if (Q.adb > 0) { P.maskS = Q.adb; P.maskW = 7; P.maskH = 0; P.maskSoft = 1.5; }
+  // manufacturing spread
+  const mf = Q.manuf / 50;
+  P.facetS = imp[0] * mf; P.blotchS = imp[1] * mf; P.streakS = imp[2] * mf; P.facetSize = imp[3]; P.facetSoft = imp[4];
+  // age and condition
+  const ageF = Q.age / 100;
+  const reflBad = Math.max(ageF * 0.6, 1 - Q.reflCond / 100) * (t === 'led' ? 0.5 : 1);
+  const lensBad = Math.max(ageF * 0.5, 1 - Q.lensCond / 100);
+  P.burnS = 70 * reflBad; P.burnR = 8; P.burnBrown = 80 * reflBad;
+  P.burnH = cut ? P.hotH : P.coreH; P.burnV = cut ? P.hotDepth : P.coreV;
+  P.peelS = 55 * Math.pow(reflBad, 1.2); P.peelAmount = 10 + 30 * reflBad; P.peelScale = 2.6;
+  P.hazeS = 55 * lensBad; P.hazeYellow = 70 * lensBad;
+  P.crackN = Math.round(10 * Q.crackQ / 100); P.crackS = 45;
+  P.speckN = Math.round(60 * Q.dirt / 100); P.speckS = 25 + 35 * Q.dirt / 100; P.speckSize = 1.2;
+  P.blotchS += 14 * Q.dirt / 100;
+  P.colorOn = !!Q.colorOn;
+  // keep every value inside its slider
+  for (const d of DEFS) if (d.type === 'range') P[d.id] = Math.min(d.max, Math.max(d.min, P[d.id]));
+  return P;
+}
+
+
+function boxBlur(src, w, h, r) {
+  if (r < 1) return src;
+  const tmp = new Float32Array(src.length), dst = new Float32Array(src.length);
+  const inv = 1 / (2 * r + 1);
+  for (let y = 0; y < h; y++) {
+    const o = y * w;
+    let acc = 0;
+    for (let i = -r; i <= r; i++) acc += src[o + Math.min(w - 1, Math.max(0, i))];
+    for (let x = 0; x < w; x++) {
+      tmp[o + x] = acc * inv;
+      acc += src[o + Math.min(w - 1, x + r + 1)] - src[o + Math.max(0, x - r)];
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let i = -r; i <= r; i++) acc += tmp[Math.min(h - 1, Math.max(0, i)) * w + x];
+    for (let y = 0; y < h; y++) {
+      dst[y * w + x] = acc * inv;
+      acc += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x];
+    }
+  }
+  return dst;
+}
+function gaussBlur(a, w, h, sigmaPx) {
+  if (sigmaPx < 0.5) return a;
+  const bw = Math.sqrt(4 * sigmaPx * sigmaPx + 1);
+  const r = Math.max(1, Math.floor((bw - 1) / 2));
+  let out = a;
+  for (let i = 0; i < 3; i++) out = boxBlur(out, w, h, r);
+  return out;
+}
+
+// the picture as linear brightness (peak 1 when normalised) and, for colour, per-pixel RGB multipliers
+function generate(P, w, h) {
+  const N = w * h, stepH = 2 * HR / w, stepV = (VT - VB) / h;
+  let I = new Float32Array(N);
+  const color = !!P.colorOn;
+  const cm = color ? new Float32Array(N * 3) : null;
+  const mir = P.mirror ? -1 : 1;
+  const rr = P.roll * D2R, cr = Math.cos(rr), sr = Math.sin(rr);
+  const sH = Math.max(0.05, P.stretchH / 100), sV = Math.max(0.05, P.stretchV / 100);
+  const tanK = Math.tan(P.kink * D2R);
+  const sd = P.seed | 0;
+  const sf = Math.max(0.005, P.cutSoft / 2);
+  const hotA = P.hotA / 100 * REF.hot, midA = P.midA / 100 * REF.mid, lowA = P.lowA / 100 * REF.low;
+  const sideA = P.sideA / 100 * REF.side, spillA = P.spillA / 100 * REF.spill;
+  const coreA = P.coreA / 100 * REF.core, haloA = P.haloA / 100 * REF.halo;
+  const l1A = P.l1A / 100 * REF.lobe, l2A = P.l2A / 100 * REF.lobe;
+  const facetOn = P.facetS > 0, stripeOn = P.stripeS > 0, streakOn = P.streakS > 0, blotchOn = P.blotchS > 0;
+  const sa = P.stripeAngle * D2R, sca = Math.cos(sa), ssa = Math.sin(sa);
+  const ka = P.streakAngle * D2R, kca = Math.cos(ka), ksa = Math.sin(ka);
+  const tint0 = hsv2rgb(P.tintHue, P.tintSat / 100, 1);
+  const fr = P.fringe / 100, fW = Math.max(0.05, P.fringeW);
+  const cUp = hsv2rgb(P.fringeUpHue, 0.85, 1), cDn = hsv2rgb(P.fringeDnHue, 0.85, 1);
+  const kel = kelvinMul(P.kelvin), useKel = color && Math.abs(P.kelvin - 6500) > 1;
+  const wantTint = color && (P.tintSat > 0 || P.tintVar > 0);
+  const ledH = P.ledHS > 0, ledV = P.ledVS > 0, rings = P.ringsS > 0, hole = P.holeS > 0, burn = P.burnS > 0, peel = P.peelS > 0;
+  const glowA = P.glowA / 100 * 3000, hz = P.hazeS / 100;
+  const cH = P.cutOn ? P.hotH : P.coreH, cVv = P.cutOn ? P.hotDepth : P.coreV;
+  const rad = (x, sx, y, sy, p) => { const a = x / sx, b = y / sy; return Math.exp(-0.5 * Math.pow(Math.sqrt(a * a + b * b) + 1e-9, p)); };
+
+  for (let y = 0; y < h; y++) {
+    const v = VT - (y + 0.5) * stepV;
+    for (let x = 0; x < w; x++) {
+      const hh = -HR + (x + 0.5) * stepH;
+      const dh = hh - P.aimH, dv = v - P.aimV;
+      const ph = (dh * cr + dv * sr) / sH * mir, pv = (-dh * sr + dv * cr) / sV;
+      let val = 0, d = 0;
+      if (P.cutOn) {
+        let cut;
+        if (ph < P.stepPos) cut = P.cutL;
+        else {
+          const t = tanK * (ph - P.stepPos);
+          cut = P.cutR >= P.cutL ? Math.min(P.cutR, P.cutL + t) : Math.max(P.cutR, P.cutL - t);
+        }
+        if (P.cutWave > 0) cut += P.cutWave * (vnoise(ph / 60 * P.cutWaveF, 0.5, sd + 7) * 2 - 1);
+        d = cut - pv;
+        const dp = d > 0 ? d : 0, above = d < 0 ? -d : 0;
+        const edge = ss(-sf, sf, d);
+        let lit = 0;
+        if (hotA > 0) lit += hotA * gs(ph - P.hotH, P.hotW) * gs(d - P.hotDepth, P.hotThick);
+        if (midA > 0) lit += midA * gs(ph, P.midW) * Math.exp(-dp / P.midDecay) * ss(0, 0.8, d);
+        if (lowA > 0) lit += lowA * gs(ph, P.lowW) * Math.exp(-dp / P.lowDecay) * ss(0, 1.5, d);
+        if (sideA > 0) lit += sideA * gs(ph, P.sideW) * ss(0, 3, d);
+        val = lit * edge;
+        if (spillA > 0) val += spillA * gs(ph, P.spillW) * Math.exp(-above / P.spillDecay) * (1 - edge);
+        if (glowA > 0) val += glowA * gs(ph - P.hotH, P.glowW) * gs(d, P.glowV);
+      }
+      if (coreA > 0) val += coreA * rad(ph - P.coreH, P.coreW, pv - P.coreV, P.coreVW, P.coreP);
+      if (haloA > 0) val += haloA * gs(ph, P.haloW) * gs(pv - P.haloV, P.haloVW);
+      if (l1A > 0) val += l1A * rad(ph - P.l1H, P.l1W, pv - P.l1V, P.l1VW, P.l1P);
+      if (l2A > 0) val += l2A * rad(ph - P.l2H, P.l2W, pv - P.l2V, P.l2VW, P.l2P);
+
+      let m = 1;
+      if (facetOn) {
+        const u = ph / P.facetSize, q = pv / P.facetSize;
+        const cell = hash2(Math.floor(u), Math.floor(q), sd + 1), sm = vnoise(u, q, sd + 1);
+        m *= Math.max(0, 1 + P.facetS / 100 * ((cell + (sm - cell) * P.facetSoft) * 2 - 1));
+      }
+      if (stripeOn) {
+        const t = ph * sca + pv * ssa;
+        m *= 1 - P.stripeS / 100 * (0.5 - 0.5 * Math.cos(2 * Math.PI * t / P.stripePeriod));
+      }
+      if (streakOn) {
+        const a = ph * kca + pv * ksa, b = -ph * ksa + pv * kca;
+        m *= Math.max(0, 1 + P.streakS / 100 * (vnoise(a / (P.streakScale * P.streakStretch), b / P.streakScale, sd + 2) * 2 - 1));
+      }
+      if (blotchOn) {
+        const bn = vnoise(ph / P.blotchScale, pv / P.blotchScale, sd + 3) * 0.65 + vnoise(ph / (P.blotchScale * 0.4), pv / (P.blotchScale * 0.4), sd + 4) * 0.35;
+        m *= Math.max(0, 1 + P.blotchS / 100 * (bn * 2 - 1));
+      }
+      const posv = P.cutOn ? d : pv;
+      let bw = 0;
+      if (ledH) {
+        const u = ph / P.ledHP, prof = Math.pow(0.5 + 0.5 * Math.cos(2 * Math.PI * u), P.ledHSharp);
+        let mm = 1 - P.ledHS / 100 + P.ledHS / 100 * prof;
+        if (P.ledDead > 0 && hash2(Math.round(u), 0, sd + 31) < P.ledDead / 100) mm *= 1 - 0.92 * prof;
+        m *= mm;
+      }
+      if (P.maskS > 0) m *= 1 - P.maskS / 100 * (1 - ss(P.maskW / 2 - P.maskSoft, P.maskW / 2 + P.maskSoft, Math.abs(ph - P.maskH)));
+      if (ledV) m *= 1 - P.ledVS / 100 + P.ledVS / 100 * Math.pow(0.5 + 0.5 * Math.cos(2 * Math.PI * posv / P.ledVP), 2);
+      if (rings || hole) {
+        const a = ph - cH, b = posv - cVv, rr2 = Math.sqrt(a * a + b * b);
+        if (rings) m *= 1 - P.ringsS / 100 * (0.5 - 0.5 * Math.cos(2 * Math.PI * rr2 / P.ringsP)) * Math.exp(-rr2 / P.ringsR);
+        if (hole) m *= 1 - P.holeS / 100 * Math.exp(-0.5 * (rr2 / P.holeW) * (rr2 / P.holeW));
+      }
+      if (burn) {
+        const a = ph - P.burnH, b = posv - P.burnV;
+        bw = Math.exp(-0.5 * (a * a + b * b) / (P.burnR * P.burnR)) * (0.55 + 0.45 * vnoise(ph / 3, posv / 3, sd + 41));
+        m *= 1 - P.burnS / 100 * bw;
+      }
+      if (peel) {
+        const pn = vnoise(ph / P.peelScale, pv / P.peelScale, sd + 51) * 0.7 + vnoise(ph / (P.peelScale * 0.35), pv / (P.peelScale * 0.35), sd + 52) * 0.3;
+        const thr = 0.8 - P.peelAmount / 100 * 0.45;
+        m *= 1 - P.peelS / 100 * ss(thr, thr + 0.06, pn);
+      }
+      const i = y * w + x;
+      I[i] = val * m;
+
+      if (color) {
+        let r = 1, g = 1, b = 1;
+        if (wantTint) {
+          let tr = tint0[0], tg = tint0[1], tb = tint0[2];
+          if (P.tintVar > 0) {
+            const hn = vnoise(ph / 18, pv / 18, sd + 5) * 2 - 1;
+            const t2 = hsv2rgb(P.tintHue + hn * 60 * P.tintVar / 100, P.tintSat / 100, 1);
+            tr = t2[0]; tg = t2[1]; tb = t2[2];
+          }
+          r = tr; g = tg; b = tb;
+        }
+        if (useKel) { r *= kel[0]; g *= kel[1]; b *= kel[2]; }
+        if (fr > 0 && P.cutOn) {
+          const wDn = Math.min(1, fr * gs(d - fW, fW)), wUp = Math.min(1, fr * gs(d + fW, fW));
+          r = r * (1 - wDn) + cDn[0] * wDn; g = g * (1 - wDn) + cDn[1] * wDn; b = b * (1 - wDn) + cDn[2] * wDn;
+          r = r * (1 - wUp) + cUp[0] * wUp; g = g * (1 - wUp) + cUp[1] * wUp; b = b * (1 - wUp) + cUp[2] * wUp;
+        }
+        if (bw > 0 && P.burnBrown > 0) {
+          const k = P.burnBrown / 100 * bw * P.burnS / 100;
+          r *= 1 + 0.3 * k; g *= 1 - 0.1 * k; b *= 1 - 0.6 * k;
+        }
+        if (P.hazeYellow > 0) {
+          const hy = P.hazeYellow / 100 * (0.3 + 0.7 * hz);
+          r *= 1 + 0.12 * hy; g *= 1 + 0.04 * hy; b *= 1 - 0.55 * hy;
+        }
+        const Y = 0.2126 * r + 0.7152 * g + 0.0722 * b + 1e-9;
+        cm[i * 3] = r / Y; cm[i * 3 + 1] = g / Y; cm[i * 3 + 2] = b / Y;
+      }
+    }
+  }
+  if (P.speckN > 0 && P.speckS > 0) {
+    const R = rng(sd + 11);
+    for (let k = 0; k < P.speckN; k++) {
+      const sh = -50 + R() * 100, sv = -45 + R() * 70, sg = P.speckSize * (0.4 + R() * 1.2), st = P.speckS / 100 * (0.5 + 0.5 * R());
+      const rx = Math.ceil(3 * sg / stepH), ry = Math.ceil(3 * sg / stepV);
+      const cx = Math.round((sh + HR) / stepH), cy = Math.round((VT - sv) / stepV);
+      for (let yy = Math.max(0, cy - ry); yy <= Math.min(h - 1, cy + ry); yy++) {
+        for (let xx = Math.max(0, cx - rx); xx <= Math.min(w - 1, cx + rx); xx++) {
+          const ddh = (xx + 0.5) * stepH - HR - sh, ddv = VT - (yy + 0.5) * stepV - sv;
+          I[yy * w + xx] *= 1 - st * Math.exp(-0.5 * (ddh * ddh + ddv * ddv) / (sg * sg));
+        }
+      }
+    }
+  }
+  if (P.crackN > 0 && P.crackS > 0) {
+    const R = rng(sd + 61), mask = new Float32Array(N);
+    for (let k = 0; k < P.crackN; k++) {
+      const ch = -50 + R() * 100, cv = -40 + R() * 45, ang = R() * Math.PI, len = 5 + R() * 20, ph0 = R() * 6;
+      const steps = Math.ceil(len / (stepH * 0.5));
+      for (let st = 0; st <= steps; st++) {
+        const t = st / steps, wob = 0.5 * Math.sin(t * 9 + ph0);
+        const cx = (ch + Math.cos(ang) * len * t - Math.sin(ang) * wob + HR) / stepH, cy = (VT - (cv + Math.sin(ang) * len * t + Math.cos(ang) * wob)) / stepV;
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          const xx = Math.round(cx) + dx, yy = Math.round(cy) + dy;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          const wgt = Math.exp(-0.5 * (dx * dx + dy * dy) / 1.1);
+          if (wgt > mask[yy * w + xx]) mask[yy * w + xx] = wgt;
+        }
+      }
+    }
+    for (let i = 0; i < N; i++) I[i] *= 1 - P.crackS / 100 * 0.85 * mask[i];
+  }
+  if (hz > 0) {
+    const hb = gaussBlur(I, w, h, (1.5 + hz * 5) / stepH);
+    for (let i = 0; i < N; i++) I[i] = I[i] * (1 - 0.65 * hz) + hb[i] * 0.65 * hz;
+  }
+  if (P.blur > 0) I = gaussBlur(I, w, h, P.blur / stepH);
+  let peak = 0;
+  for (let i = 0; i < N; i++) if (I[i] > peak) peak = I[i];
+  if (peak <= 0) peak = 1;
+  const fl = P.floorPct / 100 * peak + 0.015 * hz * peak;
+  const fadeS = P.edgeFade, fadeT = P.topFade, fadeB = P.bottomFade;
+  for (let y = 0; y < h; y++) {
+    const v = VT - (y + 0.5) * stepV;
+    const ft = fadeT > 0 ? ss(0, fadeT, VT - v) : 1, fb = fadeB > 0 ? ss(0, fadeB, v - VB) : 1;
+    for (let x = 0; x < w; x++) {
+      const hh = -HR + (x + 0.5) * stepH;
+      const fs = fadeS > 0 ? ss(0, fadeS, HR - Math.abs(hh)) : 1;
+      const i = y * w + x;
+      I[i] = (I[i] + fl) * fs * ft * fb;
+    }
+  }
+  peak = 0;
+  for (let i = 0; i < N; i++) if (I[i] > peak) peak = I[i];
+  if (peak <= 0) peak = 1;
+  const norm = P.normalize ? 1 / peak : 1 / REF.hot;
+  for (let i = 0; i < N; i++) {
+    let t = I[i] * norm;
+    if (P.contrast !== 1) t = Math.pow(Math.max(t, 0), P.contrast);
+    I[i] = t;
+  }
+  return { I, cm, w, h };
+}
+
+function toSrgb8(t) { const c = t < 0 ? 0 : t > 1 ? 1 : t; return Math.round(255 * Math.pow(c, 1 / 2.2)); }
+// the same, with triangular noise of one level before the rounding: smooth falls of brightness
+// then have no visible steps (banding), the noise averages out under the game's filtering
+function toSrgb8d(t, x, y, k, seed) {
+  const c = t < 0 ? 0 : t > 1 ? 1 : t;
+  const n = hash2(x * 3 + k, y, seed + 101) + hash2(x * 3 + k, y, seed + 202) - 1;
+  const v = Math.round(255 * Math.pow(c, 1 / 2.2) + n);
+  return v < 0 ? 0 : v > 255 ? 255 : v;
+}
+
+// ---- PNG ----
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8) { let c = 0xFFFFFFFF; for (let i = 0; i < u8.length; i++) c = CRC_T[(c ^ u8[i]) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function adler32(u8) { let a = 1, b = 0; for (let i = 0; i < u8.length; i++) { a = (a + u8[i]) % 65521; b = (b + a) % 65521; } return ((b << 16) | a) >>> 0; }
+function zlibStored(u8) {
+  const blocks = Math.max(1, Math.ceil(u8.length / 65535));
+  const out = new Uint8Array(2 + u8.length + blocks * 5 + 4);
+  let o = 0; out[o++] = 0x78; out[o++] = 0x01;
+  for (let i = 0; i < blocks; i++) {
+    const start = i * 65535, len = Math.min(65535, u8.length - start), last = i === blocks - 1 ? 1 : 0;
+    out[o++] = last; out[o++] = len & 255; out[o++] = len >> 8; out[o++] = (~len) & 255; out[o++] = ((~len) >> 8) & 255;
+    out.set(u8.subarray(start, start + len), o); o += len;
+  }
+  const ad = adler32(u8);
+  out[o++] = ad >>> 24; out[o++] = (ad >>> 16) & 255; out[o++] = (ad >>> 8) & 255; out[o++] = ad & 255;
+  return out;
+}
+async function zlibCompress(u8) {
+  if (typeof CompressionStream !== 'undefined') {
+    try {
+      const cs = new CompressionStream('deflate');
+      const wr = cs.writable.getWriter(); wr.write(u8); wr.close();
+      return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+    } catch (e) { /* falls back below */ }
+  }
+  return zlibStored(u8);
+}
+function pngChunk(type, data) {
+  const out = new Uint8Array(12 + data.length), dv = new DataView(out.buffer);
+  dv.setUint32(0, data.length);
+  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i);
+  out.set(data, 8);
+  dv.setUint32(8 + data.length, crc32(out.subarray(4, 8 + data.length)));
+  return out;
+}
+// raw: rows of samples (bitDepth 8 or 16 big endian); colorType 0 gray, 2 RGB
+async function encodePNG(w, h, raw, colorType, bitDepth, textKey, textVal) {
+  const bpp = (colorType === 2 ? 3 : 1) * (bitDepth / 8), row = w * bpp;
+  const f = new Uint8Array((row + 1) * h);
+  for (let y = 0; y < h; y++) {
+    const o = y * (row + 1); f[o] = 1;
+    for (let i = 0; i < row; i++) f[o + 1 + i] = (raw[y * row + i] - (i >= bpp ? raw[y * row + i - bpp] : 0)) & 255;
+  }
+  const ihdr = new Uint8Array(13), dv = new DataView(ihdr.buffer);
+  dv.setUint32(0, w); dv.setUint32(4, h); ihdr[8] = bitDepth; ihdr[9] = colorType;
+  const parts = [new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk('IHDR', ihdr)];
+  if (textKey) {
+    const txt = textKey + '\0' + textVal.replace(/[^\x20-\x7e]/g, c => '\\u' + ('0000' + c.charCodeAt(0).toString(16)).slice(-4));
+    const tb = new Uint8Array(txt.length); for (let i = 0; i < txt.length; i++) tb[i] = txt.charCodeAt(i) & 255;
+    parts.push(pngChunk('tEXt', tb));
+  }
+  parts.push(pngChunk('IDAT', await zlibCompress(f)), pngChunk('IEND', new Uint8Array(0)));
+  let n = 0; for (const p of parts) n += p.length;
+  const out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+function readPngText(bytes, key) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let o = 8;
+  while (o + 12 <= bytes.length) {
+    const len = dv.getUint32(o); let type = '';
+    for (let i = 0; i < 4; i++) type += String.fromCharCode(bytes[o + 4 + i]);
+    if (type === 'tEXt') {
+      let s = ''; for (let i = 0; i < len; i++) s += String.fromCharCode(bytes[o + 8 + i]);
+      const z = s.indexOf('\0');
+      if (z > 0 && s.slice(0, z) === key) return s.slice(z + 1);
+    }
+    if (type === 'IEND') break;
+    o += 12 + len;
+  }
+  return null;
+}
+async function exportPNG(P, fmt, extra) {
+  const c = generate(P, PW, PH), N = PW * PH;
+  const meta = JSON.stringify(Object.assign({ tool: 'omsi-beam-cookie', version: 2, params: P }, extra || {}));
+  if (fmt === 'g16') {
+    const raw = new Uint8Array(N * 2);
+    for (let i = 0; i < N; i++) { const t = Math.min(1, Math.max(0, c.I[i])); const v = Math.round(65535 * Math.pow(t, 1 / 2.2)); raw[i * 2] = v >> 8; raw[i * 2 + 1] = v & 255; }
+    return encodePNG(PW, PH, raw, 0, 16, 'omsi-beam', meta);
+  }
+  if (fmt === 'rgb') {
+    const raw = new Uint8Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const l = c.I[i], px = i % PW, py = (i / PW) | 0;
+      for (let k = 0; k < 3; k++) {
+        const t = c.cm ? l * c.cm[i * 3 + k] : l;
+        raw[i * 3 + k] = P.dither ? toSrgb8d(t, px, py, k, P.seed | 0) : toSrgb8(t);
+      }
+    }
+    return encodePNG(PW, PH, raw, 2, 8, 'omsi-beam', meta);
+  }
+  const raw = new Uint8Array(N);
+  for (let i = 0; i < N; i++) raw[i] = P.dither ? toSrgb8d(c.I[i], i % PW, (i / PW) | 0, 0, P.seed | 0) : toSrgb8(c.I[i]);
+  return encodePNG(PW, PH, raw, 0, 8, 'omsi-beam', meta);
+}
+
+// ---- reading the picture the way the game does ----
+function sampleCookie(c, hdeg, vdeg, out) {
+  const w = c.w, h = c.h;
+  if (vdeg > VT) { out[0] = out[1] = out[2] = out[3] = 0; return; }
+  const over = Math.max(Math.abs(hdeg) - HR, 0);
+  const side = 1 - ss(0, 30, over);
+  let fx = (hdeg + HR) / (2 * HR) * w - 0.5, fy = (VT - vdeg) / (VT - VB) * h - 0.5;
+  fx = Math.min(w - 1.0001, Math.max(0, fx)); fy = Math.min(h - 1.0001, Math.max(0, fy));
+  const x0 = Math.floor(fx), y0 = Math.floor(fy), tx = fx - x0, ty = fy - y0;
+  const i00 = y0 * w + x0, i10 = i00 + 1, i01 = i00 + w, i11 = i01 + 1;
+  const wa = (1 - tx) * (1 - ty), wb = tx * (1 - ty), wc = (1 - tx) * ty, wd = tx * ty;
+  const l = (c.I[i00] * wa + c.I[i10] * wb + c.I[i01] * wc + c.I[i11] * wd) * side;
+  out[0] = Math.pow(Math.max(l, 0), 1);
+  if (c.cm) {
+    for (let k = 0; k < 3; k++) out[1 + k] = c.cm[i00 * 3 + k] * wa + c.cm[i10 * 3 + k] * wb + c.cm[i01 * 3 + k] * wc + c.cm[i11 * 3 + k] * wd;
+  } else { out[1] = out[2] = out[3] = 1; }
+}
+//CORE-END
+
+// ================= i18n =================
+const I18N = {"EN": {"Przesunięcie w bok": "Shift sideways", "Przesuwa wzór w prawo (+) lub w lewo (−).": "Moves the pattern right (+) or left (−).", "Przesunięcie w pionie": "Vertical shift", "Przesuwa wzór w górę (+) lub w dół (−), jak regulacja pochylenia reflektora.": "Moves the pattern up (+) or down (−), like adjusting the headlamp's tilt.", "Przechył obrazu": "Image roll", "Obraca wzór (przechylona linia odcięcia).": "Rotates the pattern (tilted cut-off line).", "Rozciągnięcie w bok": "Horizontal stretch", "Poszerza (>100) lub zwęża (<100) cały wzór.": "Widens (>100) or narrows (<100) the whole pattern.", "Rozciągnięcie w pionie": "Vertical stretch", "Wydłuża (>100) lub skraca (<100) wzór w pionie.": "Lengthens (>100) or shortens (<100) the pattern vertically.", "Odbij w poziomie (ruch lewostronny)": "Mirror horizontally (left-hand traffic)", "Odwraca wzór lewo-prawo, np. dla mijań do ruchu lewostronnego.": "Flips the pattern left-right, e.g. for low beams for left-hand traffic.", "Linia odcięcia włączona": "Cut-off line enabled", "Wyłączona: wzór nie ma górnej granicy (wiązka okrągła).": "Off: the pattern has no upper limit (round beam).", "Poziom po lewej": "Left level", "Wysokość odcięcia po lewej stronie względem poziomu lampy.": "Height of the cut-off on the left, relative to the lamp's horizon.", "Poziom po prawej": "Right level", "Wysokość odcięcia po prawej stronie.": "Height of the cut-off on the right.", "Kąt schodka": "Step angle", "Nachylenie skosu łączącego oba poziomy odcięcia.": "Slope of the ramp joining the two cut-off levels.", "Położenie schodka": "Step position", "W którym miejscu w poziomie zaczyna się schodek.": "Where sideways the step begins.", "Miękkość krawędzi": "Edge softness", "Szerokość przejścia światło-ciemność na linii odcięcia.": "Width of the light-to-dark transition at the cut-off line.", "Falistość linii": "Line waviness", "Nierówność linii odcięcia (amplituda).": "Unevenness of the cut-off line (amplitude).", "Częstość falistości": "Waviness frequency", "Liczba fal na całej szerokości obrazu.": "Number of waves across the whole image width.", "Moc": "Power", "Jasność gorącego punktu względem wzorca (100% = jak w preseie mijań).": "Brightness of the hot spot relative to the reference (100% = as in the low-beam preset).", "Położenie w bok": "Sideways position", "Środek gorącego punktu w poziomie.": "Centre of the hot spot, horizontally.", "Szerokość": "Width", "Rozmiar gorącego punktu w poziomie.": "Size of the hot spot, horizontally.", "Głębokość pod odcięciem": "Depth below the cut-off", "O ile pod linią odcięcia leży środek gorącego punktu.": "How far below the cut-off line the centre of the hot spot lies.", "Grubość w pionie": "Vertical thickness", "Wysokość gorącego punktu.": "Height of the hot spot.", "Korpus: moc": "Body: power", "Jasność szerokiego korpusu wiązki.": "Brightness of the wide body of the beam.", "Korpus: szerokość": "Body: width", "Rozpiętość korpusu w bok.": "Sideways spread of the body.", "Korpus: zanik w dół": "Body: falloff downwards", "Jak szybko korpus słabnie poniżej odcięcia.": "How quickly the body fades below the cut-off.", "Przedpole: moc": "Foreground: power", "Jasność światła kierowanego w dół, przed zderzak.": "Brightness of the light aimed downwards, in front of the bumper.", "Przedpole: szerokość": "Foreground: width", "Rozpiętość przedpola w bok.": "Sideways spread of the foreground.", "Przedpole: zanik w dół": "Foreground: falloff downwards", "Jak szybko przedpole słabnie ku większym kątom w dół.": "How quickly the foreground fades towards larger downward angles.", "Poświata boczna: moc": "Side glow: power", "Słabe światło po bokach wiązki.": "Weak light at the sides of the beam.", "Poświata boczna: szerokość": "Side glow: width", "Rozpiętość poświaty bocznej.": "Spread of the side glow.", "Nad odcięciem: moc": "Above cut-off: power", "Światło nad linią odcięcia (znaki, wiadukty, ściany powyżej lampy).": "Light above the cut-off line (signs, overpasses, walls above the lamp).", "Nad odcięciem: szerokość": "Above cut-off: width", "Rozpiętość tego światła w bok.": "Sideways spread of that light.", "Nad odcięciem: zanik w górę": "Above cut-off: falloff upwards", "Jak szybko słabnie ze wzrostem kąta nad odcięciem.": "How quickly it fades as the angle above the cut-off grows.", "Rdzeń: moc": "Core: power", "Jasność okrągłego rdzenia (0 = wyłączony).": "Brightness of the round core (0 = off).", "Rdzeń: położenie w bok": "Core: sideways position", "Środek rdzenia w poziomie.": "Centre of the core, horizontally.", "Rdzeń: położenie w pionie": "Core: vertical position", "Środek rdzenia w pionie.": "Centre of the core, vertically.", "Rdzeń: szerokość": "Core: width", "Rozmiar w poziomie.": "Size, horizontally.", "Rdzeń: wysokość": "Core: height", "Rozmiar w pionie.": "Size, vertically.", "Rdzeń: kształt": "Core: shape", "2 = gauss, wyżej = płaski środek i ostrzejsza krawędź.": "2 = Gaussian, higher = flat centre and sharper edge.", "Halo: moc": "Halo: power", "Jasność szerokiego halo wokół rdzenia.": "Brightness of the wide halo around the core.", "Halo: szerokość": "Halo: width", "Rozpiętość halo w bok.": "Sideways spread of the halo.", "Halo: położenie w pionie": "Halo: vertical position", "Środek halo w pionie.": "Centre of the halo, vertically.", "Halo: wysokość": "Halo: height", "Rozpiętość halo w pionie.": "Vertical spread of the halo.", "Płat 1: moc": "Lobe 1: power", "Jasność dodatkowego płata 1 (0 = wyłączony).": "Brightness of extra lobe 1 (0 = off).", "Płat 1: położenie w bok": "Lobe 1: sideways position", "Środek płata w poziomie.": "Centre of the lobe, horizontally.", "Płat 1: położenie w pionie": "Lobe 1: vertical position", "Środek płata w pionie.": "Centre of the lobe, vertically.", "Płat 1: szerokość": "Lobe 1: width", "Płat 1: wysokość": "Lobe 1: height", "Płat 1: kształt": "Lobe 1: shape", "2 = gauss, wyżej = bardziej płaski.": "2 = Gaussian, higher = flatter.", "Płat 2: moc": "Lobe 2: power", "Jasność dodatkowego płata 2 (0 = wyłączony).": "Brightness of extra lobe 2 (0 = off).", "Płat 2: położenie w bok": "Lobe 2: sideways position", "Płat 2: położenie w pionie": "Lobe 2: vertical position", "Płat 2: szerokość": "Lobe 2: width", "Płat 2: wysokość": "Lobe 2: height", "Płat 2: kształt": "Lobe 2: shape", "Fasety: siła": "Facets: strength", "Odbłyśnik z fasetami: komórki o różnej jasności.": "Faceted reflector: cells of different brightness.", "Fasety: wielkość": "Facets: size", "Rozmiar jednej faski.": "Size of one facet.", "Fasety: miękkość": "Facets: softness", "0 = ostre komórki, 1 = gładkie przejścia.": "0 = sharp cells, 1 = smooth transitions.", "Żebrowanie: siła": "Ribbing: strength", "Pionowe (lub pochylone) prążki jak na soczewce Fresnela.": "Vertical (or tilted) ridges like on a Fresnel lens.", "Żebrowanie: okres": "Ribbing: period", "Odstęp między prążkami.": "Spacing between the ridges.", "Żebrowanie: kierunek": "Ribbing: direction", "0 = prążki pionowe, 90 = poziome.": "0 = vertical ridges, 90 = horizontal.", "Smugi: siła": "Streaks: strength", "Wydłużone smugi (ślady produkcyjne, rysy).": "Elongated streaks (manufacturing marks, scratches).", "Smugi: grubość": "Streaks: thickness", "Szerokość smug.": "Width of the streaks.", "Smugi: wydłużenie": "Streaks: elongation", "Ile razy smugi są dłuższe niż szerokie.": "How many times longer the streaks are than wide.", "Smugi: kierunek": "Streaks: direction", "0 = smugi poziome, 90 = pionowe.": "0 = horizontal streaks, 90 = vertical.", "Plamy: siła": "Blotches: strength", "Duże, miękkie plamy jaśniejsze i ciemniejsze.": "Large, soft blotches, lighter and darker.", "Plamy: wielkość": "Blotches: size", "Rozmiar plam.": "Size of the blotches.", "Zabrudzenia: liczba": "Dirt: count", "Ciemne kropki jak brud na szkle.": "Dark specks like dirt on the glass.", "Zabrudzenia: wielkość": "Dirt: size", "Rozmiar kropek.": "Size of the specks.", "Zabrudzenia: siła": "Dirt: strength", "Jak mocno kropki przyciemniają światło.": "How strongly the specks darken the light.", "Ziarno losowości": "Random seed", "Zmienia układ wszystkich niedoskonałości.": "Changes the layout of all imperfections.", "LED: modulacja modułów w poziomie": "LED: horizontal module modulation", "Pionowe pasy jasności jak obrazy kolejnych modułów LED (0 = brak).": "Vertical bands of brightness like the images of successive LED modules (0 = none).", "LED: rozstaw modułów w poziomie": "LED: horizontal module pitch", "Odległość między środkami modułów.": "Distance between module centres.", "LED: ostrość modułów": "LED: module sharpness", "Wyżej = węższe, wyraźniejsze moduły.": "Higher = narrower, more distinct modules.", "LED: wyłączone moduły": "LED: dead modules", "Odsetek modułów, które nie świecą (przepalone diody).": "Share of modules that are not lit (burnt-out diodes).", "LED: modulacja w pionie": "LED: vertical modulation", "Poziome pasy, jak kolejne rzędy diod lub segmenty odbłyśnika.": "Horizontal bands, like successive rows of diodes or reflector segments.", "LED: rozstaw w pionie": "LED: vertical pitch", "Odległość między pasami w pionie.": "Distance between the vertical bands.", "Soczewka: pierścienie, siła": "Lens: rings, strength", "Koncentryczne pierścienie wokół gorącego punktu (soczewki projektora).": "Concentric rings around the hot spot (projector lenses).", "Soczewka: odstęp pierścieni": "Lens: ring spacing", "Odległość między pierścieniami.": "Distance between the rings.", "Soczewka: zasięg pierścieni": "Lens: ring reach", "Jak daleko od środka pierścienie są widoczne.": "How far from the centre the rings are visible.", "Ciemny środek: siła": "Dark centre: strength", "Cień osłonki żarnika w środku gorącego punktu (odbłyśniki halogenowe).": "Shadow of the filament shield in the middle of the hot spot (halogen reflectors).", "Ciemny środek: rozmiar": "Dark centre: size", "Wielkość ciemnego środka.": "Size of the dark centre.", "Strefa zacieniona (ADB): siła": "Shadowed zone (ADB): strength", "Ciemny pas w wiązce: zacienienie fragmentu drogowych, w którym jest inny pojazd (matrycowe drogowe).": "Dark band in the beam: shading the part of the high beam where another vehicle is (matrix high beams).", "Strefa zacieniona: szerokość": "Shadowed zone: width", "Szerokość ciemnego pasa.": "Width of the dark band.", "Strefa zacieniona: położenie": "Shadowed zone: position", "Środek ciemnego pasa w poziomie.": "Centre of the dark band, horizontally.", "Strefa zacieniona: miękkość": "Shadowed zone: softness", "Szerokość przejścia na brzegach pasa.": "Width of the transition at the band's edges.", "Poświata wokół odcięcia: moc": "Glow around the cut-off: power", "Jasna poświata po obu stronach linii odcięcia (xenon, zmatowiałe szkło).": "Bright glow on both sides of the cut-off line (xenon, hazed glass).", "Poświata: szerokość": "Glow: width", "Rozpiętość poświaty w bok.": "Sideways spread of the glow.", "Poświata: wysokość": "Glow: height", "Rozpiętość poświaty w pionie.": "Vertical spread of the glow.", "Wypalenie odbłyśnika: siła": "Reflector burn-out: strength", "Przyciemniony, wypalony środek odbłyśnika (gorący punkt słabnie).": "Darkened, burnt centre of the reflector (the hot spot weakens).", "Wypalenie: rozmiar": "Burn-out: size", "Wielkość wypalonego obszaru.": "Size of the burnt area.", "Wypalenie: położenie w bok": "Burn-out: sideways position", "Środek wypalenia w poziomie.": "Centre of the burn-out, horizontally.", "Wypalenie: głębokość pod odcięciem": "Burn-out: depth below the cut-off", "Środek wypalenia w pionie (liczony od linii odcięcia, a bez odcięcia od poziomu lampy).": "Centre of the burn-out, vertically (measured from the cut-off line, or from the lamp's horizon without a cut-off).", "Wypalenie: zbrązowienie": "Burn-out: browning", "Przebarwienie wypalonego miejsca na brąz (wymaga koloru).": "Brown discolouration of the burnt spot (needs colour).", "Łuszczenie powłoki: siła": "Coating flaking: strength", "Ubytki powłoki odbijającej: plamy, które nie odbijają światła.": "Missing reflective coating: patches that do not reflect light.", "Łuszczenie: wielkość": "Flaking: size", "Wielkość łuszczących się płatów.": "Size of the flaking patches.", "Łuszczenie: pokrycie": "Flaking: coverage", "Jaka część powierzchni jest zniszczona.": "What share of the surface is damaged.", "Zmatowienie klosza: siła": "Lens haze: strength", "Matowe szkło rozprasza światło: miękne odcięcie, poświata, mniejszy kontrast.": "Hazed glass scatters light: softer cut-off, glow, lower contrast.", "Zażółcenie klosza": "Lens yellowing", "Żółknięcie szkła (wymaga koloru).": "Yellowing of the glass (needs colour).", "Pęknięcia: liczba": "Cracks: count", "Cienkie pęknięcia szkła lub odbłyśnika.": "Thin cracks in the glass or reflector.", "Pęknięcia: siła": "Cracks: strength", "Jak mocno pęknięcia przyciemniają światło.": "How strongly the cracks darken the light.", "Kolorowy wzór (do zapisu RGB)": "Colour pattern (for RGB export)", "Włącza podgląd i zapis koloru (gra czyta kolor z obrazu).": "Turns on colour preview and export (the game reads the colour from the image).", "Temperatura barwowa": "Colour temperature", "Barwa źródła: 2700-3300 K ciepłe halogeny, 4000-4500 xenon, 5500-6500 LED (6500 = bez zabarwienia).": "Colour of the source: 2700-3300 K warm halogens, 4000-4500 xenon, 5500-6500 LED (6500 = no tint).", "Odcień odbłyśnika": "Reflector tint", "Barwa światła: 45 = ciepła żółta, 210 = chłodna niebieska.": "Colour of the light: 45 = warm yellow, 210 = cool blue.", "Nasycenie odcienia": "Tint saturation", "Siła zabarwienia (0 = białe światło).": "Strength of the tint (0 = white light).", "Zmienność odcienia": "Tint variation", "Plamy o innym odcieniu w odbłyśniku.": "Patches of a different tint in the reflector.", "Barwne obwódki odcięcia": "Cut-off colour fringes", "Barwne obwódki wzdłuż linii odcięcia (aberracja chromatyczna soczewki, typowa dla LED i xenonów).": "Colour fringes along the cut-off line (chromatic aberration of the lens, typical for LEDs and xenons).", "Obwódki: szerokość": "Fringes: width", "Szerokość barwnych obwódek.": "Width of the colour fringes.", "Obwódka nad odcięciem: odcień": "Fringe above the cut-off: hue", "220 = niebieska, 270 = fioletowa.": "220 = blue, 270 = violet.", "Obwódka pod odcięciem: odcień": "Fringe below the cut-off: hue", "40 = bursztynowa, 55 = żółta.": "40 = amber, 55 = yellow.", "Rozmycie całości": "Overall blur", "Wygładza cały obraz (poza ostrością linii odcięcia ustawioną wyżej).": "Smooths the whole image (apart from the cut-off sharpness set above).", "Wygaszanie boków": "Side fade-out", "Wzór gaśnie do zera przy bocznych krawędziach obrazu (bez twardego odcięcia po bokach).": "The pattern fades to zero at the side edges of the image (no hard cut at the sides).", "Wygaszanie góry": "Top fade-out", "Wzór gaśnie ku górnej krawędzi obrazu.": "The pattern fades towards the top edge of the image.", "Wygaszanie dołu": "Bottom fade-out", "Wzór gaśnie ku dolnej krawędzi (ziemia tuż pod zderzakiem), bo silnik przedłuża dolny wiersz.": "The pattern fades towards the bottom edge (ground right under the bumper), because the engine extends the bottom row.", "Poziom tła": "Background level", "Dodaje stałe, słabe światło w całym obrazie.": "Adds a constant faint light over the whole image.", "Kontrast (krzywa)": "Contrast (curve)", ">1 zawęża wiązkę i pogłębia ciemność, <1 rozszerza ją.": ">1 narrows the beam and deepens the dark, <1 widens it.", "Normalizuj do szczytu (biel = maksimum)": "Normalise to peak (white = maximum)", "Zalecane: najjaśniejszy punkt dostaje wartość 255.": "Recommended: the brightest point gets the value 255.", "Dithering przy zapisie 8 bit (usuwa pasy)": "Dithering on 8-bit export (removes banding)", "Dodaje drobny szum o amplitudzie jednego poziomu przy zaokrąglaniu do 8 bitów, dzięki czemu gładkie spadki jasności nie mają widocznych schodków (pasów). Zalecane przy PNG 8 bit.": "Adds fine noise of one level's amplitude when rounding to 8 bits, so smooth falls of brightness show no visible steps (banding). Recommended for 8-bit PNG.", "Ustawienie obrazu": "Image placement", "Przesuwa, obraca i rozciąga cały wzór, jakbyś inaczej ustawił lampę. Kierunek lampy w model.cfg zostaje poziomy.": "Moves, rotates and stretches the whole pattern, as if you aimed the lamp differently. The lamp's direction in model.cfg stays horizontal.", "Linia odcięcia": "Cut-off line", "Ostra górna granica światła mijania. Po lewej płaska, po prawej podniesiona ze schodkiem (ruch prawostronny).": "The sharp upper limit of a low beam. Flat on the left, raised with a step on the right (right-hand traffic).", "Gorący punkt": "Hot spot", "Najjaśniejszy obszar tuż pod linią odcięcia, który świeci daleko w głąb drogi.": "The brightest area just below the cut-off line, which lights far down the road.", "Korpus wiązki i przedpole": "Beam body and foreground", "Szerokie światło pod linią odcięcia oraz ogon w dół, ku zderzakowi.": "Wide light below the cut-off line and a tail downwards, towards the bumper.", "Poświata boczna i światło nad odcięciem": "Side glow and light above the cut-off", "Słabe światło po bokach oraz nad linią odcięcia, które oświetla znaki i obiekty nad lampą.": "Weak light at the sides and above the cut-off line, which lights signs and objects above the lamp.", "Rdzeń i halo (wiązka okrągła)": "Core and halo (round beam)", "Wiązka bez odcięcia: drogowe, reflektor roboczy, punktowy. Kształt 2 = gauss, wyższy = bardziej płaski.": "A beam without a cut-off: high beam, work light, spotlight. Shape 2 = Gaussian, higher = flatter.", "Dodatkowe płaty": "Extra lobes", "Dwa dowolne płaty światła w wybranym miejscu: np. lampa doświetlająca zakręt albo drugi projektor.": "Two free lobes of light wherever you like: e.g. a cornering lamp or a second projector.", "Niedoskonałości odbłyśnika": "Reflector imperfections", "Nierówności jak w prawdziwych lampach: fasety, żebrowanie soczewki, smugi, plamy, brud. Dotyczą jasności.": "Irregularities as in real lamps: facets, lens ribbing, streaks, blotches, dirt. They affect brightness.", "Technologia lampy (moduły LED, soczewka, żarnik)": "Lamp technology (LED modules, lens, filament)", "Cechy źródła i optyki: rozstaw modułów LED, pierścienie soczewki, ciemny środek (cień osłonki żarnika), poświata wokół odcięcia (xenon). Typy lamp ustawiają je za Ciebie.": "Features of the source and optics: LED module pitch, lens rings, dark centre (filament shield shadow), glow around the cut-off (xenon). Lamp types set them for you.", "Zużycie i uszkodzenia (wypalenie, łuszczenie, zmatowienie)": "Wear and damage (burn-out, flaking, haze)", "Postarzanie lampy: wypalony środek odbłyśnika, łuszcząca się powłoka, zmatowiały i zażółcony klosz, pęknięcia. Przycisk „Postarz” ustawia wartości średnie.": "Ageing the lamp: burnt reflector centre, flaking coating, hazed and yellowed lens, cracks. The \"Age it\" button sets average values.", "Kolor": "Colour", "Odcień odbłyśnika i barwne obwódki linii odcięcia. Zapis kolorowy wymaga formatu RGB.": "Reflector tint and the colour fringes of the cut-off line. Colour export needs the RGB format.", "Wykończenie": "Finishing", "Rozmycie, wygaszanie krawędzi i krzywa kontrastu. Wygaszanie brzegów usuwa twarde odcięcia światła.": "Blur, edge fade-out and the contrast curve. Fading the edges removes hard cut-offs of the light.", "Wiek lampy": "Lamp age", "Ogólne zużycie: wpływa na odbłyśnik i klosz.": "Overall wear: affects the reflector and the lens.", "Stan odbłyśnika": "Reflector condition", "100 = nowy, 0 = wypalony i łuszczący się.": "100 = new, 0 = burnt out and flaking.", "Stan klosza": "Lens condition", "100 = czysty, 0 = zmatowiały i zażółcony.": "100 = clear, 0 = hazed and yellowed.", "Zabrudzenie szkła": "Glass dirt", "Kropki brudu i plamy na szkle.": "Dirt specks and smudges on the glass.", "Pęknięcia": "Cracks", "Liczba pęknięć szkła lub odbłyśnika.": "Number of cracks in the glass or reflector.", "Rozrzut produkcyjny": "Manufacturing spread", "Niedoskonałości wykonania odbłyśnika i soczewki (0 = idealna, 50 = typowa).": "Imperfections of the reflector and lens workmanship (0 = perfect, 50 = typical).", "Szerokość wiązki": "Beam width", "Zwęża lub poszerza wiązkę.": "Narrows or widens the beam.", "Przedpole (światło w dół)": "Foreground (downward light)", "Ile światła pada tuż przed autobus.": "How much light falls right in front of the bus.", "Miękkość odcięcia": "Cut-off softness", "Mnożnik miękkości linii odcięcia.": "Multiplier of the cut-off line's softness.", "Regulacja pochylenia": "Aim (vertical)", "Rozregulowanie lampy w pionie: w górę (+) lub w dół (−).": "Misaligning the lamp vertically: up (+) or down (−).", "Regulacja boczna": "Aim (sideways)", "Rozregulowanie lampy w poziomie.": "Misaligning the lamp horizontally.", "Przepalone moduły LED": "Dead LED modules", "Odsetek modułów LED, które nie świecą.": "Share of LED modules that are not lit.", "Strefa zacieniona ADB": "ADB shadowed zone", "Zacienienie pasa w wiązce (matrycowe drogowe).": "Shading a band in the beam (matrix high beams).", "Światła mijania": "Low beam", "Światła drogowe": "High beam", "Przeciwmgielne (PMG)": "Fog lamp", "Światła do jazdy dziennej (DRL)": "Daytime running light (DRL)", "Doświetlanie zakrętów": "Cornering light", "Reflektor roboczy (szeroki)": "Work light (wide)", "Szperacz (punktowy)": "Spotlight (narrow)", "Światło cofania": "Reversing light", "Halogen": "Halogen", "LED": "LED", "Xenon (HID)": "Xenon (HID)", "Laser z luminoforem": "Laser with phosphor", "Żarówka starego typu (sealed beam)": "Old-style bulb (sealed beam)", "Odbłyśnikowa": "Reflector", "Soczewkowa (projektor)": "Projector", "Matrycowa (segmenty LED)": "Matrix (LED segments)", "Bi-technologia (jeden moduł: mijania i drogowe)": "Bi-technology (one module: low and high beam)", "Odbłyśnik wielosegmentowy (freeform)": "Multi-segment reflector (freeform)", "H1 (jedno włókno)": "H1 (single filament)", "H3 (małe, do PMG i szperaczy)": "H3 (small, for fog lamps and spotlights)", "H4 (dwuwłóknowa z osłonką)": "H4 (dual filament with shield)", "H7 (jedno włókno wzdłuż osi)": "H7 (single filament along the axis)", "H11 (PMG i mijania)": "H11 (fog and low beam)", "HB3 / 9005 (drogowe)": "HB3 / 9005 (high beam)", "HB4 / 9006 (mijania, PMG)": "HB4 / 9006 (low beam, fog)", "D1S (xenon, do projektorów)": "D1S (xenon, for projectors)", "D2S (xenon, do projektorów)": "D2S (xenon, for projectors)", "D2R (xenon, do odbłyśników)": "D2R (xenon, for reflectors)", "D3S (xenon bez rtęci)": "D3S (mercury-free xenon)", "LED jednochipowy": "Single-chip LED", "LED wielochipowy (moduł)": "Multi-chip LED (module)", "LED COB (płaska matryca)": "COB LED (flat array)", "Sealed beam (stare, szczelne)": "Sealed beam (old, sealed unit)", "Nowoczesne LED soczewkowe (mijania)": "Modern LED projector (low beam)", "LED matrix z ADB (drogowe)": "LED matrix with ADB (high beam)", "Xenon soczewkowe (mijania)": "Xenon projector (low beam)", "Bi-xenon (drogowe)": "Bi-xenon (high beam)", "Halogen H7, odbłyśnik (mijania)": "Halogen H7, reflector (low beam)", "Halogen H4, stary odbłyśnik (mijania)": "Halogen H4, old reflector (low beam)", "Halogen H11 (PMG)": "Halogen H11 (fog)", "Laser (drogowe)": "Laser (high beam)", "Reflektor roboczy LED": "LED work light", "Szperacz halogenowy H3": "Halogen spotlight H3", "Sealed beam (stare, mijania)": "Sealed beam (old, low beam)", "Generator cookie reflektora (openOMSI)": "Headlamp cookie generator (openOMSI)", "Generator cookie reflektora": "Headlamp cookie generator", "Szybkie ustawienia": "Quick settings", "Podgląd i zapis w kolorze (temperatura barwowa, obwódki, wypalenie)": "Colour preview and export (colour temperature, fringes, burn-in)", "Postarz": "Age it", "Ustawia średnie zużycie lampy": "Sets an average amount of wear", "Nowa lampa": "New lamp", "Nowa, czysta lampa": "A new, clean lamp", "Idealny odbłyśnik": "Perfect reflector", "Bez rozrzutu produkcyjnego, brudu i pęknięć": "No manufacturing spread, dirt or cracks", "Losuj niedoskonałości": "Randomise imperfections", "Losuje ziarno niedoskonałości": "Picks a new seed for the imperfections", "Zastosuj zestaw": "Apply preset", "Szybkie ustawienia wyliczają wszystkie suwaki zaawansowane poniżej. Jeśli zmienisz jakiś suwak ręcznie, zostaje on jako ręczna poprawka (podświetlona) i przeżyje zmianę typu lampy.": "Quick settings calculate all the advanced sliders below. If you change a slider by hand it stays as a manual override (highlighted) and survives changing the lamp type.", "Zaawansowane ustawienia": "Advanced settings", "Wszystkie parametry wiązki. ": "All beam parameters. ", "Wyczyść ręczne poprawki": "Clear manual overrides", "Zwiń / rozwiń grupy": "Collapse / expand groups", "Obraz (to jest plik cookie)": "Image (this is the cookie file)", "poziom lampy (0°)": "lamp horizon (0°)", "prosto": "straight ahead", "+60° (prawo)": "+60° (right)", "Jasność pokazana jak w edytorze obrazów (sRGB). Biały to szczyt wiązki.": "Brightness shown as in an image editor (sRGB). White is the beam's peak.", "Symulacja rzucanego światła": "Light simulation", "Droga, widok kierowcy": "Road, driver's view", "Ściana (test w garażu)": "Wall (garage test)", "tylko jedna lampa (prawa)": "single lamp (right)", "Ekspozycja": "Exposure", "Wysokość lamp": "Lamp height", "Rozstaw lamp": "Lamp spacing", "Odległość ściany": "Wall distance", "Słabnięcie z odległością": "Distance falloff", "Podgląd przybliża to, co zrobi gra (ta sama zasada: obraz w kierunkach, spadek z odległością za 10 m, dolny wiersz i boki jak w silniku). Nie jest dokładnym odtworzeniem, jasność dopasuj ekspozycją.": "The preview approximates what the game will do (same principle: the image by direction, falloff with distance beyond 10 m, bottom row and sides as in the engine). It is not an exact reproduction; match the brightness with the exposure.", "Przekroje (jasność względna, skala logarytmiczna)": "Cross-sections (relative brightness, logarithmic scale)", "Przekrój w pionie przy kącie bocznym": "Vertical section at sideways angle", "Przekrój w poziomie przy kącie pionowym": "Horizontal section at vertical angle", "Zapis": "Export", "PNG szary 8 bit (zalecany)": "PNG gray 8-bit (recommended)", "PNG szary 16 bit": "PNG gray 16-bit", "PNG kolorowy RGB 8 bit": "PNG colour RGB 8-bit", "Pobierz PNG": "Download PNG", "Zapisz ustawienia (JSON)": "Save settings (JSON)", "Wczytaj ustawienia z JSON lub PNG:": "Load settings from JSON or PNG:", "Nazwa pliku": "File name", "Format": "Format", "Scena": "Scene", "Gotowe zestawy": "Presets", "Typ światła": "Light type", "Rodzaj światła": "Light type", "Ruch drogowy": "Traffic", "Prawostronny": "Right-hand", "Lewostronny": "Left-hand", "Lampa (doświetlanie zakrętów)": "Lamp (cornering light)", "Prawa": "Right", "Lewa": "Left", "Technologia źródła": "Source technology", "Optyka": "Optics", "Żarówka / źródło": "Bulb / source", "podwójne kliknięcie: wartość z szybkich ustawień": "double-click: value from the quick settings", "Ręczne poprawki: {0} (podświetlone suwaki).": "Manual overrides: {0} (highlighted sliders).", "Brak ręcznych poprawek.": "No manual overrides.", "Kolor jest włączony, ale zapis w tym formacie jest szary. Wybierz „PNG kolorowy RGB”, żeby zachować barwy.": "Colour is on, but export in this format is grayscale. Choose \"PNG colour RGB\" to keep the colours.", "Generuję pełną rozdzielczość…": "Generating full resolution…", "Zapisano {0} ({1} kB).": "Saved {0} ({1} kB).", "Nie udało się zapisać: {0}": "Could not save: {0}", "Zapisano ustawienia.": "Settings saved.", "Wczytano ustawienia z {0}.": "Loaded settings from {0}.", "Nie udało się wczytać: {0}": "Could not load: {0}", "ten PNG nie zawiera ustawień generatora": "this PNG contains no generator settings", "Podgląd: {0} ms (zapis ma pełną rozdzielczość 1280 × 1024).": "Preview: {0} ms (export is full resolution, 1280 × 1024).", "pion przy {0}°: +36° → −60°": "vertical at {0}°: +36° → −60°", "poziom przy {0}°: −60° → +60°": "horizontal at {0}°: −60° → +60°", "Przełącz język": "Switch language"}, "HTMLS": {"headP": {"pl": "Obraz wiązki światła dla <code>[spotlight_cookie]</code> w openOMSI: 1280 × 1024, 0,09375° na piksel, od −60° do +60° w bok i od +36° do −60° w pionie. Działa lokalnie, bez internetu.", "en": "Beam image for <code>[spotlight_cookie]</code> in openOMSI: 1280 × 1024, 0.09375° per pixel, −60° to +60° sideways and +36° to −60° vertically. Runs locally, no internet needed."}, "expCap": {"pl": "Do pliku PNG dopisywane są ustawienia, więc możesz go wczytać z powrotem i dalej poprawiać. Wrzuć obraz do folderu <code>texture</code> pojazdu i wpisz jego nazwę w ostatniej linii <code>[spotlight_cookie]</code>. Gra czyta z obrazu zarówno jasność, jak i kolor światła.", "en": "The settings are written into the PNG file, so you can load it back and keep tweaking. Put the image in the vehicle's <code>texture</code> folder and enter its name on the last line of <code>[spotlight_cookie]</code>. The game reads both the brightness and the colour of the light from the image."}}};
+const EN = I18N.EN, HTMLS = I18N.HTMLS;
+let LANG = 'pl';
+try {
+  const sv = localStorage.getItem('omsiBeamCookieLang');
+  LANG = (sv === 'en' || sv === 'pl') ? sv : (((navigator.language || 'en').toLowerCase().indexOf('pl') === 0) ? 'pl' : 'en');
+} catch (e) { LANG = 'pl'; }
+function tr(s) { return (LANG === 'en' && EN[s] !== undefined) ? EN[s] : s; }
+function trf(s) { let t = tr(s); for (let i = 1; i < arguments.length; i++) t = t.split('{' + (i - 1) + '}').join(arguments[i]); return t; }
+function dec(v, n) { const t = Number(v).toFixed(n); return LANG === 'pl' ? t.replace('.', ',') : t; }
+
+function applyStatic() {
+  document.documentElement.lang = LANG;
+  document.title = tr('Generator cookie reflektora') + ' (openOMSI)';
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    if (el.dataset.pl === undefined) el.dataset.pl = el.textContent;
+    el.textContent = tr(el.dataset.pl);
+  });
+  document.querySelectorAll('[data-h]').forEach(el => { el.innerHTML = HTMLS[el.dataset.h][LANG]; });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => el.setAttribute('title', tr(el.dataset.i18nTitle)));
+  document.querySelectorAll('[data-i18n-aria]').forEach(el => el.setAttribute('aria-label', tr(el.dataset.i18nAria)));
+  document.querySelectorAll('.lang button').forEach(b => { const on = b.dataset.lang === LANG; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+}
+
+// ================= UI =================
+const $ = id => document.getElementById(id);
+const DEFMAP = {}; for (const d of DEFS) DEFMAP[d.id] = d;
+let Q = Object.assign({}, QDEF), OV = {}, B = compose(Q), P = Object.assign({}, B);
+const inputs = {}, qin = {};
+let token = 0, lastCookie = null, saveTimer = 0, fnameAuto = true, fmtAuto = true;
+
+function fmtNum(v, step) { const d = (String(step).split('.')[1] || '').length; return Number(v).toFixed(d); }
+function makeRow(d) {
+  const row = document.createElement('div'), lab = document.createElement('label');
+  lab.textContent = tr(d.label); lab.title = tr(d.tip || '') + '  (' + tr('podwójne kliknięcie: wartość z szybkich ustawień') + ')';
+  lab.htmlFor = 'p_' + d.id;
+  lab.addEventListener('dblclick', () => clearOv(d.id));
+  if (d.type === 'check') {
+    row.className = 'row check';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'p_' + d.id;
+    cb.addEventListener('change', () => setOv(d.id, cb.checked));
+    lab.prepend(cb); lab.style.display = 'flex'; lab.style.gap = '6px';
+    row.appendChild(lab); inputs[d.id] = { cb, row };
+    return row;
+  }
+  row.className = 'row';
+  const r = document.createElement('input'); r.type = 'range'; r.id = 'p_' + d.id; r.min = d.min; r.max = d.max; r.step = d.step;
+  const n = document.createElement('input'); n.type = 'number'; n.min = d.min; n.max = d.max; n.step = d.step; n.title = d.unit || '';
+  r.addEventListener('input', () => setOv(d.id, parseFloat(r.value)));
+  n.addEventListener('change', () => { let v = parseFloat(n.value); if (isNaN(v)) v = B[d.id]; setOv(d.id, Math.min(d.max, Math.max(d.min, v))); });
+  row.append(lab, r, n); inputs[d.id] = { r, n, row };
+  return row;
+}
+function showParam(id) {
+  const d = DEFMAP[id], el = inputs[id]; if (!el) return;
+  if (d.type === 'check') el.cb.checked = !!P[id];
+  else { el.r.value = P[id]; el.n.value = fmtNum(P[id], d.step); }
+  el.row.classList.toggle('ov', OV[id] !== undefined);
+}
+function updateOvInfo() {
+  const n = Object.keys(OV).length;
+  $('ovInfo').textContent = n ? trf('Ręczne poprawki: {0} (podświetlone suwaki).', n) : tr('Brak ręcznych poprawek.');
+  $('btnClearOv').disabled = !n;
+}
+function setOv(id, v) {
+  const d = DEFMAP[id];
+  if (d.type === 'check' ? v === !!B[id] : Math.abs(v - B[id]) < 1e-9) delete OV[id]; else OV[id] = v;
+  P[id] = v; showParam(id); updateOvInfo(); changed();
+}
+function clearOv(id) { delete OV[id]; P[id] = B[id]; showParam(id); updateOvInfo(); changed(); }
+function recompute() {
+  B = compose(Q); P = Object.assign({}, B, OV);
+  for (const d of DEFS) showParam(d.id);
+  updateOvInfo();
+}
+function buildUI() {
+  const host = $('adv'); host.innerHTML = '';
+  for (const k of Object.keys(inputs)) delete inputs[k];
+  for (const g of GROUPS) {
+    const det = document.createElement('details'); if (g.open) det.open = true; det.dataset.group = g.id;
+    const sum = document.createElement('summary'); sum.textContent = tr(g.title); det.appendChild(sum);
+    const tip = document.createElement('p'); tip.className = 'gtip'; tip.textContent = tr(g.tip); det.appendChild(tip);
+    for (const d of DEFS) if (d.g === g.id) det.appendChild(makeRow(d));
+    host.appendChild(det);
+  }
+}
+
+function fillSelect(sel, map) {
+  sel.innerHTML = '';
+  for (const k of Object.keys(map)) { const o = document.createElement('option'); o.value = k; o.textContent = tr(typeof map[k] === 'string' ? map[k] : map[k].label); sel.appendChild(o); }
+}
+function bulbMap() { const m = {}; for (const k of Object.keys(BULBS)) if (BULBS[k].tech.includes(Q.tech)) m[k] = BULBS[k]; return m; }
+function buildQuick() {
+  const host = $('quickSel'); host.innerHTML = '';
+  const sh = $('quickSliders'); sh.innerHTML = '';
+  for (const k of Object.keys(qin)) delete qin[k];
+  const mk = (id, label, map) => {
+    const wrap = document.createElement('label'); wrap.className = 'qsel' + (id === 'bulb' ? ' wide' : '');
+    const sp = document.createElement('span'); sp.textContent = tr(label);
+    const sel = document.createElement('select'); sel.id = 'q_' + id; fillSelect(sel, map);
+    sel.addEventListener('change', () => quickSet(id, sel.value));
+    wrap.append(sp, sel); host.appendChild(wrap); qin[id] = { sel, wrap };
+  };
+  mk('kind', 'Rodzaj światła', KINDS);
+  mk('traffic', 'Ruch drogowy', { rht: 'Prawostronny', lht: 'Lewostronny' });
+  mk('side', 'Lampa (doświetlanie zakrętów)', { right: 'Prawa', left: 'Lewa' });
+  mk('tech', 'Technologia źródła', TECHS);
+  mk('optics', 'Optyka', OPTICS);
+  mk('bulb', 'Żarówka / źródło', bulbMap());
+  for (const [id, label, min, max, step, unit, tip] of QSLIDERS) {
+    const row = document.createElement('div'); row.className = 'row';
+    const lab = document.createElement('label'); lab.textContent = tr(label); lab.title = tr(tip); lab.htmlFor = 'q_' + id;
+    const r = document.createElement('input'); r.type = 'range'; r.id = 'q_' + id; r.min = min; r.max = max; r.step = step;
+    const n = document.createElement('input'); n.type = 'number'; n.min = min; n.max = max; n.step = step; n.title = unit;
+    r.addEventListener('input', () => quickSet(id, parseFloat(r.value)));
+    n.addEventListener('change', () => { let v = parseFloat(n.value); if (isNaN(v)) v = QDEF[id]; quickSet(id, Math.min(max, Math.max(min, v))); });
+    lab.addEventListener('dblclick', () => quickSet(id, QDEF[id]));
+    row.append(lab, r, n); sh.appendChild(row); qin[id] = { r, n, row, step };
+  }
+  const cs = $('combo'); cs.innerHTML = '';
+  COMBOS.forEach((c, i) => { const o = document.createElement('option'); o.value = i; o.textContent = tr(c.name); cs.appendChild(o); });
+}
+function syncQuick() {
+  fillSelect(qin.bulb.sel, bulbMap());
+  for (const id of ['kind', 'traffic', 'side', 'tech', 'optics', 'bulb']) qin[id].sel.value = Q[id];
+  for (const [id] of QSLIDERS) { qin[id].r.value = Q[id]; qin[id].n.value = fmtNum(Q[id], qin[id].step); }
+  $('q_colorOn').checked = !!Q.colorOn;
+  qin.side.wrap.style.display = Q.kind === 'corner' ? '' : 'none';
+  qin.traffic.wrap.style.display = (Q.kind === 'low' || Q.kind === 'fog') ? '' : 'none';
+  qin.adb.row.style.display = Q.optics === 'matrix' ? '' : 'none';
+  qin.ledDeadQ.row.style.display = (Q.tech === 'led' || Q.optics === 'matrix') ? '' : 'none';
+  // (colour is in the picture, so a colour lamp is saved as RGB unless the format was chosen by hand)
+  if (fmtAuto) $('fmt').value = Q.colorOn ? 'rgb' : 'g8';
+}
+function autoName() { if (fnameAuto) $('fname').value = 'cookie_' + Q.kind + '_' + Q.tech + '_' + Q.optics; }
+function quickSet(id, v) {
+  Q[id] = v;
+  if (id === 'tech' && !(BULBS[Q.bulb] && BULBS[Q.bulb].tech.includes(Q.tech))) Q.bulb = DEFAULT_BULB[Q.tech];
+  syncQuick(); recompute(); autoName(); changed();
+}
+function setQ(obj) { Object.assign(Q, obj); syncQuick(); recompute(); autoName(); changed(); }
+
+function updateWarn() {
+  const w = $('fmtWarn'), fmt = $('fmt').value;
+  w.textContent = (P.colorOn && fmt !== 'rgb') ? tr('Kolor jest włączony, ale zapis w tym formacie jest szary. Wybierz „PNG kolorowy RGB”, żeby zachować barwy.') : '';
+}
+let stickyUntil = 0;
+function status(msg, err, sticky) { const s = $('status'); s.textContent = msg; s.className = err ? 'err' : ''; if (sticky) stickyUntil = Date.now() + 5000; }
+function changed() {
+  const my = ++token;
+  updateWarn();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { try { localStorage.setItem('omsiBeamCookieTool2', JSON.stringify({ Q, OV })); } catch (e) { /* storage may be off */ } }, 500);
+  requestAnimationFrame(() => { if (my === token) render(4, my); });
+  clearTimeout(changed.fine);
+  changed.fine = setTimeout(() => { if (my === token) render(2, my); }, 160);
+}
+function render(f, my) {
+  const t0 = performance.now();
+  const c = generate(P, PW / f, PH / f);
+  if (my !== token) return;
+  lastCookie = c;
+  drawCookie(c); drawScene(c); drawSlices(c);
+  if (f === 2 && Date.now() > stickyUntil) status(trf('Podgląd: {0} ms (zapis ma pełną rozdzielczość 1280 × 1024).', Math.round(performance.now() - t0)));
+}
+function drawCookie(c) {
+  const cv = $('cvCookie'); if (cv.width !== c.w || cv.height !== c.h) { cv.width = c.w; cv.height = c.h; }
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(c.w, c.h), d = img.data, N = c.w * c.h;
+  for (let i = 0; i < N; i++) {
+    const l = c.I[i];
+    d[i * 4] = toSrgb8(c.cm ? l * c.cm[i * 3] : l); d[i * 4 + 1] = toSrgb8(c.cm ? l * c.cm[i * 3 + 1] : l); d[i * 4 + 2] = toSrgb8(c.cm ? l * c.cm[i * 3 + 2] : l); d[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+const pv = { exp: 0, lamp: 0.8, space: 1.7, wall: 10, fall: 1.2 };
+function drawScene(c) {
+  const cv = $('cvScene'), ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+  const img = ctx.createImageData(W, H), d = img.data, out = [0, 0, 0, 0];
+  const wall = $('scene').value === 'wall', one = $('oneLamp').checked;
+  const lamps = one ? [pv.space / 2] : [-pv.space / 2, pv.space / 2];
+  const Lh = pv.lamp, K = 0.9 * Math.pow(2, pv.exp) * (wall ? 0.0125 : 1), PEAK = 26000, p = pv.fall;
+  const law = r => r < 10 ? 1 / (r * r) : Math.pow(10 / r, p) * 0.01;
+  const warm = [1, 0.92, 0.72];
+  const hor = Math.round(H * 0.32), fl = W * 0.66, eye = 1.5, ahead = 2.0;
+  const D = pv.wall, x0 = -1.3 * D, x1 = 1.3 * D, y1 = 0.35 * D, y0 = -0.55 * D;
+  for (let py = 0; py < H; py++) {
+    for (let px = 0; px < W; px++) {
+      const o = (py * W + px) * 4;
+      let E0 = 0, E1 = 0, E2 = 0, alb = 0.18, ok = true;
+      if (!wall) {
+        if (py <= hor + 1) ok = false;
+        else {
+          const x = fl * eye / (py + 0.5 - hor), y = (px + 0.5 - W / 2) * x / fl;
+          for (const s of lamps) {
+            const dx = x - ahead, dy = y - s;
+            if (dx < 0.3) continue;
+            const r2 = dx * dx + dy * dy, r = Math.sqrt(r2 + Lh * Lh);
+            sampleCookie(c, Math.atan2(dy, dx) / D2R, -Math.atan2(Lh, Math.sqrt(r2)) / D2R, out);
+            const e = out[0] * PEAK * (Lh / r) * law(r);
+            E0 += e * out[1]; E1 += e * out[2]; E2 += e * out[3];
+          }
+          if (Math.abs(y + 1.75) < 0.09 && x % 8 < 3) alb = 0.75;
+          if (Math.abs(y - 1.75) < 0.09) alb = 0.75;
+        }
+      } else {
+        const X = x0 + (px + 0.5) / W * (x1 - x0), Y = y1 - (py + 0.5) / H * (y1 - y0);
+        if (Y < -Lh) ok = false;
+        else {
+          for (const s of lamps) {
+            const dy = X - s, dz = Y, rh = Math.sqrt(D * D + dy * dy), r = Math.sqrt(rh * rh + dz * dz);
+            sampleCookie(c, Math.atan2(dy, D) / D2R, Math.atan2(dz, rh) / D2R, out);
+            const e = out[0] * PEAK * (D / r) * law(r);
+            E0 += e * out[1]; E1 += e * out[2]; E2 += e * out[3];
+          }
+          alb = 0.45;
+          const gx = Math.abs(X - Math.round(X)), gy = Math.abs((Y + Lh) - Math.round(Y + Lh));
+          if (gx < 0.02 || gy < 0.02) alb = 0.12;
+        }
+      }
+      if (!ok) { d[o] = d[o + 1] = d[o + 2] = wall ? 14 : 0; d[o + 3] = 255; continue; }
+      d[o] = 255 * Math.pow(1 - Math.exp(-E0 * warm[0] * alb * K), 0.55);
+      d[o + 1] = 255 * Math.pow(1 - Math.exp(-E1 * warm[1] * alb * K), 0.55);
+      d[o + 2] = 255 * Math.pow(1 - Math.exp(-E2 * warm[2] * alb * K), 0.55);
+      d[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function drawSlices(c) {
+  const cv = $('cvSlice'), ctx = cv.getContext('2d'), W = cv.width, H = cv.height;
+  const css = getComputedStyle(document.body);
+  ctx.clearRect(0, 0, W, H);
+  const hv = parseFloat($('slH').value), vv = parseFloat($('slV').value);
+  const colX = Math.min(c.w - 1, Math.max(0, Math.round((hv + HR) / (2 * HR) * c.w - 0.5)));
+  const rowY = Math.min(c.h - 1, Math.max(0, Math.round((VT - vv) / (VT - VB) * c.h - 0.5)));
+  const half = W / 2 - 14, top = 14, bot = H - 24;
+  const ylog = val => { const l = Math.log10(Math.max(val, 1e-4)); return bot - (l + 4) / 4 * (bot - top); };
+  ctx.strokeStyle = 'rgba(128,128,128,.35)'; ctx.lineWidth = 1; ctx.fillStyle = css.color; ctx.font = '11px system-ui, sans-serif';
+  for (let k = 0; k <= 4; k++) { const y = bot - k / 4 * (bot - top); ctx.beginPath(); ctx.moveTo(8, y); ctx.lineTo(W - 8, y); ctx.stroke(); }
+  const draw = (x0, n, get, color) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.beginPath();
+    for (let i = 0; i < n; i++) { const x = x0 + i / (n - 1) * half, y = ylog(get(i)); if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+    ctx.stroke();
+  };
+  draw(8, c.h, i => c.I[i * c.w + colX], '#e0a030');
+  draw(W / 2 + 6, c.w, i => c.I[rowY * c.w + i], '#4aa3ff');
+  ctx.fillStyle = css.color;
+  ctx.fillText(trf('pion przy {0}°: +36° → −60°', hv), 10, H - 8);
+  ctx.fillText(trf('poziom przy {0}°: −60° → +60°', vv), W / 2 + 8, H - 8);
+  ctx.fillText('1', 2, top + 3); ctx.fillText('10⁻²', 0, (top + bot) / 2 + 3); ctx.fillText('10⁻⁴', 0, bot);
+}
+
+function pvText() {
+  $('pvExpV').textContent = (pv.exp > 0 ? '+' : '') + dec(pv.exp, 1) + ' EV';
+  $('pvLampV').textContent = dec(pv.lamp, 2) + ' m';
+  $('pvSpaceV').textContent = dec(pv.space, 2) + ' m';
+  $('pvWallV').textContent = pv.wall.toFixed(0) + ' m';
+  $('pvFallV').textContent = dec(pv.fall, 2);
+  $('slHV').textContent = $('slH').value + '°';
+  $('slVV').textContent = $('slV').value + '°';
+}
+function bindPreviewControls() {
+  const link = (id, key) => { const el = $(id); el.addEventListener('input', () => { pv[key] = parseFloat(el.value); pvText(); if (lastCookie) drawScene(lastCookie); }); };
+  link('pvExp', 'exp'); link('pvLamp', 'lamp'); link('pvSpace', 'space'); link('pvWall', 'wall'); link('pvFall', 'fall');
+  $('scene').addEventListener('change', () => lastCookie && drawScene(lastCookie));
+  $('oneLamp').addEventListener('change', () => lastCookie && drawScene(lastCookie));
+  $('slH').addEventListener('input', () => { pvText(); if (lastCookie) drawSlices(lastCookie); });
+  $('slV').addEventListener('input', () => { pvText(); if (lastCookie) drawSlices(lastCookie); });
+}
+
+function download(bytes, name, type) {
+  const url = URL.createObjectURL(new Blob([bytes], { type }));
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+function baseName() { return ($('fname').value || 'cookie').replace(/\.(png|json)$/i, '').replace(/[^\w.\- ]+/g, '_'); }
+
+function setLang(l) {
+  LANG = l;
+  try { localStorage.setItem('omsiBeamCookieLang', l); } catch (e) { /* storage may be off */ }
+  applyStatic(); buildUI(); buildQuick(); syncQuick(); recompute(); updateWarn(); pvText();
+  if (lastCookie) drawSlices(lastCookie);
+}
+
+function bindActions() {
+  $('q_colorOn').addEventListener('change', () => quickSet('colorOn', $('q_colorOn').checked));
+  $('langPl').addEventListener('click', () => setLang('pl'));
+  $('langEn').addEventListener('click', () => setLang('en'));
+  $('btnCombo').addEventListener('click', () => {
+    const c = COMBOS[parseInt($('combo').value, 10)];
+    Q = Object.assign({}, QDEF, c.q); OV = {}; fnameAuto = true;
+    syncQuick(); recompute(); autoName(); changed();
+  });
+  $('btnPerfect').addEventListener('click', () => {
+    for (const id of ['facetS', 'stripeS', 'streakS', 'blotchS', 'speckN', 'cutWave', 'tintVar', 'crackN']) delete OV[id];
+    setQ({ manuf: 0, dirt: 0, crackQ: 0 });
+  });
+  $('btnAge').addEventListener('click', () => {
+    for (const id of ['burnS', 'burnBrown', 'peelS', 'peelAmount', 'hazeS', 'hazeYellow', 'crackN', 'speckN']) delete OV[id];
+    setQ({ age: 55, reflCond: 50, lensCond: 50, dirt: 35, crackQ: 15 });
+  });
+  $('btnNew').addEventListener('click', () => {
+    for (const id of ['burnS', 'burnBrown', 'peelS', 'peelAmount', 'hazeS', 'hazeYellow', 'crackN', 'speckN']) delete OV[id];
+    setQ({ age: 0, reflCond: 100, lensCond: 100, dirt: 0, crackQ: 0 });
+  });
+  $('btnRandom').addEventListener('click', () => setOv('seed', Math.floor(Math.random() * 10000)));
+  $('btnClearOv').addEventListener('click', () => { OV = {}; recompute(); changed(); });
+  $('btnToggleAll').addEventListener('click', () => {
+    const ds = document.querySelectorAll('#adv details'), anyOpen = Array.from(ds).some(d => d.open);
+    ds.forEach(d => { d.open = !anyOpen; });
+  });
+  $('fname').addEventListener('input', () => { fnameAuto = false; });
+  $('fmt').addEventListener('change', () => { fmtAuto = false; updateWarn(); });
+  const meta = () => ({ quick: Q, overrides: OV });
+  $('btnPng').addEventListener('click', async () => {
+    status(tr('Generuję pełną rozdzielczość…'));
+    await new Promise(r => setTimeout(r, 30));
+    try {
+      const bytes = await exportPNG(P, $('fmt').value, meta());
+      download(bytes, baseName() + '.png', 'image/png');
+      status(trf('Zapisano {0} ({1} kB).', baseName() + '.png', Math.round(bytes.length / 1024)), false, true);
+    } catch (e) { status(trf('Nie udało się zapisać: {0}', e.message), true); }
+  });
+  $('btnJson').addEventListener('click', () => {
+    download(new TextEncoder().encode(JSON.stringify(Object.assign({ tool: 'omsi-beam-cookie', version: 2, params: P }, meta()), null, 1)), baseName() + '.json', 'application/json');
+    status(tr('Zapisano ustawienia.'), false, true);
+  });
+  $('fileIn').addEventListener('change', async ev => {
+    const f = ev.target.files[0]; if (!f) return;
+    try {
+      let text;
+      if (/\.png$/i.test(f.name) || f.type === 'image/png') {
+        text = readPngText(new Uint8Array(await f.arrayBuffer()), 'omsi-beam');
+        if (!text) throw new Error(tr('ten PNG nie zawiera ustawień generatora'));
+      } else text = await f.text();
+      loadState(JSON.parse(text));
+      status(trf('Wczytano ustawienia z {0}.', f.name), false, true);
+    } catch (e) { status(trf('Nie udało się wczytać: {0}', e.message), true); }
+    ev.target.value = '';
+  });
+}
+function loadState(obj) {
+  if (obj.quick) { Q = Object.assign({}, QDEF, obj.quick); OV = Object.assign({}, obj.overrides || {}); }
+  else {
+    // settings of an older version: only the parameters; what differs from the quick settings becomes a manual correction
+    const params = obj.params || obj; Q = Object.assign({}, QDEF); OV = {};
+    const base = compose(Q);
+    for (const d of DEFS) if (params[d.id] !== undefined && params[d.id] !== base[d.id]) OV[d.id] = params[d.id];
+  }
+  syncQuick(); recompute(); autoName(); changed();
+}
+
+applyStatic();
+buildUI();
+buildQuick();
+try { const sv = localStorage.getItem('omsiBeamCookieTool2'); if (sv) { const o = JSON.parse(sv); Q = Object.assign({}, QDEF, o.Q); OV = o.OV || {}; } } catch (e) { /* no saved state */ }
+syncQuick(); recompute(); autoName();
+bindPreviewControls();
+bindActions();
+pvText();
+changed();
+</script>
+</body>
+</html>

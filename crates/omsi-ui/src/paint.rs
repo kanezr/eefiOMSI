@@ -305,35 +305,7 @@ impl Painter {
         if text.is_empty() {
             return 0.0;
         }
-        self.text_as_is(
-            atlas,
-            fonts,
-            &crate::i18n::tr(text),
-            px,
-            weight,
-            at,
-            align,
-            c,
-        )
-    }
-
-    /// [`Painter::text`] of a text that is not the interface's own (a Lua plugin's): drawn as
-    /// it is, not looked up in the translations (nor handed to the machine translation).
-    #[allow(clippy::too_many_arguments)]
-    pub fn text_as_is(
-        &mut self,
-        atlas: &mut Atlas,
-        fonts: &Fonts,
-        text: &str,
-        px: f32,
-        weight: Weight,
-        at: Vec2,
-        align: Align,
-        c: Color,
-    ) -> f32 {
-        if text.is_empty() {
-            return 0.0;
-        }
+        let text = &*crate::i18n::tr(text);
         let k = self.scale;
         let s = atlas.text(fonts, text, px * k, weight);
         let pad = crate::text::PAD as f32 / k;

@@ -4,772 +4,318 @@ Every push to `main` is released as `MAJOR.MINOR.COMMIT` (see
 [docs/VERSIONING.md](docs/VERSIONING.md)); the downloads are on the
 [Releases](https://github.com/openOMSI-Project/openOMSI/releases) page.
 
-## 0.2.45.1-eefi - 2026-10-13
+## eefiOMSI v0.1.0 - 14.10.2026
 
-## Fixes (from openOMSI pull requests)
-- **Street lamps' shadows no longer switch between lamps at night** after the mirrors are drawn (Enhanced).
-- **Passengers: the destination they read off a bus is the depot row the IBIS was set to**, not the display script's row.
-- **Smooth and filter force feedback output** (Road and engine feedback is less likely to turn into slow, artificial wheel shake at low frame rates. On Linux, force changes sent to the wheel are smoothed over 25 ms; this smoothing applies only to the evdev backend).
-- **People off a bus where the stop has no pavement step away from the door**, each to a place of their own, instead of crowding the doorway.
-- **The map's drivers (drivers.txt) stay out of the passenger pool** when the people are drawn from everybody installed.
-
-## 0.2.45-eefi - 2026-10-13
-
-### Launcher Upgrade
-- Classic Layout: Added the step-by-step classic launcher layout option (Bus, Weather, Map & Duty) with keyboard and multiplayer support.
-- Interior Bus Preview: Added Driver and Passenger camera views with drag and zoom controls.
-- Performance Fixes: Restored resting mode during gameplay (#2362), eliminated unnecessary screen redraws, and optimized 3D preview rendering.
+### Added
+- **Graphics**: AMD FidelityFX Super Resolution 1.0 (FSR 1.0) upscaling with EASU (Edge-Adaptive Spatial Upsampling) and RCAS (Robust Contrast-Adaptive Sharpening). Enabled via `fsr=1` in settings or the launcher's Graphics tab. Works when render scale < 100% (Settings → Render scale). Sharpness adjustable 0.0–1.0 (`fsr_sharpness`).
 
 ### Performance
-- **Discrete graphics cards get a larger texture allowance.** A card of 2.5–6 GB was held to 1.6 GB of textures and one above 6 GB to 30 % of its memory, which was too little for the maps' detail: their textures were shrunk and rebuilt every frame. The allowance is now two thirds up to 2 GB for the smaller cards and 40 % up to 4 GB for the bigger ones.
-- **The pipeline cache no longer blocks the game's end.** Writing the driver's compiled pipelines (`get_data()` on a few MB) used to run on the calling thread, so ending the session, a phone going to the background and the pipelines just built all waited on it. It is written on a thread of its own now, and a save already running is not started again.
-- **The near shadow cascade is not redrawn on every small nudge.** Its box snaps to whole texels of its own map, so a still caster stays on the same texels while the camera moves; the threshold that decided a redraw was 0.03 m - inside a single texel - and it fired on every small nudge. It now needs 0.1 m of real drift, which is what the cascade's own snap means.
-- **The texture budget gives way to more scenery.** When the textures are over their memory allowance the far ones are shrunk, but only up to 96 a second - a map's first tiles stayed over a small card's budget for a minute and a half while the far ones kept giving way. It now shrinks up to 256 a second, so the tiles the bus drives into keep their detail.
-- **The reflection probe skips redraws when the camera is still.** The probe (six faces + blur, ~2 ms) was redrawn every 0.5 s even at a bus stop. It now only redraws when the camera has moved >2 m since the last probe, saving hundreds of redraws per session.
-- **Tree shadows in the near cascade can be disabled.** The near cascade is the costliest shadow pass and a third of it is trees' leaf cards (alpha-tested cards). A new `tree_shadows` option (on by default) lets players disable just those shadows for a measurable FPS gain with little visual loss - the cards are just silhouettes.
-- **Culling adapts to render scale.** When the 3D picture is drawn at a lower resolution (render scale < 1), objects appear even smaller on the final screen; the min object size threshold is divided by the scale so more small objects are culled, saving draw calls.
-- **Maximum texture size can be limited.** A new `max_texture_size` option (default 0 = device limit) lets players cap texture dimensions to save VRAM and bandwidth on cards with less memory.
-- **LOD bias for mipmapping.** A new `lod_bias` option (default 0) forces blurrier (positive) or sharper (negative) mip levels, trading texture detail for bandwidth.
+- **Render hot path**: Eliminated per-frame `Vec::new()` allocations in `render_inner()` (prepass/main pass batching, draw item collection, culling), `prepare()` (instance entry arrays), and `prepare_lights()` (light grid) by using `Vec::with_capacity()` with size hints derived from visible instance counts. Reduces allocation pressure and improves frame time consistency.
+- **AI traffic**: Reused per-frame hash maps and vectors in `Traffic::tick()` (`by_lane`, `coming`, `reservations`, `walkers_map`, `remove`, `frames`) with capacity hints based on car count. Avoids repeated allocations for lane occupancy tracking, junction requests, and AI frame data. Reuses `geo_prev` and `index_of` buffers.
+- **Render culling & blend sorting**: Added capacity hints to `visible`/`found` vecs in frustum culling (`Vec::with_capacity(n/2)`). Replaced `holders.contains()` O(n) lookup with `HashSet` in blend sorting. Added reusable per-frame `HashMap` for `nearest_by_origin` (object origin → nearest blended mesh distance) instead of allocating each frame. Pre-allocated `keyed` vec for blend sorting.
+- **prepare_smoke/prepare_coronas**: Pre-allocated working buffers with capacity hints, eliminated intermediate collects, and used single-pass sorts with inline keys.
 
-### Fixes
-- **Environment reflections for alpha-tested materials.** Foliage, fences and other alpha-tested materials with `[matl_envmap]` now receive the photographed environment reflection consistently in Enhanced graphics, instead of being excluded. This removes the dual standard where transparent objects were shaded differently from opaque ones based solely on their transparency mode.
-- **Severe dithering (mesh grid artifacts) on volumetric light and bus body in dark conditions** (night, late evening, early morning) is **not** fixed. A poor hash function in the fog lamps pass created a visible "coarse checker" grid pattern in volumetric fog, headlight beams and the bus body in Enhanced and Enhanced+ graphics. The jitter hash now uses a better pseudo-random function that eliminates the grid artifacts while preserving the intended noise distribution. **THIS DID NOT FIX IT, BUT I AM KEEPING THIS IN THE CHANGELOG. WE ARE AWARE OF THIS ISSUE.**
-- **The Drive page follows the computer's clock** when the real time or date is on.
-- **The bus preview no longer takes graphics memory from a game** started from the launcher on small graphics cards.
-- **The roundabout search is 2-5 times faster** at loading a map, finding the same roundabouts.
-- **The driver no longer flickers in front of the cab view while the bus drives fast** (from about third gear, sooner at low frame rates such as on phones). The figure is still seen in the mirrors, and in the photo mode once its camera leaves the driver's eyes.
-- **Removed self-centering force at standstill.**
-- **AI buses sound like they pull away and brake.** Their scripts now get the throttle and brake pedals, so engines rev up under load and brake sounds play, instead of idling all the way (Hamburg's HHA buses and others)
-- **Corona shader compatibility:** the corona pass now uses the full camera uniform prefix (up to `lod_bias`), fixing validation errors with the updated uniform layout.
+### Fixed
+- **Tests**: Updated `omsi-app` settings test expected item counts, made `sit_wish`/`pick_weighted` public in `humans` module, fixed `omsi-audio` SoundSet test initialization with missing fields.
+
+## Sobol additions
+
+### Fixed
+- **Interface**: the windows of the game menu and its lists, their side panels, the timetable, the tutorial page and the editor panel are see-through as the Alt menu is (about 84 %, thinner or thicker with the interface opacity setting); the colours are unchanged. The game menu has no "Camera..." line (it is a page of Options; in the cabin "Driver view and mirrors..." is there).
+- **World options, Time**: the rows are plain "Time", "Hour" and "Minute" (no hints in brackets).
+- **Game menu (Esc)**: the line "Controls..." is gone; the Options page Controls has "Keyboard" and "Game controllers" in its place (and the way back from them leads there).
+- **Alt menu**: "Teleport to a start point" is greyed out while walking about (it moves the vehicle at the wheel).
+- **Getting up**: the setting "Ability to get up" is gone - it is always possible - and the key is in the key list (`Get up from the driver's seat`, Ctrl+Shift+G by default) to be moved.
+- **Game menu (Esc)**: "Line and tour...", "World options...", "Save to a new slot" and "Screenshot" are gone; "Save the situation" / "Load the quicksave" are "Quick Save" / "Quick Load"; "City map" shows only when the HUD has no navigator tile; new lines: "Walk out" (at the wheel, next to "Back to my bus" on foot), "Clear AI traffic", and in the cabin "Driver view and mirrors...".
+- **World options**: the pages Tools and Traffic and people are gone; Weather and Temperature and wind are one page, the METAR has its own; the pages have lower rows and a taller window so that they hardly scroll. Time: a large clock to click and type (`12`, `12:30`, `9:05:07`, `930` all work), Morning / Noon / Evening / Night side by side (morning and evening at the sun's rise and set at the map's place, noon 12:00, night 00:00), +/-1 hour, minute and second buttons (the sliders stay), the real-time sync at the foot; the time speed slider is gone.
+- **Passengers (regression of 122)**: someone waiting at a stop is now drawn only from the destinations a bus leaves for in the next 20 minutes - there is no more falling back to all of them (that waited for a trip half a day away), and the stop itself is never a destination. Nobody gets off at the stop they got on at before the bus has moved (30 m).
+- **"Teleport to a start point"** (Alt menu): the list is alphabetical (digits by value).
+- Alt menu (takeover-123): [ROLLBACK takeover-123] the extra "Drive another vehicle" tile is gone; the old "Swap for another vehicle" tile now opens the list of vehicles standing in the world (placed or left ones, nearest first) and takes the wheel of the one chosen. (Esc, Vehicles still has "Swap" in the driven vehicle's place.)
+- The bus "fell through the ground" and was put back at another vehicle (safepose-123): [ROLLBACK safepose-123] the place the bus last stood was kept whatever happened; after a jump to an entry point, the map or another vehicle (tiles still to be read, no ground yet) the bus was taken for fallen and put back at that old place - beside the other vehicle. A pose farther than 150 m from the bus is dropped; a bus really under the ground with no pose of its own is put on the ground where it is.
+- Timetable tile of the Alt menu in free roam (schedlist-123): [ROLLBACK schedlist-123] reading the timetable for the lists of lines and tours loaded the models of every depot vehicle and train of the map (15-30 s in the frame of the click). A game with no timetable buses now reads only the timetable.
+- Interior sounds of each section (intsep-122): [ROLLBACK intsep-122] a new tag `[int_sounds_separate]` in a `.bus` (or the `.ovh` of a rear section) keeps the interior sounds of the sections of an articulated bus apart. In a section only its own interior sounds are heard; of the other sections only the outside entries, through the bodywork (volume by `Snd_OutsideVol`, the cab's low-pass). The camera decides which section you are in. Documented in docs/MODDING.md.
+- Drive another vehicle (takeover-122): [ROLLBACK takeover-122] the Alt menu (and Esc, Vehicles) has a "Drive another vehicle" list of the vehicles standing in the world - those you placed or left, nearest first, with the distance; on foot your own is on it too. Chosen, you take its wheel. Placed vehicles are also kept clear of parked cars that come back with their tile (every two seconds, within a kilometre of the camera), and are written to saved situations as before.
+- Zoom keys (zoomkeys-122): [ROLLBACK zoomkeys-122] = / - and the numpad's + / - no longer zoom the view; the keys "Zoom the view in / out (hold)" are on the Controls page, unassigned by default.
+- The "End of the trip. Next: ... (it starts by itself a minute before)" line is gone (tip-122): [ROLLBACK tip-122].
+- Game controllers in the log (ctrllog-122): [ROLLBACK ctrllog-122] "game controllers found: ..." is written when the list changes, not at every scan.
+- Passengers and the stops' exit numbers (paxweight-122): [ROLLBACK paxweight-122] the weight of a destination is the exit number of the stop object it names, found by its label or by its name in the timetable (it fell back to 0.5 when the two differed, so a technical stop with 0 was chosen like any other). A destination of weight 0 is never drawn, a draw never ends without a destination at a stop that has a line record (such people boarded the first bus listed, whatever it showed), and a stop whose destinations all take 0 has nobody waiting.
+- Cab sounds quieter after the start (introvol-122): [ROLLBACK introvol-122] a sound entry that is not playing starts with a buffer at 0 dB again, so a volume over 0 dB, which DirectSound refuses, no longer stays at a stale low value from the moment before until the camera is switched F1-F3-F1.
+- Passengers have a weight (payload-121): [ROLLBACK payload-121] every person aboard the player's bus weighs what his `.hum` says (`[mass]`, 75 kg where it says none); the front section's body takes it into its mass, centre of gravity, inertia, body frequency and the static load of its wheels, a rear section or trailer adds it to the mass the front body tows and to its wheel load. A full bus is felt in acceleration, braking and in the springs; before, the passengers weighed nothing.
+- Developer tools (payload-121): [ROLLBACK payload-121] a new Actions page holds the reload buttons (moved from the Variables page) and three buttons for made-up passengers (all free standing places, all free seats, remove them again); under the overlays the weight of the vehicle itself, of its passengers and the real one.
+- Traced reflections on the coupled sections (rtparts-120): [ROLLBACK rtparts-120] with "Ray traced reflections: player's vehicle" the second and third section of an articulated bus (and a trailer) are traced like the first (the test was the first section's box alone; the camera uniform now carries the coupled sections' boxes, `puddle_parts`, and enhanced.wgsl asks `near_player_train`).
+- Vehicle descriptions still cut (index-120): [ROLLBACK index-120] the launcher's catalog cache kept the descriptions cut at 600 characters by older builds (its stamps cover folders, not the code); its version is raised, so the vehicle list is read again once.
+- Start points sorted (entries-120): [ROLLBACK entries-120] the "Start at" lists (Drive page and phone layout) are alphabetical, numbers by value; the choice is still the entry's place in `global.cfg`'s list.
+- Launcher menu (tabs-119): [ROLLBACK tabs-119] the Profile button is gone (the player card at the bottom left opens the same page); the Mods and Timetable tabs are hidden until "Show the Mods tab" / "Show the Timetable tab" is switched on in Settings (`show_mods_tab`, `show_timetable_tab`); a hidden tab still shows while it is the open page.
+- Showroom camera (showroom-119): [ROLLBACK showroom-119] the orbit camera fits the whole vehicle, or the whole group with its trailers, from every angle (a bounding sphere of length, width and height) so its front is no longer cut off when it turns.
+- Launcher (launcher-119): [ROLLBACK launcher-119] choosing a bus picks a random livery (the default among them) instead of always the default; vehicle descriptions are read whole (limit 600 -> 6000 characters, brackets inside the text no longer end it, UTF-8 and UTF-16 files are decoded).
+- Dev tool (gfx-119): [ROLLBACK gfx-119] four pages: Variables, Overlays (the picture overlays, moved from the first page), Mirror editor, AI debug; (120: the graphics-mode buttons tried here were taken out again).
+- Vanilla spotlights (vanlights-119): [ROLLBACK vanlights-119] a vehicle's headlights are 2.5 times stronger in the Vanilla and Vanilla+ pictures (`VANILLA_HEADLIGHT_INTENSITY` 0.2 -> 0.5); Enhanced is untouched.
+- Vanilla and Vanilla+ blend as Direct3D 9 does (gammablend-118, a friend's patch): [ROLLBACK gammablend-118] the classic pass (not Enhanced, not the puddle-reflection frames) shades to the encoded (sRGB) values and draws into a non-sRGB view of the sRGB picture, so transparent layers, glass, shadow blobs, coronas, smoke and the sky's fog mix on gamma-encoded values as in OMSI (`ENCODE_OUTPUT`, `finish_output` in colour.wgsl; `pass_classic`, `gamma_blend` in lib.rs). Not on OpenGL; Vanilla+ takes the same look. Costs a second set of classic pipelines and one intermediate picture a frame.
+- Passenger paths of articulated buses (pathid-117): [ROLLBACK pathid-117] the sections' passenger paths are joined only where a cabin names its joint (`[linkToNextVeh]` / `[linkToPrevVeh]`): with both left out the sections stay apart (before: the cabin was joined at the aisle's ends all the same, so the link was still there and in the developer tools' picture); `OMSI_PAX_GUESS_LINK=1`: as before. The developer tools show each path point's number as its section's own `paths.cfg` has it (not counted from the front of the train), draw each section's paths and points in a colour of its own (a link between sections in white), and the labels keep their doors, joints and devices (humans.rs `point_section`/`point_local`, devtools_proc.rs `section_colour`).
+- Traced reflections under blended layers (cover-115): [ROLLBACK cover-115] in a ray tracing frame a blended layer now covers the traced reflection of the layer under it as far as it is there, as it covers its colour (the alpha the layer writes into the reflection buffer is its coverage, the reflection's weight is the length of the vector there: `rt_cover` in enhanced.wgsl, rt_reflect.wgsl). A layer with no envmap - the copy of a reflecting layer, a second material on a black base, a rain film - no longer leaves the reflection of the layer under it standing on it, and two reflecting layers on top of each other no longer add their weights.
+- Vehicles drawn in model order and the depth prepass (ordered-115): [ROLLBACK ordered-115] a vehicle drawn in the order of its model (see `Instance::ordered`) is left out of the depth prepass, whose depth of the later slots rejected what the model draws before them: a knob drawn first, its housing's alpha layer that cuts the ceiling panel's depth after it, then the panel - the cut showed the sky where the knob should stand. Ambient occlusion no longer sees such a vehicle's own surfaces. `OMSI_ORDERED_PREPASS=1`: as before.
+- Sharp reflections on black and clear surfaces (sharp-114): [ROLLBACK sharp-114] the traced reflection (and the probe's blur) is spread by a surface's gloss only where its texture is coloured: black paint, clear panes and the black stripes of a pane mirror as sharply as glass, so the inside of a cab and the panes outside no longer look steamed up (enhanced.wgsl `refl_rough`). The painted part of a pane now also takes the soft sun shadow and the ambient occlusion that paint does (`painted`), so black on a window and black on the body match.
+- Glass/paint classification and headlamp pool (reflect-113, headlamp-113): [ROLLBACK reflect-113] the painted part of a glass-class material (envmap + `matl alpha 2`) is now shaded and reflects exactly like envmapped paint - same base shading (lamps, AO, emissive), same F0/roughness/reflection weight - so black on the window no longer differs from black on the body (enhanced.wgsl `painted`); only the texture-colour logic decides how strong the reflection is. [ROLLBACK headlamp-113] `headlamp_shoulder` works in post-metering units (exposure gain included) and `HEADLAMP_KNEE`/`HEADLAMP_PEAK` are 0.15/0.50, so the headlamp pool on the road is no longer burnt white.
+- Night reflections and headlamp light (rtspot-112, headlamp-112): [ROLLBACK rtspot-112] the ray-traced reflections no longer take in what the spot lights light: the twelve spot lights nearest the camera (vehicles' headlamps, beam cookies too) are passed to the reflection pass (`Params::spots`, rt.rs; `RtParams::spots`), and a ray that lands on a part of the picture inside such a lamp's cone and range sees it at `RT_SPOT_KEEP` (0.12) of its brightness, as the sky darkens (rt_reflect.wgsl `spot_lit`, `night_amount`) - the pool of the headlamps on the road is gone from the paint. `RT_SPOT_KEEP` 1.0: as before. [ROLLBACK headlamp-112] what the headlamps (spots and beam cookies) light is summed apart and brought down to a peak, as it lands on the picture: unchanged up to `HEADLAMP_KNEE` (0.45), then smoothly towards `HEADLAMP_PEAK` (1.1) and no further, the colour kept (enhanced.wgsl `headlamp_shoulder`), so the road close in front of a car no longer burns out however the lamp is set; `HEADLAMP_PEAK` 1.0e6: as before.
+- Reflections, headlamps, route-arrow text (reflect-111, headlamp-111, helparrow-111): [ROLLBACK reflect-111] how much a surface reflects now depends on its colour: a light or coloured texture (a body's paint, a stripe painted on a pane) keeps `REFL_COLOURED` (0.35) of the reflection that a black one has, between `REFL_DARK_LUM` and `REFL_LIGHT_LUM`; clear glass keeps its own; the opaque part of a pane's texture (alpha over `REFL_PAINT_ALPHA`) is paint, with the paint's gloss (`REFL_PAINT_ROUGH`), so a pane painted black (`[matl_alpha] 2`) looks as the same black on an opaque material does. Applies to the probe's reflection and the ray-traced one alike (it lowers the surface's F0). `REFL_COLOURED` 1.0: as before. [ROLLBACK headlamp-111] the headlamps' highlight is softer still (`HEADLAMP_ALPHA_MIN` 0.45, `HEADLAMP_SPREAD` 0.015, `HEADLAMP_SPEC_CAP` 0.20) and the edge of a spot's cone grows softer with the distance from the lamp (`HEADLAMP_EDGE_SPREAD` 0.002 per metre, at most 0.08 in cosine). [ROLLBACK helparrow-111] the text of a route arrow (`[texttexture]`) is full bright too (an unlit material with a key of its own), so it no longer blooms.
+- Night lighting, route arrows (headlamp-110, helparrow-110): [ROLLBACK headlamp-110] a vehicle's headlamps (spot or beam cookie) no longer burn out the road, grass and kerbs seen from in front of them: their highlight's lobe is at least as broad as `HEADLAMP_ALPHA_MIN` (0.30), widens by `HEADLAMP_SPREAD` (0.010 per metre) the farther the lit point is from the lamp, and is capped at `HEADLAMP_SPEC_CAP` (0.45) - constants at the top of the lamp code in enhanced.wgsl; seen along the beam nothing changes (the diffuse light is not touched). With ray-traced reflections the brightest a reflected ray may be falls to `RT_NIGHT_CAP` (0.35, rt_reflect.wgsl) of what it was as the sky darkens, so the lit patch of road no longer shows burned on the bodywork in front of the lamps. [ROLLBACK helparrow-110] a `[helparrow]` object is drawn as an unlit surface at its diffuse plus emissive colour (full bright by day and by night as in Omsi.exe, like a display) instead of as a light: its emissive colour no longer burns over the exposure and blooms into the glow.
+- Route arrows with a script (helparrow-109): [ROLLBACK helparrow-109] a `[helparrow]` object that has a script (a map's own route arrow with a custom .sco) stayed visible when the route arrows were off: its script switched its meshes on again every frame over the hiding of `World::show_help_arrows`. Its meshes now follow the script only while the route arrows are on.
+- AI traffic, corridor gaps, bus pairs and lane changes (lanes-108, bus-108, lanechange-108): [ROLLBACK lanes-108] on an object road the strip between two lanes (flat, no kerb or drop) now counts as road, not "no asphalt". [ROLLBACK bus-108] a timetable bus queueing behind another bus or the player's vehicle at its stop comes up to about half its minimum gap (at least 0.8 m); a bus with another one behind it for the same stop pulls on 2.5 m past its stop point to leave room in the bay. [ROLLBACK lanechange-108] a car that changes lane on its own (overtaking, keeping right, turn lanes) signals for two seconds before it moves (was 1.2), moves over along a longer, gentler path (3 to 4 s), and while it only signals the cars of the new lane hold it only when closer than 6 m: braking for a car 20 m ahead there stopped a plain lane change on a straight road for no reason. A bypass round a standing vehicle keeps its old 1.2 s.
+- AI traffic, lanes beside on object roads (lanes-107): [ROLLBACK lanes-107] on a road laid out as objects the ground beside a car's path counted as "no road" even where another lane of the same road ran alongside (nothing links the lanes of objects to each other, and the ground has no asphalt there). The corridor now looks up the street lanes running alongside (`Net::lanes_beside`) and takes the width of each as road, so a car sees the lane next to it and can pull over onto it; kerbs and drops still count first.
+- AI traffic, objects and wide roads (object-107, lane-107, bus-107): [ROLLBACK object-107] on a road laid out as objects the cars saw asphalt only along their own path and refused what lay beside it: the tile's asphalt is now trusted only where it reaches past the lane itself, otherwise kerbs, drops and the reach of the lanes decide. [ROLLBACK lane-107] on a road with several lanes each way a car no longer takes the traffic of the other carriageway for oncoming when its move round the player's vehicle stays within the next lane of its own direction; that lane is checked instead. [ROLLBACK bus-107] a timetable bus behind a bus at its stop, or behind the player's standing vehicle, comes up closer (0.3 m over its minimum gap) and starts its stop sooner (after 0.8 s standing in the bay).
+- AI traffic: a road laid out as objects (no road spline under it) has no asphalt in the tile's road surface, so every cell of the ground grid read "no asphalt" and no car could bend its way round the player's vehicle there. Where the lane's own centre line has no asphalt, the ground now goes by kerbs and drops only and by how far the lanes reach (its own lane and the neighbour on the kerb side; on the oncoming side as far as the other carriageway's lane); beyond that is no road. The clearance wanted to the player's vehicle is 0.55 m by default. A timetable bus does not go round the player's vehicle (as before 105). [ROLLBACK object-106]
+- Timetable buses: a bus coming up behind another bus standing at the same stop (one bay) comes close behind it (half a metre over its minimum gap, instead of two) and, once in its bay and still, serves the stop where it stands after 1.5 s instead of 6 s. [ROLLBACK bus-106]
+- AI traffic: a car held up by the player's vehicle bends its own way round it instead of driving a shifted copy of the lane's way. The vehicle's box is a force field: where the way runs into it (grown by the car's half width and a margin) the way is pushed aside to just clear it, with room kept, and led back to the lane after it - a metre sideways over 8 m along when there is room, over 3 m at the steepest (the car stands close behind it, so it needs the room the bend takes; the lane may bend towards the vehicle, and the way follows what is needed there, not a fixed offset). Both sides are tried, and how much room is kept to the vehicle and to a kerb is traded; the cheapest is taken. The way is a list of points in the car's state (`lateral_curve`, omsi-sim), driven point by point. The ground grid and the way are one model for a few dozen metres and 30 s (the road does not change), so cars no longer probe the ground over and over, and a bend costs a handful of box tests. [ROLLBACK deform-105]
+- AI traffic: whether the player's vehicle stands on the lane is judged by how much of its width lies in it (Developer Tools slider, default half): a corner reaching in is gone by with a bent way, never by overtaking on the oncoming lane; only a vehicle that stands on the lane is overtaken, and not while a bent way is under way. No bending or passing at a traffic light, a junction, a crossing or a fork of the road up to 25 m beyond the vehicle (it stands there to let the traffic through). [ROLLBACK deform-105]
+- AI traffic: a timetable bus that has shut its doors (about to pull out, or running) and stands behind the player's vehicle may go round it like a car; before that, or when the stop is its own, it queues. [ROLLBACK deform-105]
+- AI traffic: a car held up by the player's vehicle now looks over the road in front of it before it goes round: a grid of the ground (kerb, drop, no asphalt - along the whole stretch and across it up to 3 m either way), and every sideways move from one side to the other, each driven the way it really will be. The cheapest one that clears the vehicle, keeps off the kerb, and has nobody on the lane it reaches over onto (oncoming, or the next lane of its direction) is taken: the shortest move, with room kept to the vehicle and to the road's edge. The old limit of about 1.5 m sideways (which a van in a narrow lane could never use) is gone. The debug view `aicolls` draws every move tried (chosen thick green, possible pale green, vehicle in the way grey, bad ground red, traffic orange) and the ground grid; the Developer Tools window (AI debug page) has sliders for the values (furthest move, step, margins, clearances wanted, shortest and steepest move, costs, oncoming lane on/off, how often it looks again), with "Defaults" and "Copy values". [ROLLBACK corridor-104] [ROLLBACK tune-104]
+- AI traffic: a car standing close behind the player's vehicle now really moves over. The sideways move was tried as if the whole offset were there at once, but the car drives it as an S-curve over a distance, and with only a few metres to the vehicle the way was still in its box when it got there - so the move was "chosen" and the car stood still for good. The way is now tried as it will be driven (the S-curve cut short to the room there is, from 2 m and 3 m to the metre of offset), and the debug view says when the box is still in the way. [ROLLBACK squeeze-103]
+- [ROLLBACK avoiddbg-102] The AI debug view (`aicolls`) shows how a car goes round what stands in its way: the fallback in use (CORRECTION within the lane, OVERTAKE on the oncoming lane, or none yet), why each did not start, the way tried and the ground probed (green fine, red kerb, yellow drop, magenta no asphalt).
+- [ROLLBACK squeeze-102] The correction within the lane also starts for a car that has already stopped a few metres behind the bus (it moves over more steeply, over the room there is), and a move over must have asphalt under the whole swath (an island, verge or pavement made of objects no longer passes for road).
+- [ROLLBACK squeeze-101] AI cars go by the standing player's vehicle inside their lane when it sticks out a little (a bus half out of its bay): the smallest sideways move that clears it, up to a metre beyond the lane's edge, planned as soon as the bus is seen and without stopping first. Not towards the oncoming lane with somebody coming, and not over a kerb, island or drop (the wheel-level ground probe: a face 5-35 cm over the road, or a fall of more than 15 cm). A bus with its indicator out towards the traffic is waited for.
+- [ROLLBACK buspass-101] Passing a standing bus on the oncoming side: the player's bus counts as standing after 4 s (was 10), a bus (the player's or an AI one) with its indicator out towards the traffic is not passed, and a pass begun round the player's bus is given up while the car is still behind it when the bus puts its indicator out.
+- [ROLLBACK curve-101] The player's vehicle on a bend is seen as its own box only, no longer as the stretch along the circle ahead of it (it held up cars it never came near).
+- [ROLLBACK queuestart-100] A queue pulling away from a light moves off more smoothly: a driver whose lead has started to roll runs out his reaction time three times as fast (about one driver in five keeps the old slow start).
+- [ROLLBACK gameplay-99] Settings: "Cars around" and "Passengers" moved from the start's "Day & weather" step to the Gameplay tab; "Timetable vehicles" is now "Max timetable vehicles".
+- [ROLLBACK paxvoice-99] "Passenger voices" (Sound tab) is replaced by three switches in Gameplay: passengers greet the driver (on), say which ticket they want (on) and complain (off by default).
+- [ROLLBACK parkedpct-98] Parked cars: a new option "Parked cars" in percent of the car park spaces (default 75%, as the original's quarter of empty spaces), drawn for each space on its own when its tile loads. The old count limit (and its leaking counter) is gone, so tiles loaded later while driving get their cars like the ones at the start.
+- [ROLLBACK lowpass-97] The cab's low-pass for outside sounds (own vehicle, traffic, surroundings) opens faster with `Snd_OutsideVol`: full at 0, 20% strength at 0.3, none from 0.5. The volume is unchanged.
+- [ROLLBACK ambient-96] In the cab the traffic's and the surroundings' sounds (scenery sound sets) get the same attenuation and low-pass by `Snd_OutsideVol` as the own bus's outside sounds.
+- [ROLLBACK parkedcap-96] The "parked cars" count is a soft ceiling: the tiles that loaded first no longer take all the cars and leave the rest of the map empty (more cars standing = fewer for each new tile, never below a quarter, stop at twice the count).
+- [ROLLBACK crowd-96] Random traffic is placed by distance from the player (lane weight falls with distance), so a low AI count fills the streets around the player instead of spreading over 400 m.
+- [ROLLBACK passplayer-96] AI cars no longer drive round the player's vehicle on the oncoming side before a light/junction (60 m) nor before it has stood 30 s.
+- A passenger standing at an exit no longer walks back to the point before it and round again: whoever is at the exit's point stays there. [ROLLBACK exitstay-95]
+- Walking past an open door of a bus no longer pulls the player in: the door must be within 45 cm (was 90 cm) and straight ahead. [ROLLBACK pull-95]
+- Parked cars differ from run to run and each time a tile is loaded (they were drawn from the object's id alone: the same cars in the same car parks). [ROLLBACK parked-95]
+- Setting the clock puts today's midnight and the date's tours where the new time says, so the timetable buses follow the new time. [ROLLBACK clockjump-95]
+- A timetable bus on a break stops its engine for any wait over two minutes (was 3.5) and starts it a minute before the departure (was 75 s), also while its doors are open. [ROLLBACK engine-95]
+- People who got off a bus look for a pavement within 10 m (was 30 m) and are gone at once when there is none; a pavement across the street no longer counts, so they stop walking into the bus. [ROLLBACK reach-93]
+- People on foot collide with nothing any more - not each other, not shelters and posts, not the player's bus - so they no longer jam. [ROLLBACK nocoll-93]
+- Paths marked "no unscheduled traffic" get no random AI cars and no pedestrians spawned on them (a `[rule]` with "unsched" in its name, or a set extra field of `[path_2]`). [ROLLBACK unsched-93]
+- The launcher's tour lists (Drive and phone) show only the tours that run on the chosen day. [ROLLBACK tours-93]
+- Setting the clock by hand takes the timetable's buses off the road and puts out the ones that are under way at the new time. [ROLLBACK clockjump-93]
+- AI buses standing out a long layover also stop their engine sound, not just the lights. [ROLLBACK aiparked-93]
+- AI list: the map picked on the page stays picked (it was put back on the Drive page's map every frame), and saving checks that the game will read what was written. [ROLLBACK ailist-93]
+- A content path saved whole on another machine (`C:\Users\<name>\OMSI 2\Vehicles\...`) is found under this machine's content from its OMSI folder on. [ROLLBACK userpath-93]
+- Route-arrow objects that mods tag `[routearrow]`, `[helper]` and the like are hidden with the route arrows, like `[helparrow]`. [ROLLBACK helper-93]
+- Ray-traced reflections no longer warp the windscreen next to trees: with the camera inside the player's vehicle (F1/F2) the crossed tree cards are left out of the traced scene. [ROLLBACK tree-rt-92]
+- Setting another time of day sends away the people waiting at the stops for buses that do not leave then, and fills the stops up at once with people for the buses that do (from the trips leaving within 20 minutes of the new time). A jump of the clock is noticed whichever way it came (the time dialog, the real-time sync, a host's clock); people already boarding stay.
+- People appearing at the bus stops wait only for buses that leave for their destination soon: the destination is drawn from the trips that leave the stop within the next 20 minutes (trips with a line that run today and stop there, the player's duty among them), renewed every 15 s of the clock. They used to draw it from every trip of the timetable, so many waited for a night line twelve hours away or for a depot run and never got on; a stop nothing leaves from soon gets nobody. (`Schedule::soon_targets`)
+- Nobody boarded the player's bus on a duty when its sign did not report a `target_index_int` row (an IBIS bus): it counted as showing no destination, i.e. out of service. The bus now takes its terminus from the IBIS (`IBIS_TerminusIndex` / `IBIS_TerminusCode`), and on a public duty trip from the trip when the sign tells nothing.
+- Fewer people missed the bus: in free drive the player's bus now takes the people whose line lists the destination it shows (it took nobody before), and a bus counts as standing in a stop's box when the middle of its body is in it as well as its origin (an axle-origin bus missed a short box), a box being at least 6 m long.
+- People on foot (passengers just off a bus among them) whose way leads into a standing bus or lorry now walk round it by its bounding box - through the corner of the nearer end and the one on its far side - instead of walking into its side and waiting. As a way out of any jam, somebody who has been held up for 4 s while wanting to go on passes through everything (people, vehicles, walls) for 1 s (it was 2.5 s and 1.5 s, and through people only).
+- The "Open log" button of the developer tools window finds the game's log by the id the launcher gave the game (not only by its process), opens it only when the file exists, and otherwise shows the log folder of the current user instead of handing a missing path to the system. On Windows it is shown in Explorer.
+- AI vehicles that have no spotlight of their own (no `[spotlight]`, `[spotlight_2]` or `[spotlight_cookie]`, in any section) light the road ahead at night: a `[spotlight_2]` pair is put at the front of the bounding box, 255 255 200, cones 20/60, reaching 50 to 65 m (drawn once per vehicle), switched by `AI_Light`. Only for the AI vehicles within 250 m of the camera.
+- Passengers getting off no longer all run to the front door while no door is open yet (the search for an open exit gave the first exit of the list when none was open; in an articulated bus that sent people from the rear doors forward): they keep the nearest exit. And somebody whose own exit is still shut while another is open waits up to 12 s for it before going to the open one.
+- The information bar's background is darker (less see-through) so that it no longer blends into the picture.
+- New setting *Imperial units* (launcher: General; game menu): speeds in mph, distances in yards and miles and the odometer in miles on the information bar, the touch panel's speed, the navigator (speed, speed limit sign, turn and stop distances, scale bar) and the names over other players.
+- The information bar's odometer sets the thousands apart (`1 433 243.3 km`).
+- The information bar's odometer cuts the tenth of a kilometre off like the dials do (it rounded: 123468.8 read as 123468.9).
+- The information bar (Shift+Y) shows the odometer reading (`ODO 12345.6 km`, the bus's `kmcounter`) and is see-through like the other plates, not opaque grey (it follows the opacity setting).
+- AI list: `+` on a bus type adds the bus in the livery of the type's last bus (it came back in the default livery).
+- AI list: the bus in the picture can be turned with the mouse again (the picture's rect was marked as interface, which kept the drag from reaching the showroom).
+- AI list: a bus is added the way Drive picks one - manufacturer, model, livery, then a fleet number and a number plate of your own (or one from the bus's list) - with the bus (in the chosen livery) shown on the page. The livery, number and plate go into the entry line of `ailists.cfg`; a bus type the depot already has gets another line in its block.
+- The launcher has an *AI list* page: the bus types of a map's depots from `ailists.cfg`, a switch for each, `+` / `-` for how many, and adding a bus type from the installed ones. Saved in the content folder (the map's own file stays), with a reset.
+- AI timetable buses that wait 3.5 minutes or more at a terminus switch the engine off (`AI_Engine` 0), put the lights out and, in the dark, press the side-light switch (`kw_standlicht_toggle`) where the bus has one; the engine starts again 75 s before the departure.
+- Free drive: the timetable shows the trip next to leave its first stop (a trip that left more than 20 s ago is not offered as the next).
+- The small navigator's map zooms with the mouse wheel while the cursor is on it, on top of the automatic zoom with speed. A few seconds after the cursor leaves the panel the map eases back smoothly to the automatic zoom.
+- Passengers no longer sit down in one another's seat: a passenger who moved to a seat that had been freed did not mark it as taken, so the next to board could choose it as well.
+- Whether a passenger rides far is now told by the timetable: the minutes between their stop and their destination (under about 3 minutes they stand by the doors, over about 8 they sit, smooth between); without a timetable, a guess from the kilometres as before. The last free seats go only to those who ride far, and a short ride takes a seat only while many are free.
+- Passengers off a bus no longer stand at its door for seconds: the standing bus beside them counted as a vehicle in the way (a wait of up to eight seconds); they now walk straight 1.8 m away from its side first, and then on along the pavement.
+- Passengers who go deep into the bus take window seats. Some of the waiting (about one in five) wait and travel in twos to fours, with one destination: a pair takes two seats side by side, three or four a "four" (two benches of two facing each other) where the bus has one, otherwise they sit or stand near each other. Elderly passengers often go for the pilot's seat (across the aisle from the driver, a little behind the cab - whichever side the wheel is on), where the bus has one. All with *Passengers' wish to sit* above 0.
+- Passengers choose their place: a seat or a standing place, instead of a random one. The ride (long: sit, short: stand by the doors), age (the elderly sit), the number of free seats, a window or an empty bench first, no standing close to others. A standing passenger on a long ride takes a seat that is freed, and now and then somebody gives their seat to an elderly passenger (at most once in 2.5 min per bus). Settings: *Passengers' wish to sit* (`pax_sit`, 0 = the original's random place, 0.5 .. 2x), in Gameplay and in the in-game *Traffic and people* list.
+- Refuelling, charging, washing and a repair without travel time work within 5 m of a `[petrolstation]` object's box, so the bus no longer has to be driven into the pump.
+- The interface key (Ctrl+Shift+H) works on foot as well.
+- Passengers wait for a door that is opening for three seconds at most, and only entries count: whoever gets off goes to an exit once it is flagged open, as before, not to the exit point of a shut door.
+- Passengers no longer turn away from the door that is being opened: a door whose variable is rising but which the script has not yet flagged open counts as open when an entry or exit is chosen, so they wait at it instead of walking to another door and back.
+- Destination window: the list shows the identifier (the first string under the ZIEL number) of each destination, the window is wider, there are two search boxes over the list (by ZIEL code and by name), the depot file in use is named in the title and a button changes it.
+- Lists and drop-downs (vehicle names, destinations, the launcher's selects) are as wide as their longest entry needs, within the screen, instead of cutting names off.
+- Ctrl+Shift+H (`view_toggle_gui`, rebindable under Controls) hides and shows the interface layer - the navigator and map, notes, timetable, info bar, name tags, chat, tooltips and the frame rate; the game menu stays. Skipping the duty's next stop moved to Ctrl+Alt+H.
+- Flying the map camera (F4): Ctrl slows it to a fifth, Shift speeds it up as before.
+- On foot: the keys (W A S D, G, Space, C) can be moved under Controls, and F is a torch that goes out when the walker sits at the wheel.
+- A vehicle moved with the map camera (F4) now stands facing the way the camera looks (horizontally), wherever on the window the click was, so its rear is seen from where it was put.
+- The odometer is kept in a saved situation: continuing from it starts the counter at the saved reading instead of drawing a new one (it is also written for vehicles whose scripts do not declare `kmcounter_*`).
+- Passengers who stepped off the player's vehicle and find no pavement are respawned, as in OMSI 2 (after a second, seen or not, so they do not crowd the doors), instead of standing there for good.
+- View editor: opening it, choosing another mirror, or taking hold of a mirror's slider turns the driver's head to that mirror - to the glass that carries its `reflexionN` picture, or, where there is none in the cab, to the spot the mirror's camera is set at.
+- Road surfaces: the pull towards the eye that settles flush layers is a tenth of what it was and capped at a few centimetres, so a surface that really is higher (a road over another, patches over asphalt) wins at every distance instead of the lower one showing through as the camera moves. `view_reset_all_directions` shows "View reset: main camera".
+- `view_reset_all_directions` (Space) now also forgets the special camera the driver came from and re-syncs the view-look bookkeeping, so it always lands on the default straight-ahead camera with a centred view.
+- Left/Right now switch the interior camera (`view_interiorcam_minus/plus`) even with a steering wheel connected; before, they only turned the head and just Ctrl+arrow switched cameras.
+- Markings (or any decal object) laid a few millimetres over an asphalt object vanished close up and at an angle. The surface objects are pulled towards the eye along each vertex's line of sight (shader.wgsl, `vs_main`); the pull's share of the distance keeps every triangle a plane, but its fixed part (1 cm, 5 cm for a shadow blob) did not: across a big triangle seen from close by the lines of sight differ by tens of degrees and the pulled triangle bowed by millimetres, over the small triangles of what lies on it. Only the share of the way is kept now (`ZBOW_PLANAR`; the depth buffer's reversed float Z has the precision for the 0.1 % margin). [ROLLBACK zbow-57]
+- Enhanced: the mirrors' dusk lift now begins earlier (`MIRROR_RISE` 0.5 to 3 in log2 of the pre-exposure, was 2 to 5): in the first part of the dawn the eye saw the street bright while the mirrors were still dark. `OMSI_DEBUG_MIRRORS=1` also logs, twice a second, the sun's height, the pre-exposure, the one the light asks for and their ratio ("mirror eye: ..."). [ROLLBACK mirrorrise-56]
+- Enhanced: the vehicle mirrors and the eye adapt together. The street in the window is its rest picture times pre / pre_target (the pre-exposure takes 1.5 s to follow the light), the mirror's picture, lit by the hour at once, was not: after a quick change of the hour they settled differently. The mirror now carries the same factor (`MIRROR_EYE_SYNC`, `mirror_dusk_gain` in enhanced.wgsl; the pre-exposure the light asks for goes in `EnhancedUniform::eye.w`, lib.rs), and its dusk lift follows the light's hour, not the eye's lag. [ROLLBACK mirroreye-55]
+- Enhanced: the vehicle mirrors at dusk and dawn still stood dark beside a window the eye had adapted to. The street in the window is lifted by the pre-exposure (about 2^6 in the blue hour), the plain light of the mirror's picture was not. The mirror now gets a lift over the dusk read from that same pre-exposure (`MIRROR_DUSK_BOOST` 3 and `mirror_dusk_gain` in enhanced.wgsl: none by day and at full night), on top of the eye adaptation it already follows; the light's dimming by the sun's darkness is kept to the deeper night (`MIRROR_DUSK_CURVE` 3). [ROLLBACK mirrorpre-54]
+- Enhanced: the vehicle mirrors' level by the hour. Following the eye adaptation (mirrorada-52) lifted them at night, and at dusk and dawn they were still too dark. The mirror light's fall with the sun's darkness is now a curve (`MIRROR_DUSK_CURVE` 2: brighter in between, as dark as before at full night) and goes a little further at night (`MIRROR_NIGHT_DIM` 0.88, was 0.8). camera_util.rs. [ROLLBACK mirrorlevel-53]
+- Sound: a triggered entry that starts audibly stays audible for the whole playback: its gain at the moment the trigger fired is held (the door hit's `[volcurve] doorSpeed_<n>` is reversed by the script a moment later and silenced the sound within a frame of its start). `LATCH_TRIGGERED` in soundset.rs (false = follows the curves as before). [ROLLBACK doorlatch-52]
+- Enhanced: the vehicle mirrors follow the eye adaptation like the rest of the picture. They were held at their own brightness against the metering, so at dawn or dusk, or after a quick change of the hour, the street brightened (or whited out) and settled while the mirrors stayed dark. `MIRROR_FOLLOW_EV` in enhanced.wgsl (1 = follows, 0 = the picture of -50). [ROLLBACK mirrorada-52]
+- Sound: a door's hit sound in a coupled section of an articulated bus (a `[trigger]` entry with `[volcurve] doorSpeed_<n>`) was silent: the section's entries read the curve at the frame's end, after the door script had reversed `doorSpeed_<n>`, while the front section's entries got the value of the moment the trigger fired. The sections get it too now, and the triggers of their entries are among those whose variables are kept (`update_parts_fired`, `curve_triggers` in soundset.rs; player.rs, traffic.rs). [ROLLBACK doorpart-51]
+- Route arrows: with "Route arrows (as in OMSI 2)" on, the arrows the game generates along the route (over the junctions ahead, at the stops of the trip) came up together with the `[helparrow]` objects the map's author put up, and the map's own `dynhelperactive` flag (global.cfg), which Omsi.exe asks before it generates them, was read and never used. New setting "Generated route arrows" (`nav_arrows_auto`, off by default; launcher, in-game list and settings file): off, only the map's own arrows show; on, the generated ones stand as before. [ROLLBACK helpers-50]
+- Enhanced: the vehicle mirrors (the `reflexionN` pictures) were far darker than in the plain picture. Their glass took only `texture x diffuse colour`, where the plain shading of an unlit surface adds the material's emissive colour too (a mirror material dark in its diffuse and bright in its emissive colour is a common way to show a picture at full brightness); and by a bright picture the tone mapping's metering (up to 0.6 EV off) darkened the mirror by a third as well, though its picture is the street already at its own brightness. Both are undone now (`MIRROR_EMISSIVE`, `MIRROR_UNMETER` in enhanced.wgsl; false = the old way). [ROLLBACK mirrordark-49]
+- Walking outside a multi-section vehicle: every section has a collision again (section B had lost it) and a bridge box over each joint stops the walker walking into the articulation from outside. The walker's own-vehicle exclusions (getting up, stepping out) cover every section. Inside is unchanged. [ROLLBACK walkcoll-48] (`vehicle_sections` in on_foot.rs).
+- Enhanced: a display's text layer (a blended, `[matl_noZwrite]` material with a `[matl_transmap]`, e.g. a LED matrix of two `[matl_change]`/`[matl]` blocks) lost its `[matl_lightmap]`, night map and LED light: it counted as a pane, and since devtools-38 a pane keeps only the sun and sky on its tint. A material with a light map, a night map or a display/LED light of its own now keeps its light. [ROLLBACK glass-48] in enhanced.wgsl.
+- Sound on foot in an articulated bus: walking from the first section into the second (or across the joint, which has no bounding box) no longer switches the sound to the street's. The crossfade between the cab and the street now follows the highest of the boxes of every section and a bridge over each joint, and while the walker's cabin walk is on the player's own bus the sound is the cab's whatever the `[boundingbox]`es say (a bus with a wrongly sized box sounds right too). [ROLLBACK footsound-46] in `foot_cab_mix` (on_foot.rs) and its caller in app_events.rs.
+- Enhanced: the "Lamp fill light" switch is gone from the launcher and the in-game list: the fill is always on. [ROLLBACK lampfill-47] (settings.rs forces `lamp_fill`; pages.rs and game_lists.rs lose the row).
+- Enhanced: new setting "Lamp fill light" (`lamp_fill`, on by default): the street lamps' and headlamps' light now wraps a little round the terminator (`LAMP_WRAP` 0.25) and the light a lamp puts on the ground comes back from there to the surfaces facing away from it (`LAMP_BOUNCE` 0.22, over the lower hemisphere), so the far side of a vehicle from a lamp is no longer black at night. Off, the lamps' light is the plain Lambert term as before. [ROLLBACK lampfill-44] in enhanced.wgsl.
+- LED matrices whose `[matl_alpha] 2`, `[matl_nightmap]` and `[matl_transmap] \S:n` stand after a `[matl_change]` (with no `[matl_item]`) showed every dot lit at all times: the slot was drawn opaque and its mask cut nothing. As in Omsi.exe (the parser at 0x5f4763), the commands after `[matl_change]` change the slot's base material, so their `[matl_alpha]` now counts as the slot's own. [ROLLBACK matlchange-42] in `material_alpha` (scene.rs).
+- Enhanced: a pane with a reflection map is lit by the lamps at night without ray traced reflections: the lamps' light on the pane (street lamps, headlamps, lit fronts) lights the photograph it mirrors, in its tints, as a mid-grey surround would send it back (the sky probe alone is dark by night and the glass stood black and artificial). `ENVMAP_LIT_GLASS` / `ENVMAP_LIT_PAINT` / `ENVMAP_LIT_GAIN` in enhanced.wgsl [ROLLBACK envlit-41]; the traced reflections are unchanged.
+- Enhanced: Enhanced+ is merged into Enhanced. The launcher's Graphics list no longer has Enhanced+; Enhanced has two new settings instead: "Ray traced shadows (and occlusion)" (`rt_shadows`) and "Ray traced reflections" (`rt_reflections`: Disabled - the reflection maps as before; On player vehicle only; Full - every reflecting surface). They switch independently (the traced shadows need a ray-tracing GPU; with both off the renderer is built without ray tracing). An old `graphics=enhanced_plus` / `--enhanced-plus` is read as Enhanced with both on (Full). Wet roads are still traced in a ray-tracing build, and the ambient occlusion stays traced there. [ROLLBACK rtsplit-40]
+- Enhanced: the reflection maps (`[matl_envmap]`) turn with the camera, as in OMSI: Omsi.exe sets the sphere map's texture transform from the camera's yaw and pitch (offset -yaw/pi, -pitch/2pi), which the D3D wrappers and openOMSI left out, so the map looked flat and fixed to the screen. `ENV_SCROLL` in shader.wgsl (`sphere_map_uv`; 0 = the old behaviour) [ROLLBACK envscroll-40]. The Enhanced paint also samples the photograph through that sphere map now (`ENVMAP_SPHERE` in enhanced.wgsl; false = the old lookup) [ROLLBACK envmap-40].
+- Enhanced: the `[matl_envmap]` paint (car bodies, bus panels) reflects more, as OMSI's sphere map does: its F0 reaches 0.16 for a full factor (0.08 before), the photograph's tint weighs 1.0 (0.65) and holds more on rougher paint (0.6 against 0.25). In Enhanced+ such a paint is traced as chrome and glass are (`ENVMAP_TRACED`); the old values stand in the comments of `enhanced.wgsl` under `[ROLLBACK envmap-39]`, the pane colour change under `[ROLLBACK glass-38]`.
+- Enhanced: a pane (a window, a windscreen) shows of itself only the sun and sky on its tint and its reflection: the map's lamps, the saloon lamps and a glow of its own no longer add to its colour, which stood a dark tinted window grey and milky by day and at night.
+- Enhanced+: the traced sun shadow showed its 4 x 4 pattern as large squares in the edge of a shadow far away on a road or the ground seen at a grazing angle: the filter that averages the rays took only neighbours at the same depth, and on such a surface the rows above and below lie metres apart. It now follows the surface's slope (the inverse depth is straight across a plane).
+- Enhanced+: what the traced reflections show of the inside of the player's vehicle (the saloon behind the camera in the windscreen) is no longer a flat mean colour per texture. While the camera is in the vehicle, a **cabin probe** draws small pictures (512 px, one a frame) of the vehicle from three places - the camera, the middle of the vehicle and a quarter of its length behind that - six faces each, with the plain shading - real textures, the saloon lamps and all - and a reflection ray that meets anything within 40 m of the eye while the camera is in the vehicle (the dash and pillars and the rear part of a bendy bus lie outside the vehicle's bounding box) reads its colour from them (`render_cab_probe`, `CabProbe`). Where no face has been drawn yet it falls back to the earlier cabin shading. `OMSI_CAB_PROBE=0` switches it off (`OMSI_CAB_REFLECTION=0` too). A point the eye cannot see (a ray from the eye to it meets a surface first: behind the driver's seat, say) is not taken from the probe, which would show what stands in front of it. With the camera outside the vehicle (or in none) the same is done by a probe at the camera, six faces in the world's frame, for what is within 120 m of it. In the `OMSI_DEBUG_RT=11` view magenta marks the hits the probe had; `OMSI_DEBUG_RT=12` shows the probe's own colour there.
+- Enhanced+: the traced reflections of what is off the screen (the saloon behind the camera in a window at night, a lit bus in a shop window) were black by night: a hit there was lit by the sun and the sky alone. A mesh the saloon lamps light now brings their light back (`Record` carries it, `lamp_level`), and a ray that meets the inside of the player's vehicle is lit as its cabin is. `OMSI_DEBUG_RT=11` draws what each reflection ray meets (green: sky, red: off the screen, blue: on it, yellow: the cabin).
+- Sound: entering or leaving the vehicle in walk mode now crossfades the cab and street sound while the camera glides in or out (by the walker's position against the bus), instead of a dip. The own bus's outside sounds open from muffled to clear as they leave the cab.
+- Passengers that stepped off the player's vehicle and found no pavement lane at once no longer stand still: they keep looking for one and set off when they find it.
+- Wheel spray on wet roads is hidden more firmly in and right round the body the camera is in (passenger view included), and so is a vehicle's own `[smoke]` tyre spray (the stock `tire_wet_*` emitters), which was still drawn in the cabin.
+
+* **`Velocity` and `Velocity_Ground` were one value.** As in Omsi.exe, `Velocity_Ground` is the
+  body's speed over the ground and `Velocity` comes from the driven wheels (the mean of their
+  turning speed times the tyre's size), so wheelspin or a locked wheel shows in it.
+* **Text fields** (the launcher's and the developer tools') copy, cut and paste the selection,
+  Ctrl+Backspace / Ctrl+Delete remove a word, Ctrl+arrows move by word and Shift+arrows select.
+* **The mouse wheel over a cockpit switch** no longer clicks it; it zooms the view (field of view) as everywhere else.
+
+### Changed
+
+* **Smooth viewpoint changes** (`driverview_smooth`) now glide as Omsi.exe does it (found in its
+  camera code): every frame the view comes closer to the new camera by `1 - exp(-0.005 * ms)` of
+  what is left - the eye, the field of view and the heading and height each on their own - so a
+  quick start and a long soft tail instead of a fixed-length curve. The eased return of the view
+  (Space / F1) uses the same law.
+* **The driver's view turns with the steering only in the default driver view** (straight ahead);
+  the other cockpit views no longer turn.
+* **Esc → Camera** no longer carries the seat-position and head-pitch sliders; the view is
+  adjusted in the view editor panel (the single button there), per vehicle. The global field of
+  view slider stays.
+* **The own bus's outside sounds heard in its cab** (the engine from outside and the like) go
+  through a low-pass filter as well as being turned down - but only while the bus's script lets
+  them in: with `Snd_OutsideVol` at 0 they are not heard at all, as before. The filter's
+  cutoff rises with `Snd_OutsideVol` (500 Hz at 0.01 to wide open at 0.95). The traffic gets no
+  filter.
+* **Getting in or out of the bus on foot** no longer cuts the sound between the street and
+  the cab: the sounds of the old view fade out in 0.2 s, those of the new one in over 0.3 s,
+  and the traffic heard through the bodywork slides to its cab level in half a second.
+* **Oncoming cars no longer stop for the player on a bend.** They looked for the player's
+  bus in a box stretched straight ahead of its nose, which on a bend reaches over into the
+  opposite lane. The stretch ahead of the nose now follows the circle the bus is driving
+  (its turn per metre, from the change of its heading).
+* **F4 (map camera)**: a plain click on the ground (no Ctrl) now asks "Do you want to move the
+  vehicle here?" and, on yes, puts the vehicle there - anywhere, not only on a street (Enter =
+  yes, Esc or a click beside the question = no).
+
+### Added
+- Setting "Refuel and wash anywhere": the pump and the wash no longer ask for a petrol station nearby. [ROLLBACK petrol-93]
+- Developer tools: an "AI debug" page. It shows what the player's bus sign says (`target_index_int` and the depot row it names, the IBIS's terminus, what the game takes the sign to be, how the bus takes people, the duty's trip) together with the nearest stop's line records and buses listed, and switches overlays over the picture: above every person what they do (task, stop, destination, the line record and termini they expect, the bus they deal with, why they stand), their planned ways, the lanes the cars mean to drive, and what the cars' collision detection sees (box, the nearest thing ahead, lead car and gap, a body in the way, red light, yielding).
+- `OMSI_NO_FRUSTUM_CULL=1`: the window's picture draws the whole scene whatever the camera sees (behind it, outside the view, beyond the fog) - a test for the traced reflections. Expensive; the size, distance and level-of-detail limits still apply.
+- Enhanced+ (experimental): the player's own windows seen from the cab now mirror the cabin - its walls, seats and, at night, the saloon's lamps - as strongly as the cabin is brighter than the street outside (nothing by day, clearly at night), where they showed a flat 15 % of the sky's reflection at any hour. The ray meets the cabin lit as the cabin is, not by the sun and sky outside. `OMSI_CAB_REFLECTION=0` switches it off.
+
+* **Mirror editor** in the developer tools window (tab *Mirror editor*): every
+  `[add_camera_reflexion]` of the vehicle and its coupled parts with sliders and fields for
+  position, dist, field of view, yaw, pitch and extra, set live in the game (never saved); *Copy*
+  puts the finished `[add_camera_reflexion_2]` block on the clipboard to paste into the `.bus`.
+* **View editor**: Esc → Camera... → *Edit the driver's view and mirror angles* opens a
+  translucent panel on the right with sliders for the driver's eye, view, field of view and for each mirror's
+  angles, kept for that vehicle alone (`driverview.cfg`, `mirrors.cfg`).
+* **Developer tools window**: Ctrl+Shift+Backspace in the game opens an extra window
+  beside it, whatever the setting says (a process of its own; closing it only closes the window, and
+  it closes by itself when the game ends); Settings → General → *Open Developer Tools with every session*
+  starts it automatically. *Reload passenger cabin* and *Reload paths* read the player's
+  `[passengercabin]` or `paths.cfg` again while playing; further buttons read `sound.cfg`,
+  the `.bus` file(s) (cameras, mirrors, bounding boxes, physics), `model.cfg` (lights, animations,
+  object properties) and the constfiles (constants and curves) again, each one all or nothing. Overlays also show mirrors (position and the way they are turned),
+  the center of gravity, driver and passenger views and tyre widths; an *Open log* button opens
+  the game's log. In
+  it: switches that draw the seated places (orange dots), the standing places (red dots), the
+  passengers' paths, the vehicle's bounding box, the axles and wheels and the interior lights (with
+  their number and variable), the numbers and uses of the path points (entry, exit, links,
+  ticket sale, stamper) and the ticket sale, stamper, money and change points over the picture, and the player vehicle's
+  variables and strings - watch, set, hold, and save the watched names as named lists.
+
+* **`(M.V.GetRadioName)` and `(M.V.GetRadioSong)`**: script callbacks that return the internet
+  radio's station name (`icy-name`, else the name in `radio.cfg`) and its stream title as strings;
+  empty while the radio is off. See MODDING.md.
+
+* **Bus radio from the cab**: the radio plays from a point by the driver's camera; inside it is
+  semi-spatial (slightly quieter with distance, slightly to the radio's side, smoothed over ~0.5 s and
+  following the bus's axes so changing views never swings it between the ears). Optional effects in
+  Settings → Sound (launcher and in-game), off by default: sliders *Cheap speaker*, *FM hiss and
+  crackle*, *Lost reception* (`radio_fx_speaker`, `radio_fx_noise`, `radio_fx_dropouts`, 0..1).
+
+* **`[led_glow_effect]`** (0-1, in a `[matl]` block): the material's lit parts glow like an LED
+  panel's dots in the enhanced picture, at that fraction of the *LED glow* setting; 0 keeps the glow
+  off it. It works on any material of a vehicle or a scenery object - with a light map it glows where
+  that is lit, with a night map by that, with neither all over. See MODDING.md. (`omsi-model`,
+  `scene.rs`, `enhanced.wgsl`, `post.wgsl`)
+
+* A **trip summary** window when a trip is over (the bus stopped at its last stop with a passenger
+  door open): the line and the tour's number and a table of the stops - planned and real arrival,
+  difference, planned and real departure, difference and the bus's odometer, `---` where a stop was
+  never served - to copy (Ctrl+C) or save as a text file in `Journeys` (Ctrl+E). It does not pause the
+  game. The setting *Show a summary after each trip* (Settings → Gameplay, the game menu's options)
+  switches the windows off. The journey log has the odometer column and `---` for missed stops too.
+  (`trip_summary.rs`, `journey.rs`)
+
+* The quick menu (**Alt** tapped alone, as in OMSI 2): twelve tiles in the lower right corner -
+  place, swap and remove a vehicle, teleport to a start point, line and tour, destination display,
+  repair, refuel and wash, route arrows, time, weather and game controllers - an overlay that does
+  not pause the game. The tiles that choose something open the game menu on that list at once,
+  without its pause, and it closes when the list is done. While a timetable is active, the
+  line-and-tour tile becomes the one that ends it (red, with a cross): a click asks first, then the
+  game drives free as *Free drive* in the list of lines does. (`quick_menu.rs`)
+
+### Changed
+
+* **Launcher, Drive → Day & weather: the time and date can be changed again with "Start on today's date" on.**
+  The old "Start at the real time" switch is gone (it, and the date switch, overwrote the fields every
+  frame and at every launch, so they could not be edited). The *Current time* and *Current date*
+  buttons are always there for a one-click sync of either. "Start on today's date" now sets the date
+  and year from the computer's calendar once, when the launcher opens; after that the date is yours.
+
+* The LED glow is no longer given automatically to every material with a `\S:n` transmap and a
+  white light map: only a material with `[led_glow_effect]` glows. A panel of a mod that should
+  keep its glow needs the key in its `model.cfg`.
+
+* The tour's next trip begins as soon as the bus has stopped at the last stop of a trip with a
+  passenger door open, as in OMSI 2 (before: only after the bus had left the terminus by 60 m, within
+  five minutes of the trip's time), so that the timetable and the IBIS delay show the time to the
+  departure at once and the passengers board for the new trip.
+
+### Fixed
+
+* Choosing a timetable (*Line and tour*, from the Esc menu or the quick menu) no longer types the
+  line and destination into the bus's IBIS or roller blind by itself, and the displays no longer
+  follow the duty from trip to trip afterwards: the driver sets them at the bus's own controller, as
+  in OMSI 2. What still does it, on request: Shift+U (the start-up macro) and a game started with
+  *Put the bus into service on start* (`--autostart`).
+* A game started without *Timetable buses* had no timetable in it: *Line and tour* (Esc menu and
+  the quick menu) said "No timetable on this map". The map's timetable is now read when the list is
+  first opened; the timetable buses on the road stay off unless the game was started with them. A
+  timetable with no tour running at the game's time says so instead of "no timetable".
 
 ### Removed
-- The "playing now" counter: the game no longer tells a Cloudflare Worker `(openomsi.savvabestbrother.workers.dev)` every ten minutes that it is being played. Gone with it: the setting Count me in the website's "playing now", OMSI_NO_PRESENCE and OMSI_PRESENCE_URL, services/presence/ and the counter on the website and in the README.
 
-## 0.2.44 - 2026-10-13
-
-### New
-- **Character models: High quality (improved)** (Settings, Gameplay, Passengers) draws the people with the 91 everyday [Microsoft Rocketbox avatars](https://github.com/microsoft/Microsoft-Rocketbox) (MIT) in place of the content's own, on your computer only: each person an avatar of the same kind, posed by OMSI's animation or the procedural one, with a living face from the avatars' ARKit blend shapes - blinks, glances, a mood of their own, passing smiles, raised brows, frowns and yawns, a smile at the cash desk, and lips that move with what they say. Servers and other players keep their own people. The avatars are downloaded once, like the ambience (about 310 MB). **Original** stays the default.
-- **glTF / GLB, FBX and OBJ models** wherever OMSI reads a mesh (sceneries, splines' objects, vehicles, humans), with their materials, textures beside the model or packed into it, skins and blend shapes; the format is told by content.
-- **Every picture format**: DDS with BC4-BC7, the DX10 header's 10-bit, float and packed formats, ATI1/ATI2 and DX10 cube maps; KTX 1 / KTX 2 (BC, ETC, ASTC); WebP, GIF, TIFF, QOI, OpenEXR, Radiance HDR, ICO, PNM and farbfeld; 16-bit PNGs. A texture is read by its content, whatever its name says, and found under all these extensions.
-- **Every sound format**: WAV with extensible floats, 64-bit float, A-law / mu-law, 20- and 12-bit samples, RF64, ADPCM and the truncated headers old tools wrote; AIFF, CAF, M4A (AAC, ALAC), Matroska audio and MP2 besides Ogg, FLAC and MP3, all told by content. Surround is mixed down to stereo, and a sound missing under its name (`horn.wav`) is taken in another format of the same name (`horn.ogg`).
-
-### Fixes
-- **Higher frame rates below 120 frames a second, mostly on big maps with heavy AI lists.** Since 0.2.39 the whole simulation ran 120 times a second however fast the picture was. Each frame below 120 fps ran it two to four times (at 30 fps four times), up to 13 times in a slow frame, and every run brought the AI cars' meshes, lamps, drivers and sounds and every person's pose up to date again. A slower frame held more ticks and got slower still. Now:
-  - the simulation steps 60 times a second;
-  - a frame runs at most four steps, so the game keeps real time down to 15 fps;
-  - what only the picture and the sound need of the traffic and the people is brought up to date once a frame, in its last step.
-
-  At 30 fps the simulation's share of the frame is about half what it was ([#2246](https://github.com/openOMSI-org/openOMSI/issues/2246), [#2388](https://github.com/openOMSI-org/openOMSI/issues/2388), [#2295](https://github.com/openOMSI-org/openOMSI/issues/2295), [#2365](https://github.com/openOMSI-org/openOMSI/issues/2365)).
-- **The frame rate no longer collapses after half an hour on 8 GB graphics cards.** The texture budget counted only the scenery's and the vehicles' textures. All the others (the people's, the scripts' and texts', the sky's and the terrain's) grew past it until the card ran out of its own memory: from 140 to 25 fps on a long drive. Textures beyond half of the card's memory are now taken from the scenery and the vehicles ([#2295](https://github.com/openOMSI-org/openOMSI/issues/2295), [#2121](https://github.com/openOMSI-org/openOMSI/issues/2121), [#1314](https://github.com/openOMSI-org/openOMSI/issues/1314)).
-- **The automatic render scale no longer swings between 85 and 100 % every ten seconds** on a card at its limit. Each swing made new targets and was a stutter of its own. A step up that does not hold now waits twice as long before the next try, up to two minutes ([#2295](https://github.com/openOMSI-org/openOMSI/issues/2295), [#2121](https://github.com/openOMSI-org/openOMSI/issues/2121)).
-- **Night in Enhanced is lighter on the graphics card.** Only the 12 AI cars nearest the camera, within 200 m, light the road with their headlamps; every car on the street did, a hundred lights and more on a busy road ([#1774](https://github.com/openOMSI-org/openOMSI/issues/1774), [#1467](https://github.com/openOMSI-org/openOMSI/issues/1467)).
-- **Macs with Apple M4 draw the full picture again.** 0.2.43's far-map shadow for Enhanced+ made the scene shader too big for Apple's shader compiler. It crashed on every scene pipeline, and the game fell back to the basic picture or closed. The same shadow now takes one call instead of two.
-
-## 0.2.43 - 2026-10-13
-
-### New
-- **Photo mode: depth of field without ghost copies.** Out of focus things were drawn as so many separate copies side by side (one for each point of the aperture the photo was taken through), worst wide open. Every picture of the shot now reads back its depth and is softened by what lies between two copies, so they run together into one smooth blur even at 16 samples. Lamps burnt out in the picture spread into bright bokeh discs.
-- **Photo mode focuses where you click**, and focusing "On the bus" finds the bus's side the camera looks at instead of its middle a couple of metres behind it.
-- **Photo mode, Advanced (for photographers)**, chosen in the launcher (Settings, Interface & online, Photo mode): a camera body with a sensor size (full frame, APS-C, Micro Four Thirds, medium format, 1-inch) and real focal lengths; P/A/S/M exposure in third stops (f/1 - f/32, 30 s - 1/8000, ISO 50 - 51200) with Auto ISO that keeps the time hand-held and exposure compensation; matrix, centre-weighted or spot metering of the scene's light (some EV 15 at noon, EV 4 at night) with an exposure meter; sensor noise that grows with the ISO, a sensor that burns out over its white and diffraction when closed down; the lens as it comes (distortion, vignetting wide open, colour fringes); tilt (the plane of focus leaned about its hinge line, for a miniature look or a whole street sharp) and shift (verticals kept upright); white balance by preset or in kelvin, picture profiles, split toning; histogram, clipping warning (zebra) and focus peaking in the live view; the depth of field's limits and the hyperfocal distance; exposure bracketing; 16-bit PNG; the camera's settings written into every photo as XMP metadata.
-- **Photo mode, Simple** keeps its few settings and gains motion frozen, panned with the bus or from a tripod (the bus blurs past a sharp street), bright bokeh of lights, "everything sharp" (the hyperfocal distance), clarity, borders (white, black, instant print, gallery mat) and a spirit level.
-- **Passengers move by their own poses by default** (Settings, Passengers: Natural; Original OMSI stays to choose). They wait in ways of their own - arms hanging, hands clasped or behind the back, arms crossed, a hand on the hip, looking at a phone - and each walks a little differently.
-- **Units** for the game's own texts: metric, British (mph, miles and yards) or American (mph, miles and feet, °F) - the navigator and its speed limit signs, the information bar, the touch speedometer, LAN players' distances and the trip summary.
-- **Time menu**: the date with its weekday, moved by a day, a week or a month with the time of day kept; the timetable's day, the season and the map's chrono follow it.
-- **Plugins can draw on a bus's script textures** and react to clicks on them (`[scripttexturelist]`, `AccessScriptTexture`, `AccessScriptTexturePointer`, see docs/PLUGINS.md), so ticket machines and driver terminals written for OmsiHook can run ([#2367](https://github.com/openOMSI-org/openOMSI/pull/2367), by @Spindlerkoo).
-- **The launcher's timetable editor is back**: lines, tours and trips of a map, saved as `.ttl` files in the content folder, never into OMSI 2's own ([#2448](https://github.com/openOMSI-org/openOMSI/pull/2448), by @thibautgnt).
-- **A custom weather can be made again** on the launcher's Drive page ([#2446](https://github.com/openOMSI-org/openOMSI/pull/2446), by @thibautgnt).
-- **The Drive page shows what to type into the bus's IBIS** for the chosen line again ([#2445](https://github.com/openOMSI-org/openOMSI/pull/2445), by @thibautgnt).
-- **The bus radio's stations can be edited in the launcher again** (Settings, Sound) ([#2444](https://github.com/openOMSI-org/openOMSI/pull/2444), by @thibautgnt).
-
-### Fixes
-- **Nothing that goes with a moving vehicle shakes any more**: the mirrors, the bus's lamps and their glow, the passengers in every bus, the coins on the change tray, the highlighted switch, AI cars beside the bus and the view on foot aboard a bus are drawn where the bus is drawn ([#2439](https://github.com/openOMSI-org/openOMSI/pull/2439), by @thibautgnt).
-- **Key bindings and game controllers are kept across updates** and new install folders: they live in `~/.openomsi/Inputs` now, and the first start brings over those an earlier version saved beside the program ([#2443](https://github.com/openOMSI-org/openOMSI/pull/2443), by @thibautgnt).
-- **An add-on's `Maps` folder next to the original `maps`** on a case-sensitive file system no longer hides the stock maps ([#2450](https://github.com/openOMSI-org/openOMSI/issues/2450), [#2451](https://github.com/openOMSI-org/openOMSI/pull/2451), by @Bluscream).
-- **Passengers' legs stay under them when they turn**: the body turned to a new heading at once over feet that stayed put, the legs ran diagonally and the person seemed to slide.
-- **Passengers no longer pop onto their seats**: the jump from the aisle onto the seat (as Omsi.exe places them) is drawn as a short glide while they sit down, and a foot no longer leaps up a step as the body climbs into the bus.
-- **People sit on a stop's bench** as on a bus seat; they sat 11 cm too low and 31 cm too far back, with their legs straight down as if kneeling.
-- **People no longer shine in the sun** in Enhanced: their cut-out hair and clothes were lit as leaves, from every side with the sun through them.
-- **Enhanced+ shadows**: where no traced shadow is found for a surface (a pane, a step's edge, a thin handrail) the far shadow map still shades it, so there are no bright specks and stair-stepped lines under a roof; the sun no longer lays stripes of shadow on faceted ground and a road's camber where it grazes; reflections in the panes take their colour from the face turned to them.
-- **The clock past New Year's Eve** goes on into the next year instead of starting the same year again.
-- **Map: Esc -> Move** lets the city map be dragged again, and the bus goes where a click lets go.
-- **Start points** show each name once, sorted as OMSI sorts them; a name whose places are all taken is left out, and choosing a name again goes on to its next free place.
-- **Tip-up seats fold down under a player on foot** or a LAN player's figure sitting on them, as under a passenger.
-- **A depot file's destination with the route in front of it** ("402 Apsley Station") is the timetable's stop to the people waiting, and the bus empties there.
-- **A trip without a line of its own** shows none on the AI buses and the departure boards, as in OMSI.
-- **Buses no longer sink into a street** with a road face buried under drawn ground (Ahlheim & Laurenzbach).
-- **Text textures** written with 255 as the full colour flag are no longer yellow.
-- **.x models**: texture coordinates and normals from DeclData (houses and trees drawn in one flat colour) and binary .x files (25 PAD-Labs houses were missing).
-
-## 0.2.42 - 2026-10-12
-
-### New
-- **Mirror quality**: "As the picture (Enhanced)" draws the mirrors with the Enhanced shading, its light and its sky, instead of the plain light (Settings, Graphics, and the pause menu).
-- **Real-time reflections: Every frame** redraws every mirror in the picture each frame. In turns, each mirror's picture was a step behind, and the steps grew with the speed, so the street seemed to shake in them.
-- **AI cars light the road with their headlamps** in Enhanced and Enhanced+: the stock cars have no spotlight of their own, so their lit front lamps now give them a pair of beams.
-
-### Fixes
-- **Windows: the WebView2 installer is offered only when the runtime is really missing.** Any launcher that failed in its first two seconds was taken for one without WebView2, and Microsoft's installer, answering "already installed", was offered at every start. With the runtime installed the launcher is now tried again with a fresh web view profile, and its own error is shown; a runtime whose files are missing is explained, with how to repair it.
-- **The sun is its real size** (0.27 degrees) in Enhanced and Enhanced+, with a camera lens' glare round it instead of the eye's, which drew a white blot ten degrees round it ([#2400](https://github.com/openOMSI-org/openOMSI/issues/2400)).
-- **The sun's glare no longer switches off and on as the camera turns**: with the sun just off the picture, whatever stood at the picture's edge decided whether the glare was there, and a sheet of light over the picture vanished and came back.
-- **Paint and windows keep their shine at night** in Vanilla and Vanilla+, where the lamps light them, as in OMSI: the reflection was darkened twice by the night ([#2284](https://github.com/openOMSI-org/openOMSI/issues/2284)).
-- **Bus and car bodies have a lacquer's shine in Enhanced**: a body that mirrors a few per cent (the MAN NL's 15 of 255) was drawn as matte plastic ([#2067](https://github.com/openOMSI-org/openOMSI/issues/2067)).
-- **Photo mode keeps the driver at the wheel** when it is opened from the driver's seat and the camera moves away; every photo taken from there showed the bus without its driver.
-
-## 0.2.41 - 2026-10-12
-
-### Fixes
-- **On a phone the on-screen pedals and wheel drive the bus again**: since 0.2.39 the accelerator, the brake, the clutch and the steering wheel lit up under the finger, but the bus never felt them - the fixed simulation step took the controllers' axes before the touch controls were added to them. The buttons and the menus were not affected ([#2442](https://github.com/openOMSI-org/openOMSI/pull/2442), by @thibautgnt).
-
-## 0.2.39 - 2026-10-12
-
-### New
-- **The simulation runs at a fixed 120 steps a second** on every computer and at every frame rate: the bus, the traffic, the passengers and the map's scripts move by the same steps at 30 and at 144 frames a second, and the bus and the camera are drawn between two steps, so the drive is the same however fast the picture is. The old step of one frame's length is gone (and with it `OMSI_FIXED_STEP`). A dedicated server steps 120 times a second too.
-- **The desktop launcher is the only launcher**: the game's own launcher window is gone. A plain start opens the desktop launcher; where it is missing or cannot open its window (no WebView2 on Windows, which is offered to be installed, no WebKitGTK on Linux) the game says why and where it should be. On iPhone and iPad the "Cross-Platform Launcher" option is gone with it.
-- **The launcher shows its Discord status again** ("In launcher"), while the setting is on, and leaves it to the game while a game starts or runs.
-- **The pause menu shows the game behind it**, dimmed, on its first page; Settings and the other pages keep a solid background. The row over the game (Paused, the sign, the buttons, the bus and the driver) is gone; the sidebar stays.
-- **Reflections on Enhanced+ have textures**: the windscreen, the rear window and other glass reflect the buildings, the trees and the buses with their real textures, not in plain colours.
-- **Choosing the line and the tour is a pair of lists with a search again**, a tour found by any stop of its trips ([#2414](https://github.com/openOMSI-org/openOMSI/pull/2414), by @thibautgnt).
-- **The Mods page gets back** cancelling an install, the archive's size check, filters, the content folder and dropping a mod anywhere ([#2412](https://github.com/openOMSI-org/openOMSI/pull/2412), by @thibautgnt).
-- **Swedish (Svenska)** is one of the interface's languages ([#2411](https://github.com/openOMSI-org/openOMSI/pull/2411), by @Equinity).
-- **A joined server sets the map, the clock, the weather and the buses** on the Drive page again ([#2408](https://github.com/openOMSI-org/openOMSI/pull/2408), by @thibautgnt).
-- **Running games shows the session code, the players and the chat** of a multiplayer game again ([#2407](https://github.com/openOMSI-org/openOMSI/pull/2407), by @thibautgnt).
-- **Settings, Updates, Choose a version** lists the releases and installs the one picked; an older version stays until the latest is chosen again ([#2393](https://github.com/openOMSI-org/openOMSI/pull/2393), by @thibautgnt).
-- **A door release action for any bus** (`doors_release`), beside the buses' own ([#2390](https://github.com/openOMSI-org/openOMSI/pull/2390), by @ThiBot77).
-- **Add binding lists every action again** (the installed buses' triggers, OMSI's names) and a controller's buttons can be given any of them ([#2387](https://github.com/openOMSI-org/openOMSI/pull/2387), by @thibautgnt).
-- **HTML textures can be lit surfaces**: `lit` after a page's path ([#2423](https://github.com/openOMSI-org/openOMSI/pull/2423), by @NACHN).
-
-### Performance
-- **The core was rebuilt without a rewrite**: the map's data the simulation reads is one snapshot read without locks (52 locked reads per frame are gone), the map objects' scripts run only near the bus and in parallel, traffic, passengers and the timetable tell the picture what changed instead of drawing it themselves, the frame's stages get only the parts of the game they declare, and the sound's callback takes no locks and allocates nothing. With `OMSI_SIM_THREAD=1` traffic, passengers and the map's scripts run on their own thread beside the drawing: 0.5-1 ms less on the main thread per frame, 6-10 % more frames on a busy processor (off by default for now).
-
-### Fixes
-- **Far headlights glow round**: lights seen from afar had a square halo, from the light's sprite and the bloom's square blur.
-- **The traffic's headlight glow stays on the car**: it was placed where the car was at the last simulation step, not where it is drawn, so it slid into the body of some cars and looked like flickering lamps.
-- **The desktop launcher looks for updates, offers them and installs them again** ([#2401](https://github.com/openOMSI-org/openOMSI/pull/2401), by @thibautgnt, fixes [#2309](https://github.com/openOMSI-org/openOMSI/issues/2309)).
-- **Joining a multiplayer game starts on the host's map** ([#2406](https://github.com/openOMSI-org/openOMSI/pull/2406), by @thibautgnt).
-- **A game that ends on an error or is sent away by its server says so again** in the launcher ([#2404](https://github.com/openOMSI-org/openOMSI/pull/2404), by @thibautgnt).
-- **A controller file that cannot be read is no longer replaced** by a device set up by itself ([#2398](https://github.com/openOMSI-org/openOMSI/pull/2398), by @thibautgnt).
-- **A force-feedback wheel pushes back again** beside a shifter or a button box set up by itself to steer ([#2421](https://github.com/openOMSI-org/openOMSI/pull/2421), by @thibautgnt).
-- **Steering keys at speed**: without Steering linearity a tap no longer swings the bus; past about 12 km/h the keys turn the wheel slower the faster it goes ([#2422](https://github.com/openOMSI-org/openOMSI/pull/2422), by @thibautgnt).
-- **Setup no longer saves an incomplete OMSI 2 folder** over the one that works ([#2397](https://github.com/openOMSI-org/openOMSI/pull/2397), by @thibautgnt).
-- **The profile's bar shows the progress within the level** ([#2396](https://github.com/openOMSI-org/openOMSI/pull/2396), by @thibautgnt).
-- **Current weather, Weather cycle and custom weather stay chosen** when the launcher opens again and for the next duties ([#2395](https://github.com/openOMSI-org/openOMSI/pull/2395), by @thibautgnt; [#2382](https://github.com/openOMSI-org/openOMSI/pull/2382), by @ThiBot77).
-- **Settings changed in the game are no longer put back by the launcher** ([#2394](https://github.com/openOMSI-org/openOMSI/pull/2394), by @thibautgnt).
-- **The bus picker's maker list shows the makers' whole names again**, and every drop-down's list is as wide as its longest choice ([#2420](https://github.com/openOMSI-org/openOMSI/pull/2420), by @thibautgnt).
-- **On a phone the pause menu's sliders follow the finger** and take a tap again ([#2381](https://github.com/openOMSI-org/openOMSI/pull/2381), by @thibautgnt), and **the trip summary can be closed** ([#2375](https://github.com/openOMSI-org/openOMSI/pull/2375), by @thibautgnt).
-- **Door keys no longer pair two different doors** (GPM C2, Urbanway, Citelis) ([#2380](https://github.com/openOMSI-org/openOMSI/pull/2380), by @ThiBot77).
-- **A quick menu tile or a failed quick load no longer pauses or resumes the game** on its own ([#2356](https://github.com/openOMSI-org/openOMSI/pull/2356), by @thibautgnt).
-
-## 0.2.38 - 2026-10-12
-
-### New
-- **Wheels, pedals and joysticks set themselves up**: a device nobody has set up is set up by itself as soon as it is used (a force-feedback wheel at once), in the game and on the launcher's Game controllers page: its X axis steers, every axis resting at an end of its travel is a pedal - throttle, brake and clutch in the order the device lists them, turned round when it reads the other way - and a joystick or a wheel with combined pedals drives with its Y axis. The set-up is saved like one made by hand and a notification says what was set up; before, such a device only steered and the pedals had to be set up by hand. Gamepads keep their ready-made layout.
-- **The game controllers page is back and redesigned**: live axes, buttons given by action, the step-by-step setup and the force feedback test ([#2347](https://github.com/openOMSI-org/openOMSI/pull/2347), by @thibautgnt).
-- **A live performance panel**, compact or detailed (Settings, Interface): where each frame's time goes, what holds the frame rate back, the processor's load and the last stutter ([#2329](https://github.com/openOMSI-org/openOMSI/pull/2329), by @thibautgnt).
-- **The Alt quick menu is a compact grid of icon tiles** off the screen's edge, see-through and in the game's language; Time and weather share one tile, Refuel and Wash have their own ([#2327](https://github.com/openOMSI-org/openOMSI/pull/2327), by @thibautgnt).
-- **The bus picker lists one row per model** with its versions folded under it ([#2326](https://github.com/openOMSI-org/openOMSI/pull/2326), by @ThiBot77).
-- **Current weather (METAR) and the weather cycle can be chosen again** in the launcher, with the airport ([#2313](https://github.com/openOMSI-org/openOMSI/pull/2313), by @ThiBot77).
-- **Buttons that set the start to the current time and date** are back, on the computer and on the phone ([#2334](https://github.com/openOMSI-org/openOMSI/pull/2334), by @thibautgnt).
-- **On a wide screen the Drive page spreads over two columns** and the bus preview is taller ([#2325](https://github.com/openOMSI-org/openOMSI/pull/2325), by @thibautgnt).
-- **Drop-down lists drawn by the launcher's page**, no longer as wide as their longest entry ([#2314](https://github.com/openOMSI-org/openOMSI/pull/2314), by @ThiBot77).
-- **The end-of-trip notice and other in-game messages in French** ([#2330](https://github.com/openOMSI-org/openOMSI/pull/2330), by @ThiBot77).
-
-### Performance
-- **The roundabout search is 2-5 times faster** at loading a map, finding the same roundabouts ([#2331](https://github.com/openOMSI-org/openOMSI/pull/2331), by @ThiBot77).
-
-### Fixes
-- **A line shows its two ends**: the launcher names a line by the first and last stop of its longest trip ("137 - Stadtgrenze - Falkensee Bhf"); it listed the termini of every short working and depot run one after another, which read as all its stops.
-- **Mod buses have their 3D preview again** (the EN92, the GN92 and other big buses): a bus whose preview was still loading when the launcher closed or a game started was taken for one that hung the launcher and left out for good. The launcher now lets the preview helper end in order and clears the mark itself; previews left out by an older version are tried again after every update ([#2352](https://github.com/openOMSI-org/openOMSI/pull/2352), by @SpicySpaceman); a bus whose preview fails no longer shows the bus chosen before ([#2349](https://github.com/openOMSI-org/openOMSI/pull/2349), by @SpicySpaceman).
-- **The bus preview no longer takes graphics memory from a game** started from the launcher on small graphics cards ([#2343](https://github.com/openOMSI-org/openOMSI/pull/2343), by @thibautgnt).
-- **The version is right on macOS and Linux too**: the launcher's About window and bundle, multiplayer games, the dedicated server's listing, plugins and the radio's requests said 0.1.0 or 0.2.33.
-- **The launcher's sliders**: the knob sits on the end of the coloured track; it stood beside it, by up to half its width.
-- **The Drive page follows the computer's clock** when the real time or date is on ([#2312](https://github.com/openOMSI-org/openOMSI/pull/2312), by @ThiBot77).
-- **The Time and Weather windows opened from the Alt quick menu** take the keys and the mouse again ([#2354](https://github.com/openOMSI-org/openOMSI/pull/2354), by @thibautgnt).
-- **A livery's tinted windows on an alpha-tested layer are blended**, not drawn black (GPM C2) ([#2339](https://github.com/openOMSI-org/openOMSI/pull/2339), by @ThiBot77).
-
-## 0.2.37 - 2026-10-12
-
-### New
-- **WebView2 installed from the launcher**: on a Windows without Microsoft WebView2 the new launcher cannot open its window; the game's own launcher then offers to install it with Microsoft's own installer, and opens the new launcher once it is there.
-- **The clock moves by a tap**: World options has -1 h, -10 min, +10 min and +1 h buttons beside the hour and minute, so the time can be moved on a phone too (typing the time needs Enter, holding it needs Ctrl+Shift+Page Up).
-
-### Fixes
-- **The new launcher shows the right version** on every system; it said 0.1.0.
-- **A tour can be picked and started on a phone**: in the pause menu's Line and tour the timetable with its Start button is under the list on a narrow screen; it was left out there, so a tour could only be marked.
-
-## 0.2.36 - 2026-10-11
-
-(0.2.35 was not released: its changes come with this version.)
-
-### New
-- **A new desktop launcher** (on Windows, macOS and Linux; on phones the same page in the app): the duty on one page - the map with its picture, the bus turning in a preview the game itself draws (drag to turn, wheel to zoom, sharp while it moves), paint, fleet number and depot, line, tour and trips with the route and its stops on the city map, time, date, season, weather and traffic - and Multiplayer, the driver's profile and runs, Mods, Settings, Controls, the running games and Setup. Calm graphite surfaces without outlines, one amber accent, Material Symbols icons, English unless another language is chosen. It stays open while a game runs and knows when a game has ended. Built on the organisation's fork of Tauri 2 ([tauri-openomsi](https://github.com/openOMSI-org/tauri-openomsi)). A plain start of openOMSI opens it; it needs WebView2 on Windows (part of Windows 10 and 11) and WebKitGTK 4.1 on Linux (`libwebkit2gtk-4.1-0`), and where it cannot start the game's own launcher opens instead.
-- **A launcher made for phones**: a rail of icons, the bus with the destination sign and Start, the duty as a list whose rows open full-screen pickers (maps as pictures, buses, lines, tours, trips beside the route map, time and date by steps, weather). On Android the game's own launcher is no longer made under it, so the app starts faster.
-- **openOMSI for iPhone, iPad and Mac** (built from the source with Xcode, see docs/APPLE.md): the game on iOS with touch controls inside the safe area, and a SwiftUI launcher in the same design.
-- **Inter instead of Roboto** everywhere: the game's interface, pause menu, navigator, chat, photo mode, the html pages and the destination signs' fallback text.
-- **A new loading screen**: the openOMSI logo large in the middle, the map's name under it, a striped bar along the bottom with tips on the left and how far on the right. The bar moves evenly along the time the last loads of the map took and the screen fades over the first pictures. The window opens dark, not blue.
-- **Notifications as cards** in the launcher's look, with an icon in their kind's colour; the notes in the top left corner are gone: what the driver has to do (engine, gearbox, parking brake, air, stop brake, doors, change, a passenger's wish) comes as a to-do card.
-- **Pause menu, navigator, city map and timetable window (Insert) redesigned** in the launcher's look: the pause menu with its sidebar, Material icons and a summary card; the navigator and city map with rounded corners and no dark halos; the timetable with the line on an amber sign and the stops as a table.
-- **Weather in the interface's language**: the presets are named as their file names them in that language, else in English with a translation, instead of in German everywhere.
-- **Photo mode moves with W A S D**, Space up, Ctrl down, Shift faster; the keys are shown in the panel.
-- **No dashes or raised dots in the interface**: a plain hyphen, a colon or a comma instead.
-
-### Performance
-- **Steadier frames**: the scenery scripts, traffic step and people run on the frame's thread with workers joining in instead of waiting for them (4.5 ms to 0.24 ms a frame for the scripts standing still on Spandau, and no more 20-70 ms frames from them); the population, timetable and people fill the map in different frames; far traffic light lamps update in turns.
-- **Less work per frame**: street lamps' shadow tiles kept while nothing in them changes, mirrors keep their draw bundles, smoke written only when it changed, sky and shadow passes spread evenly, Enhanced passes that cannot show are left out, tiles streamed in batches and a season change read a few tiles a frame.
-- **Frame limiter**: no sleep on top of V-sync and a real limit; mimalloc as the desktop allocator; the autosave written on a thread of its own.
-
-### Fixes
-- **Pedestrians no longer walk round and round a roundabout's pavement** or pile up there: they can turn into a path that meets theirs midway ([#2294](https://github.com/openOMSI-org/openOMSI/pull/2294), by @thibautgnt).
-- **Cars behind the bus at a red light wait with it**; after 10 s they went round it on the oncoming lane ([#2293](https://github.com/openOMSI-org/openOMSI/pull/2293), by @thibautgnt).
-- **Vanilla lighting no longer washes out** where lights overlap, **large textures no longer whiten** from their transparent pixels when they are scaled or compressed, and **invisible transparent faces no longer hide** what is behind them ([#2272](https://github.com/openOMSI-org/openOMSI/pull/2272), by @isaacsa2).
-- **Enhanced clouds**: a deck's underside shows its heaps instead of one smooth grey, and the clouds no longer jump every few minutes.
-- **Bus physics** take as many substeps as the frame's time needs instead of at least four a frame.
-
-## 0.2.34 - 2026-10-11
-
-### New
-- **The trip summary rates the trip**: five stars, a line on how the passengers felt, the trip at a glance (stops served, stops on time, distance, time driven, passengers) and gauges for driving, comfort and ticket selling above the table of stops, all in the game's language. It opens 5 seconds after the bus stops, so there is time to open the doors first ([#2263](https://github.com/openOMSI-org/openOMSI/pull/2263), by @thibautgnt).
-- **The launcher's start button says which multiplayer game it joins**: "Join Spandau 1" or "Join Thibaut's game" after joining a server or pasting a session code, instead of "Drive" ([#2262](https://github.com/openOMSI-org/openOMSI/pull/2262), by @thibautgnt).
-
-### Fixes
-- **Bus signals no longer freeze at the start of their cycle**: a traffic-light jump that lands where it started (Grand Paris-Moulon's TCSP17) is done once, not again every frame, so the bus signal reaches its next green ([#2265](https://github.com/openOMSI-org/openOMSI/pull/2265), by @YanisK33; [#2224](https://github.com/openOMSI-org/openOMSI/issues/2224), [#2266](https://github.com/openOMSI-org/openOMSI/issues/2266)).
-- **A scripted bus signal never shows red and green together**: when its script lights both, it stays red ([#2264](https://github.com/openOMSI-org/openOMSI/pull/2264), by @YanisK33).
-- **"Save the situation" can be continued**: the quicksave (Ctrl+S) is offered in the launcher's Continue on the map it was made on, beside the last situation and the slots; before, only a slot seemed to save ([#1746](https://github.com/openOMSI-org/openOMSI/issues/1746)).
-- **Winter textures without snow as in OMSI**: a map's winter of kind 4 ("winter with snow") shows its winter pictures like kind 3; the snowy ones come only with snow in the weather - they showed under a clear sky ([#2131](https://github.com/openOMSI-org/openOMSI/issues/2131)).
-- **Text textures with '@' line breaks are laid out as in OMSI**: the lines a font height apart and centred as a block, cut at both edges when it is taller than the texture; a text beginning with '@' (the New Lion's City's settings list) stood a line too low ([#1387](https://github.com/openOMSI-org/openOMSI/issues/1387)).
-- **The map's depot file stays assigned** to a bus that lacks it when it carries the line chosen; a depot of the bus's own folder with a line of the same number was taken instead ([#1837](https://github.com/openOMSI-org/openOMSI/issues/1837)).
-- **On foot without a bus, the navigator and the city map (Shift+M) work**, following the walker ([#2118](https://github.com/openOMSI-org/openOMSI/issues/2118)).
-
-## 0.2.33 - 2026-10-11
-
-### Changes
-- **Timetable buses vary from session to session**: a tour's bus is drawn from its depot with the session's seed, so a tour gets another of the depot's buses each time, as in OMSI (alike on every machine of a LAN game); the same bus ran each tour every time ([#2250](https://github.com/openOMSI-org/openOMSI/issues/2250)).
-- **Each cab camera keeps its own zoom**, as in OMSI, instead of one zoom for every camera of the view ([#2183](https://github.com/openOMSI-org/openOMSI/issues/2183)).
-- **Sun blinds work as in OMSI**: one pushed up by hand drops back to where it was pulled down to once it is let go; only its cord rolls it up. Before, every drag moved the blind's catch with it and it stayed wherever it was dragged ([#2146](https://github.com/openOMSI-org/openOMSI/issues/2146)).
-
-### Fixes
-- **Single railcars no longer crash the game**: a railcar with nothing coupled behind it (Thüringer Wald's AI trains) is put on its track without a panic ([#2259](https://github.com/openOMSI-org/openOMSI/issues/2259), [#2229](https://github.com/openOMSI-org/openOMSI/issues/2229)).
-- **The clutch, the throttle and the brake on a controller button work**: a button or trigger set to a pedal works it as the pedal's key does; the clutch on a wheel button did nothing ([#2029](https://github.com/openOMSI-org/openOMSI/issues/2029)).
-- **No more hitch every 5 seconds without a controller (Windows)**: with none plugged in, DirectInput is looked for again only in the first 30 seconds and then when Windows reports a new device, instead of every 5 seconds for the whole session ([#2213](https://github.com/openOMSI-org/openOMSI/issues/2213), [#2068](https://github.com/openOMSI-org/openOMSI/issues/2068), [#2159](https://github.com/openOMSI-org/openOMSI/issues/2159)).
-- **Parked buses stay where they were left**: a placed bus keeps its place while its tile is not loaded, and one saved under the ground is put back on it; they fell through the world when the player drove off and were saved kilometres down ([#2132](https://github.com/openOMSI-org/openOMSI/issues/2132)).
-- **Photo mode gives the time back**: a clock moved for a photo returns when photo mode is left, so the duty goes on at the time it stood at ([#2116](https://github.com/openOMSI-org/openOMSI/issues/2116)).
-- **The free camera keeps the horizon level** when taken over from the driver's view of a bus leaning on a slope; it went on with the bus's roll ([#2220](https://github.com/openOMSI-org/openOMSI/issues/2220)).
-- **The automated manual shifts past first gear** on buses whose script keeps the gear in a variable of its own (the gear up/down keys too): such a bus was seen in neutral after every shift and put into first again and again. The gate put in last is now taken as the gear when the script's variable does not follow it ([#1832](https://github.com/openOMSI-org/openOMSI/issues/1832); reports on the O305 Schaltwagen and the Citybus i280 are welcome).
-- **Articulated buses' rear sections sit higher**: a rear section on one axle hangs the share of its weight ahead of that axle on the joint, which presses the front section down there, as OMSI's joined bodies do; its axle carried all of it and sat that much deeper on its springs (0.6 of the GN92 rear section's 7.2 t). Right after the start the GN92's rear section still stands lower until its level control has filled its bellows, as the stock script has it ([#1835](https://github.com/openOMSI-org/openOMSI/issues/1835)).
-- **The NL/NG wheelchair lift and ramp work at petrol stations**: the scripts' ground sensor (`GetHeightAbovePoint`) measures down to the ground under the point, not to the highest face there - under a canopy that was its roof, so the lift would not go down and the ramp turned on its side and vanished ([#2205](https://github.com/openOMSI-org/openOMSI/issues/2205)).
-
-## 0.2.32 - 2026-10-11
-
-### Fixes
-- 0.2.31 was never published: its Windows x64 build stopped at a check of the shaders that read Windows' line endings (not the game itself). 0.2.32 is 0.2.31 for every platform - see below for what it brings.
-
-## 0.2.31 - 2026-10-11
-
-### New
-- **openOMSI heals a broken start by itself.** A release that crashes or hangs before the launcher's window used to strand everyone - the updater lives in the launcher, so a launcher that never opened never updated (0.2.28 on Windows had to be downloaded again by hand). Now the program's very first act is a small watcher without a window; if the launcher crashes, ends on an error or has not drawn its first frames after two minutes, it is healed on its own: a newer release is installed (its program must start before it replaces anything), else the version before the last update - kept until the new one has started well - is put back, else it starts once more in safe mode (basic graphics, no plugins), else a message says what to do. Each step is said in a message box in the game's language. A version that failed is never installed again on that computer, and the project can list a broken release (`release/health.json`) so that it is replaced at the next start even when it starts. A crash in the middle of a drive changes nothing. `OMSI_NO_GUARD=1` switches it off (see the user guide, "When a version does not start").
-- **Mirror panels every frame**: a switch in Settings → Graphics (off by default) draws the mirror panels in the cab (Ctrl+M) every frame, as ETS2 draws its screen mirrors, so the street no longer jerks past in them ([#2209](https://github.com/openOMSI-org/openOMSI/pull/2209), by @m3rlinek01).
-
-### Changes
-- **AI traffic drives more smoothly**: brake lights with hysteresis and a minimum time lit (no flicker), gentle braking eased in, bends taken at 1.2 m/s² and slowed for from further back, AI buses steer into turns with a shorter look-ahead and a quicker wheel, and the AI horn is heard (OMSI's own `Sounds/AI_Cars` horn where a car's sounds have none on `ev_AI_Horn`).
-- **Emergency vehicles on a drive are faster**: 1.5 times the limit, at most 30 km/h over it, pulling away harder and taking bends harder.
-- **The trip summary waits until the bus stops**, so it no longer takes the mouse and the pedals while the bus pulls into the last stop ([#2240](https://github.com/openOMSI-org/openOMSI/pull/2240), by @Dasteee; #2227, #2236), and **fits a phone's screen** instead of spilling past its edges.
-- **Spline rows as Omsi.exe draws them**: the objects of a row that reach past their tile's edge are drawn again (the far side of the parked cars along a Berlin-Spandau street crossing a tile border; [#2249](https://github.com/openOMSI-org/openOMSI/pull/2249)), and a row whose first object lies before its own spline is not drawn, whatever its lateral offset ([#2238](https://github.com/openOMSI-org/openOMSI/pull/2238); both by @NACHN, checked against Omsi.exe).
-- **Under the hood**: the program is split into 33 parts with clear layers - the launcher, input devices, VR, LAN play, platform services, weather, career, soundscape, the world, the scene, photo mode and the HTML displays each in their own crate, the renderer's 10,000-line core cut up by concern, the vehicle and the script host by subsystem, the frame as one declared list of stages for the window and the offscreen run. What is drawn, heard and simulated is unchanged (checked picture by picture, sound by sound and with every test); a check on every pull request keeps the layers apart.
-
-### Fixes
-- **Destination displays that only their model names a variable for show again** (the Enviro500's `DPIP_8words`): a variable a model's `[visible]` uses is registered even when no varlist declares it ([#2217](https://github.com/openOMSI-org/openOMSI/pull/2217), by @shamough1792).
-- **A second drive in the same program** (Android starts one from the launcher, a lost graphics device restarts the renderer) no longer inherits the last one's state: corona and spotlight pictures were missing on the second renderer, a duty after one begun on the real time could not move the clock to its first trip, a map opened for a duty start could be taken over with its old state, the map lights and fading lamps of the previous map, the photo mode's settings, passengers' lines and a LAN `/admin` password carried over, and a LAN rejoin said hello twice.
-- **With mirrors on, the window's draw lists are reused again** from frame to frame (a mirror pass threw them away every frame).
-- **Offscreen recordings (`OMSI_RECORD`)** fade sounds in by the film's time, not the wall clock, so a recording comes out the same every time.
-
-## 0.2.30 - 2026-10-11
-
-### Changes
-- **Clouds: an overcast sky is a dark deck with its own heaps in it** instead of a flat pale sheet. A few fair-weather clouds keep the light bases they had; as the cover rises past about 55 % their undersides go darker, towards the grey of a storm, and a shut sky or rain is drawn by the deck itself (Enhanced; [#2198](https://github.com/openOMSI-org/openOMSI/pull/2198), by @NACHN).
-- **All platforms again**: 0.2.29 came out for Windows only; 0.2.30 is built for Windows, macOS and Linux (x64 and ARM64), Android (arm64) and the dedicated servers.
-
-### Fixes
-- **Spline rows no longer draw objects Omsi.exe drops**: a row's objects that fall outside their own tile, and a row written along the carriageway that starts before its chain - on Grundorf Island 4's interchange, bridge piers no longer stand in the road. Rows of `[absheight]` objects stay wherever they fall, as single objects do ([#2194](https://github.com/openOMSI-org/openOMSI/pull/2194), by @KYChung1287; #787).
-- **Objects a map tags as a surface stay behind what stands beside them at a distance**: the pull towards the eye that keeps road markings over the road stops growing at 5 cm, so a traffic light's pole no longer draws across its signal head from tens of metres away; markings, crossings and kerbs keep their depth near the camera ([#2197](https://github.com/openOMSI-org/openOMSI/pull/2197), by @NACHN; #1694, #1196).
-
-## 0.2.29 - 2026-10-10
-
-### Fixes
-- **Windows: the launcher opens again.** In 0.2.28 its window stayed hidden until its first picture, and Windows never asks a hidden window to draw, so the launcher never appeared. If you installed 0.2.28 on Windows, download 0.2.29 by hand: that launcher cannot update itself.
-
-## 0.2.28 - 2026-10-10
-
-### New
-- **AI traffic reworked.**
-  - It runs in fixed steps of 20 ms whatever the frame rate, and the cars are drawn between the steps, so they glide at 144 Hz as at 30 and decide the same at any frame rate. Each session's traffic differs (OMSI_SEED=n repeats one).
-  - Junctions: a car keeps the way it took until its tail is through, room on an exit is promised to one car at a time, nobody follows a standing queue into a junction, a left turn at a signal pulls in to wait for the oncoming traffic, a priority sign beats an early claim from the side road, roundabouts give the ring the right of way where the map sets none, and `[crossingproblem]` works as in OMSI. Cars waiting for each other in a circle are found and let go safely instead of by timers.
-  - Lane changes: one decision per car with the whole move checked against cars, people and the scenery, one car into a lane at a time, no back-and-forth, cars leave a lane that turns into a bus lane, and passing on the other half of the road gives up if somebody comes.
-  - Bodies and braking: a separate emergency braking channel, the car's plan follows where its body really is, and cars stop before the scenery's walls and steer round corners instead of driving into them.
-  - Bus stops: berths taken in turn, docking within tolerances, missed stops recorded, the doors close with the script's answer, and a bus serves a stop from behind one on its layover.
-  - Fewer emergency brakes, close calls and stuck cars than before; random cars give up only after 200 s standing, as in OMSI.
-  - **Emergency vehicles** (a car whose script sets `TrafficPriority`, the player's bus or a LAN player's too): the cars on its way pull over or open a corridor, it gets the junction and crosses a red light at walking pace, never through cars, people or a full exit. `TrafficPriorityWarningNeeded` follows OMSI's rule.
-  - **AI cars honk** when somebody stops sharply in front of them or blocks them for long, and sometimes get honked back (`ev_AI_Horn`).
-- **Developer tools** (Ctrl+Shift+D): watch, set and hold a vehicle's script variables, overlays for paths, seats, boxes, axles, lights, mirrors and views, a mirror editor, and hot reload of `.bus`, paths, `sound.cfg`, `model.cfg` and constfiles.
-- **Quick menu** on a tap of Alt, as in OMSI 2 (12 tiles, the game keeps running).
-- **Trip summary** at the end of a trip: every stop with the times planned and driven and the odometer, to copy or save (Settings → Gameplay → *Trip summary*).
-- **View editor** (Options → Camera → *Edit the view and mirrors*): eye position, direction, field of view and each mirror, saved for the vehicle.
-- **Destination form**: a route number and two lines of free text for script-drawn displays.
-- **F4 map**: a click asks whether to move the vehicle there, anywhere on the map.
-- **Bus radio** sounds from the cab, with optional small-speaker, FM hiss and dropout effects (Settings → Sound), and the scripts can read the station and the song (`GetRadioName`, `GetRadioSong`).
-- **Headlamp shadows**: the bus's own headlights cast shadows (Enhanced).
-- **`[spotlight_cookie]`**: a vehicle lamp can carry a picture of its beam; **`[led_glow_effect]`**: a model sets its LED glow per material. Both are documented in FORMATS.md and MODDING.md.
-- **Configurable door buttons on phones** ([#2134](https://github.com/openOMSI-org/openOMSI/pull/2134), by @isaacsa2).
-
-### Changes
-- **Faster starts.** The game's window shows its loading screen at once and stays responsive while the shaders are built; the launcher draws its page from the first frame and loads the 3D preview after it.
-- **Less work per frame**: the script engine, the AI cars' sounds and materials, the timetable paper, departure boards, scenery scripts, the light grid, ray tracing (Enhanced+, about half the CPU time), render bundles and texture lookups; the settings file is read once.
-- **Smooth view changes as in OMSI**, and the steering follow only in the standard driver's view.
-- **`Velocity` is the driven wheels' speed** (wheelspin and locked wheels show in it), `Velocity_Ground` the body's, as in OMSI.
-- **Choosing a duty no longer types into the IBIS or the roller blind**, as in OMSI 2 (Shift+U and `--autostart` still do). `GetTTDelay` is whole seconds.
-- **Clouds**: a deck's underside keeps the shape of the heaps it is made of ([#2171](https://github.com/openOMSI-org/openOMSI/pull/2171), by @NACHN).
-- **Low sun**: rough roads no longer glare; Enhanced paint reads its reflection map as OMSI does, and windows with one show the lamp-lit street at night.
-- **Integrated GPUs get the texture memory their driver reports** ([#2115](https://github.com/openOMSI-org/openOMSI/pull/2115), by @anonchan958).
-- **Outside sounds are muffled in the closed cab**, and the cab and street sounds crossfade as you walk in or out.
-- **Rail vehicles follow tracks and grades more precisely** ([#2122](https://github.com/openOMSI-org/openOMSI/pull/2122), by @Maarceeli).
-- **Text fields** in the launcher: selection, word-wise moves, copy, cut and paste.
-
-### Fixes
-- **Photo mode: a steering wheel no longer turns the camera.** While it is open the wheel, the pedals and a joystick do nothing; its camera listens to a gamepad only.
-- **Scenery drawn as a surface layer keeps its cut-out picture** instead of being eaten by the road under it, the parked buses of the Hong Kong maps for one ([#2142](https://github.com/openOMSI-org/openOMSI/pull/2142), by @KYChung1287).
-- **Windows: no white rectangle at a session's start.** The window is shown only once it has a picture.
-- **Android: the launcher starts much faster** and no longer shows the wallpaper before it; a start cut short still saves the shader cache.
-- **DirectX 11 (ANGLE): the launcher draws again** instead of a black window ([#2140](https://github.com/openOMSI-org/openOMSI/pull/2140), by @isaacsa2).
-- **Crossed-card trees face the way OMSI turns them.**
-- **LED matrices with `[matl_alpha]` after `[matl_change]`** no longer show every dot lit.
-- **Clear glass**: no grey veil from lamps, and displays behind it no longer ghost ([#2161](https://github.com/openOMSI-org/openOMSI/pull/2161), by @SpicySpaceman).
-- **Instrument backlights** are readable at night with the lights on ([#2127](https://github.com/openOMSI-org/openOMSI/pull/2127), by @shamough1792).
-- **Bus stop displays show the timetable's destination** ([#2125](https://github.com/openOMSI-org/openOMSI/pull/2125), by @SpicySpaceman).
-- **Tunnel entrances** are no longer walled off by stretched terrain ([#2130](https://github.com/openOMSI-org/openOMSI/pull/2130), by @juanjopuntcat; #1472).
-- **A mod's lowercase `texture` folder no longer hides the original's textures** on Linux ([#2119](https://github.com/openOMSI-org/openOMSI/pull/2119), by @artemix1508).
-- **Linux force feedback for wheels without a gilrs mapping** ([#2168](https://github.com/openOMSI-org/openOMSI/pull/2168), by @YanisK33).
-- **Android: the pause menu scrolls by touch again** ([#2139](https://github.com/openOMSI-org/openOMSI/pull/2139), by @isaacsa2; #2108).
-- **`[illumination_interior]` lists** ignore -1, out-of-range and repeated lamps.
-- **Wheel spray** no longer shows inside the cab.
-- **The "playing now" service and the PR build comments are hardened against bad input** ([#2151](https://github.com/openOMSI-org/openOMSI/pull/2151), by @isaacsa2).
-
-## 0.2.27 - 2026-10-10
-
-### New
-- **Ambience from real recordings** (Settings → Sound → *Ambience*, on by default, with its own volume).
-  - The place you drive through: town, courtyard, suburb and village, the motorway and the railway in the distance, tunnels.
-  - Nature by season and hour: the dawn chorus, woods, fields, crickets, water and frogs, and 22 species of birds.
-  - The weather: rain by how hard it falls and what it falls on, drips after it, snow and blizzards, wind in leaves, conifers, bare branches and wires, thunder over a warm shower (none in a snowfall).
-  - The life of the town: sirens, aircraft, doors, the bin lorry, lawnmowers, and fireworks from five to twelve on New Year's Eve.
-  - Churches, schools, shops, stations, farms and other places the map's authors marked as such, each at its own hours. OMSI 2's own sound objects keep their sounds.
-  - The recordings (about 300 MB, all CC0, CC BY or CC BY-SA, credited in their `CREDITS.md`) are downloaded once by themselves the first time the launcher or the game starts with the ambience on, into `~/.openomsi/ambience`. They play from the next drive on. Not on Android yet.
-- **The Mods page shows what each mod holds.** The arrow on a mod's row opens its contents folder by folder (Vehicles, Fonts, Texture, ...), and the row lists how many items each folder has.
-
-### Fixes
-- **Poles, signs, street lamps, traffic lights and fences no longer sway in the wind.** OMSI's street objects are grouped as "German Street Side", and the word "street" was read as holding "tree". They also no longer take the plants' autumn and winter looks.
-- **AI traffic no longer jams at junctions without traffic lights.** A car standing third in a queue took the right of way as if it waited at the line, the car across the junction waited for it while the queue waited for that car, and nothing moved until a car was taken away after 200 s (Spandau).
-- **A mod's fonts and textures belong to it.** What a mod puts into a folder all mods share (a pack's fonts in Fonts, its textures in Texture) is now noted as its own, so it shows in the Mods page and goes when the mod is switched off or deleted. Fonts and textures put there by hand are listed together, one entry per folder.
-- **The "playing now" count is the same on the website and in the README.** The count is taken once every ten minutes, on the clock, and both show that one. The website picks up the next count as soon as it is there, and the README badge within five minutes more because of GitHub's cache.
-
-## 0.2.26 - 2026-10-10
-
-### New
-- **Photo mode** (pause menu → *Photo mode*, Ctrl+F12 or the `photo_mode` key). It replaces the menu's Screenshot.
-  - The game stops and a camera of its own flies freely or orbits the bus (WASD, Q/E, mouse or right stick to look, wheel to zoom, Z/X to roll).
-  - A real lens: focal length from 10 to 400 mm, depth of field from the aperture and the focus (on the bus or set by hand), round or bladed bokeh.
-  - A rolling shot: the shutter blurs the street and turns the wheels while the bus stays sharp.
-  - A darkroom (exposure, contrast, highlights, shadows, saturation, temperature, tint), film looks, grain, vignette, frames of any aspect ratio with composition guides, and the clock moved for another light.
-  - Photos are saved as PNG into `Screenshots`, at the window's size or double. The note that says where it went opens the folder with the photo selected when clicked (Finder, Explorer, the file manager). On Android the photo goes straight into the gallery.
-- **The pause menu is drawn like the launcher**: its rail with Resume first, and the settings and lists as launcher pages with the same fields, switches and sliders. The keyboard works it as before.
-- **Procedural passenger animation as an option** ([#2101](https://github.com/openOMSI-org/openOMSI/pull/2101), by @isaacsa2). Settings → Gameplay → Passengers → *Passenger animations*: *Procedural (experimental)* plants the feet on the floor and the steps, seats people on their seats and lets standing riders hold the rails. *Original OMSI* stays the default.
-- **Clouds cover the sky by a continuous amount** ([#1360](https://github.com/openOMSI-org/openOMSI/pull/1360), by @NACHN). A cloud cover slider in the launcher, the phone layout and the game's weather page, carried smoothly across weather changes.
-
-### Changes
-- **Looking round with the mouse is smooth.** While the right (or middle) button is held, the cursor stays where it is and shows OMSI's four arrows, and the view turns by the mouse's own movement. It no longer stops at the edge of the screen, jumps when the button comes up, or loses the steering cross with mouse steering on. The photo mode's camera turns the same way.
-- **Plain text in the interface**: separators are `|`, dashes `-` and ellipses `...`. The photo mode's line of keys and the pause menu's key hint are gone.
-- **Passengers take a free seat first** and stand only by chance (Settings → Gameplay → *Standing passengers*, 5 % by default) or once the seats are full ([#2063](https://github.com/openOMSI-org/openOMSI/pull/2063), by @SuSeu1414).
-- **Logitech G923 force feedback** pushes the right way, and a gentle centring spring holds the wheel while parked ([#2065](https://github.com/openOMSI-org/openOMSI/pull/2065), by @atzock).
-- **The destination menu shows the HOF's names**, as OMSI's own list does ([#2081](https://github.com/openOMSI-org/openOMSI/pull/2081), by @SpicySpaceman).
-- **Less GPU work on slow machines**: the launcher no longer redraws an unchanged picture while idle ([#2097](https://github.com/openOMSI-org/openOMSI/pull/2097)), and the navigator is drawn every other frame at most where frames are slow ([#2096](https://github.com/openOMSI-org/openOMSI/pull/2096), both by @isaacsa2).
-
-### Fixes
-- **DirectX 11 (ANGLE) draws again** ([#2095](https://github.com/openOMSI-org/openOMSI/pull/2095), by @isaacsa2). Shadows without `textureGather` on OpenGL ES 3.0 class devices, the pipelines compiled on a thread of their own, colours no longer too dark, and the card's memory read from DXGI.
-- **Snowfall on DirectX 12.** The snowfall, the lamps in the fog and the street lamps' shadows are now each made on their own: a driver that fails on one of them leaves out only that one (one of them took the snowfall off DirectX 12). A reduced set remembered for a graphics card is tried again with every new version, so snow that went missing comes back.
-- **Bus reflections follow the light.** The `[matl_envmap]` reflection photo is lit by the light that is there now, so at night, at dusk and under a closed sky the bus no longer mirrors a sunny day (Vanilla, Vanilla+).
-- **Photo mode no longer flashes black**, and the photo is shown only once it is of the camera as it stands.
-- **Passengers who got off where there is no pavement walk on** from the nearest pavement instead of standing still for good ([#2102](https://github.com/openOMSI-org/openOMSI/pull/2102), by @isaacsa2).
-- **Timetable buses no longer jump route gaps** or block the stops in between ([#1995](https://github.com/openOMSI-org/openOMSI/pull/1995), by @pcy200409).
-- **Street lamps with a built-in light no longer shadow themselves** ([#2050](https://github.com/openOMSI-org/openOMSI/pull/2050), by @SpicySpaceman).
-- **LED destination displays are bright again** ([#2045](https://github.com/openOMSI-org/openOMSI/pull/2045), by @SpicySpaceman).
-- **A destination chosen while the display is still changing** waits for it, and the newest choice wins ([#2071](https://github.com/openOMSI-org/openOMSI/pull/2071), by @SpicySpaceman).
-
-## 0.2.25 - 2026-10-09
-
-### Fixes
-- **Snow chosen while driving now covers the ground in Vanilla and Vanilla+.**
-  - Switching to a snowy weather mid-game already brought the falling snow and the winter textures on the roads, objects and trees.
-  - The plain ground kept its summer grass, because the material all tiles share was only made once. It is now made again for the new season's textures.
-  - Enhanced hid this under its own snow cover.
-- **Destination displays no longer show every variant at once.**
-  - Some buses stack several versions of a sign (other fonts or letter styles) as separate meshes and switch them by a variable they never declare.
-  - Omsi.exe creates such a variable at 0 when it reads the model, so only the variant for 0 shows. openOMSI used to leave all of them visible, faded over the correct one.
-  - Undeclared `[visible]` and `[alphascale]` variables now read 0 on vehicles and scenery objects, and `Colorscheme` is always available to a vehicle's model.
-- **AI cars no longer back up at junctions made of very short road pieces** ([#2041](https://github.com/openOMSI-org/openOMSI/pull/2041), by @SpicySpaceman). Two short paths linked both ways could send a car back onto the one it had just left. The cars now never choose that return. Seen on TH_Wald and Hamburg109.
-
-## 0.2.24 - 2026-10-09
-
-### New
-- **Rain quality setting.** Rain is expensive to draw, so Graphics → *Rain quality* (in the launcher and in the game) now sets how much of it is drawn.
-  - **High** (the default) is as before.
-  - **Medium** paints the drops on the glass 15 times a second instead of 30, keeps only your own bus's spray and draws half the falling streaks.
-  - **Low** shows OMSI 2's own texture rain on the glass (from the next bus you load), so there are no drops to simulate and no extra copy of the picture. It throws no spray and draws a quarter of the streaks.
-- **Trams** ([#1793](https://github.com/openOMSI-org/openOMSI/pull/1793), by @Maarceeli).
-  - Multi-car trams and trains follow the track on both bogies, and each car of a consist hangs where it should.
-  - A tram is put on the track running its own way, not the one beside it.
-  - Driving against the track's direction no longer flips the vehicle round.
-  - Rail vehicles' shadows lie flat.
-  - Drivable rail vehicles with a front coupler appear in the vehicle list.
-  - Consists that come back round to their first part (the eleven-part NF6D) are loaded whole.
-- **Clickable scenery objects** ([#1793](https://github.com/openOMSI-org/openOMSI/pull/1793)). Switches and buttons on scenery objects (`[mouseevent]`) can be clicked, dragged and turned with the wheel.
-- **More for html pages** ([#1992](https://github.com/openOMSI-org/openOMSI/pull/1992), by @pcy200409).
-  - Departures now say how many stops away each bus is, how full it is, how late it runs and whether it is the last trip of the day.
-  - Pages can read the weather and the depot's destination strings.
-- **Korean, Chinese and Japanese text on html pages** ([#1991](https://github.com/openOMSI-org/openOMSI/pull/1991), by @pcy200409). Characters the built-in font lacks are drawn with Malgun Gothic on Windows or AppleGothic on macOS, or with any font set in `OMSI_HTML_FALLBACK_FONT`.
-
-### Changes
-- **The ambience is removed.** The synthesised wind, leaves, raindrops, thunder, birds, crickets, town hum and tyre sounds added in 0.2.21 are gone, together with their settings. OMSI 2's own sounds play as they always did, and the bus scripts still learn what each wheel rolls on (`Axle_SurfaceID`).
-
-### Fixes
-- **Objects placed along a spline** stand where the map puts them, without gaps or overlaps where a row crosses into the next tile ([#2032](https://github.com/openOMSI-org/openOMSI/pull/2032), by @KYChung1287). This covers bridge piers, street lamps, catenary masts, fences and road markings.
-- **Scenery shows its own textures** ([#2006](https://github.com/openOMSI-org/openOMSI/pull/2006), by @KYChung1287). A texture missing from an object's folders is no longer borrowed from another folder (a gantry wearing the pack's stock sign, a plate wearing asphalt). Fully opaque sign pictures no longer fade into the background.
-- **Steam overlay** opens with Shift+Tab, because Steam now starts before the graphics and the window ([#2001](https://github.com/openOMSI-org/openOMSI/pull/2001), by @shamough1792).
-- **The French menu title** is plain "openOMSI" ([#2024](https://github.com/openOMSI-org/openOMSI/pull/2024), by @Showtc).
-
-## 0.2.23 - 2026-10-09
-
-### Changes
-- **The previous launcher is back.** The launcher rebuilt in 0.2.22 is withdrawn; openOMSI opens the launcher of 0.2.21 again, with every page, the phone layout and the settings as they were (the ambience's switch and volume stay under Settings → Sound).
-- **The Mods page of 0.2.22 lives on in it.** It still lists every installed mod and every item found in the content folder, with its kind, size and install date. You can search, filter by buses, maps, archives, other and switched-off mods, switch each mod off and on, and delete it after a confirmation. The list follows installs as they finish.
-
-### Fixes
-- **The ambience no longer crackles.** Raindrops on the ground, drips from the trees after rain and drops into puddles were single sharp clicks that hit the layer's limiter, so the ambience sounded like eating crisps. Each drop is now a soft tick, and the limiter recovers in 80 ms instead of 0.4 s, so it no longer ducks the whole layer after each one.
-- **Leaves rustle instead of crunching.** A tree's leaves knock against each other thousands of times a second, but there were far too few, too loud clicks. Autumn's dry leaves (from late September) made a crisp-packet crackle. The rustle is now dense and soft, and still grows with the wind and the trees around.
-- **Ending the launcher while a bus's preview is being placed** no longer leaves that bus out of the previews from then on.
-
-## 0.2.22 - 2026-10-09
-
-### New
-- **A new launcher.** Every page is built anew on `egui_retained`, the retained-mode interface of the org's egui fork, in the look of the Development Tools: a header, a sidebar, cards and a status bar, dark or light. The Drive page has three steps (the bus, the day and the weather, the map and the duty) with the bus turning on its stage and the map with its stops and times. Settings come as six tabs, and the Controls page holds the keyboard bindings with their action picker, the game controllers with live axes, the set-up assistant and the force-feedback test. Multiplayer, Profile, Sessions, Tutorials, Timetable and Setup are rebuilt too, and so are the update, crash, disconnect and reset dialogs. On a phone or in a narrow window it has a tab bar, a Play screen and full-screen sheets; lists scroll with a finger and a pinch zooms the bus.
-- **The Mods page lists every mod.** Each one can be switched off and on, or deleted after a question; search and filters cover buses, maps, archives and switched-off mods. Each install is noted with the folders it made, and anything in the content folder without a note is listed by itself. Installing an archive or a folder, dropping it on the window and following the installs stay on the page.
-- **Ambience.** Wind and gusts, rustling leaves, rain drops on the ground, in puddles and on the glass, thunder, birds, crickets and the town's far hum are synthesised live from the weather, the time, the season and the place. The tyres sound by the surface under each wheel (asphalt, concrete, cobbles, gravel, dirt and mud, grass, snow, wet road, puddles), and the trees drip after the rain. It is heard muffled through the bodywork inside a bus. Switch it off and set its volume under Settings → Sound.
-- **Plugins.**
-  - **Lua API.** One API registry serves every plugin language, with 271 functions and 59 events: the bus, the AI traffic and the people; the duty, the timetable and the map; time, weather, camera, input and sound; the game and the LAN.
-  - **Plugin panels.** Panels get checkboxes, sliders, text fields, tabs, charts, tables, pictures and dragging.
-  - **WebAssembly plugins.** They run sandboxed, with fuel and memory limits.
-  - **Compiled `.oop` plugins.** They are encrypted, signed and sandboxed, and are made with the new [openOMSI Development Tools](https://github.com/openOMSI-org/openOMSI-Development-Tools) (the plugin workbench with the API documentation and the compiler, for Windows, Linux and macOS).
-  - **Docs.** The plugin docs cover every API group, with three complete example plugins.
-- **AI traffic jams far less.**
-  - No car drives into a junction it cannot leave.
-  - Rings of cars waiting on each other are broken.
-  - A driver who has waited long at a busy main road gets across.
-  - Cars take turns where two lanes become one.
-  - Lane changes look out for the player's and the LAN players' buses.
-  - Cars that gave up count towards the population, so it no longer grows until the town locks.
-  - In open country, where nothing hides a car, the traffic no longer dies out.
-
-  On Spandau with 120 cars, the cars standing for over a minute fell from 41-77 to 10-21.
-- **Vanilla and Vanilla+ sky as in Omsi.exe.** The weather's own cloud texture lies on its cloud cone, the haze comes from the fog range and the cloud height, and the dome's pictures blend by the sun's height.
-
-### Fixes
-- **Sun shadows.**
-  - A tent filter reads every texel under it, so a lit gap no longer shows as an X of magnified texels ("Minecraft" squares) and the edges stop shimmering.
-  - The cascades snap to their own map's texels, so the shadows round the bus no longer tremble while it moves.
-  - Enhanced+ soft shadow edges no longer crawl with a checker pattern.
-- **Sky**: the clouds keep their outline from one mip level to the next; something white no longer vanishes at the line where the sky goes over to a smaller level.
-- **Enhanced, wet roads**: the headlamps are reflected by the road's film of water - a short gleam on the asphalt and their image in puddles - instead of an endless white line down to the camera; drops in the bus's own beams are no longer a hundred times too bright.
-- **Double-deckers**: the player walks the upper deck instead of standing stuck at the top of the stairs.
-- **LAN**: a player who gets out of the bus keeps the figure they drove in instead of a random passenger's.
-- **Faster on the CPU**:
-  - The vehicle lights take no lists, keys or locks per lamp per frame.
-  - The smoke is sorted by its keys, with the light grid and the sorting lists kept between frames.
-  - Shadow casters ask which maps they fall into before their materials.
-  - The scenery scripts find their emitters' objects in one pass.
-- **The launcher**: a bus's 3D preview is no longer left out for good when the launcher was closed while the preview loaded.
-- **Apple M4**: the scene shaders build again, so 4x MSAA, the snowfall, the lamps in the fog and the street lamps' shadows are back.
-- **Links**: the project moved to [github.com/openOMSI-org](https://github.com/openOMSI-org/openOMSI) and [openomsi.org](https://openomsi.org/).
-
-## 0.2.21 - 2026-10-08
-
-### New
-- **Mouse steering**: a switch to leave the cursor free while the mouse steers - the system's crosshair without the frame's delay, the window's edges as the lock, as in OMSI [#1948](https://github.com/openOMSI-org/openOMSI/issues/1948).
-- **Pipeline cache**: the graphics driver's compiled pipelines are kept between starts on Vulkan and OpenGL, so the game starts faster from the second run on.
-- The game opens on the screen the launcher stands on, fullscreen too, instead of always on the main screen [#1959](https://github.com/openOMSI-org/openOMSI/issues/1959).
-
-### Fixes
-- **Timetable**: school runs run on school days again - bit 8 of a tour's days is the school days and bit 9 the school holidays, as in Omsi.exe; they ran only in the holidays [#1883](https://github.com/openOMSI-org/openOMSI/issues/1883).
-- **Timetable**: the delay shown on the way between two stops follows where the bus is, as OMSI's IBIS shows it, instead of standing still until the next stop [#1898](https://github.com/openOMSI-org/openOMSI/issues/1898), [#735](https://github.com/openOMSI-org/openOMSI/issues/735).
-- **Sound**: an entry with a `[volume]` over 1 plays at its full volume from its first moment, no longer held at what its curve gave it while it was silent [#1851](https://github.com/openOMSI-org/openOMSI/issues/1851), [#611](https://github.com/openOMSI-org/openOMSI/issues/611), [#1268](https://github.com/openOMSI-org/openOMSI/issues/1268), [#1311](https://github.com/openOMSI-org/openOMSI/issues/1311), [#1515](https://github.com/openOMSI-org/openOMSI/issues/1515), [#1900](https://github.com/openOMSI-org/openOMSI/issues/1900), [#1418](https://github.com/openOMSI-org/openOMSI/issues/1418).
-- **Sound**: riding in an AI bus on foot it is heard from the inside, and in another player's bus the outside comes in through what that bus has open [#1286](https://github.com/openOMSI-org/openOMSI/issues/1286), [#1759](https://github.com/openOMSI-org/openOMSI/issues/1759).
-- **AI buses**: passengers at the doors hold a bus at most a minute past its departure; somebody standing at a door the bus never opens no longer keeps it at the stop for good [#1801](https://github.com/openOMSI-org/openOMSI/issues/1801), [#1697](https://github.com/openOMSI-org/openOMSI/issues/1697), [#1544](https://github.com/openOMSI-org/openOMSI/issues/1544).
-- **Automated manual gearbox**: it shifts up below the speed the governor holds the engine at, so a low-revving diesel no longer stays in first gear [#1832](https://github.com/openOMSI-org/openOMSI/issues/1832).
-- **Enhanced+ reflections**: no hard seam where the reflected street leaves the screen, leaves seen through their gaps without specks, and a smooth pane's rays evened out with their neighbours' [#1907](https://github.com/openOMSI-org/openOMSI/issues/1907), [#1720](https://github.com/openOMSI-org/openOMSI/issues/1720), [#1795](https://github.com/openOMSI-org/openOMSI/issues/1795).
-- **Weather**: snow and wetness stay out of the rear section of the player's articulated bus as well as the front [#1967](https://github.com/openOMSI-org/openOMSI/issues/1967).
-- **Rain on the glass**: the washer wets only the panes a wiper blade reaches, not every window of the bus [#1884](https://github.com/openOMSI-org/openOMSI/issues/1884).
-- **Situations**: the bus's script textures (destination displays, IBIS, ticket printer) are saved with a situation and come back when it is loaded, as in OMSI; they came back empty [#1559](https://github.com/openOMSI-org/openOMSI/issues/1559).
-- **Scripts**: an instruction that reaches the wrong dispatch is logged and skipped instead of stopping the game [#1812](https://github.com/openOMSI-org/openOMSI/issues/1812).
-- **Mouse steering**: a pointer the window cannot move back (a graphics tablet's pen) steers by where it stands instead of locking the wheel at full lock [#1945](https://github.com/openOMSI-org/openOMSI/issues/1945).
-- **Controllers**: a latching switch stays in while the pause menu is open or the window is in the background [#1876](https://github.com/openOMSI-org/openOMSI/issues/1876); on Linux a device with only `BTN_TRIGGER_HAPPY` buttons counts them from 1, without sixteen buttons it does not have [#1879](https://github.com/openOMSI-org/openOMSI/issues/1879).
-- **Mirror panels** (Ctrl+M) are drawn under the notes and the pause menu, not over them [#1880](https://github.com/openOMSI-org/openOMSI/issues/1880).
-- **Launcher**: a tour's row names its first and last trip with passengers, not the depot runs it starts and ends with [#1891](https://github.com/openOMSI-org/openOMSI/issues/1891).
-- **Android**: the folder browser finds an SD card from the mounted volumes (since Android 11 `/storage` itself cannot be listed) [#1306](https://github.com/openOMSI-org/openOMSI/issues/1306).
-- **Renderer**: a device that cannot bind 4-byte storage arrays reads the scene's arrays from textures, so the Xclipse/ANGLE shadow pipeline works [#1857](https://github.com/openOMSI-org/openOMSI/issues/1857).
-- **Graphics drivers** (wgpu fork): backports from wgpu 30 - the Vulkan acquire fence, out-of-memory checks, DX12 `textureNumLevels`, 3D textures and naga loop variables; a discarded surface no longer crashes the game, and shader errors are logged on one line.
-- **Apple M4 / Metal**: the scene shader is back to the 0.2.20 one, whose bigger version the Metal compiler could not build.
-
-## 0.2.20 - 2026-10-08
-
-### New
-- **Gamepads**: ready-made Xbox, PS4 and PS5 profiles with default buttons, a Gamepad settings page (stick dead zone, steering speed), and the Menu/Options button opens the main menu [#1939](https://github.com/openOMSI-Project/openOMSI/pull/1939); a controller action to open and close the main menu [#1594](https://github.com/openOMSI-Project/openOMSI/pull/1594).
-- **Key bindings**: "Add binding" on the Controls page lists every action - the installed buses' own script triggers too, with how many buses use each - searchable [#1437](https://github.com/openOMSI-Project/openOMSI/pull/1437).
-- **Platform screen doors**: light paths marked as a turn work as detectors for that indicator, for every vehicle, so BRT platform doors open for the bus that stops there [#1889](https://github.com/openOMSI-Project/openOMSI/pull/1889).
-- **HTML LED destination signs** glow at night like the LED panels, with the same LED glow setting [#1905](https://github.com/openOMSI-Project/openOMSI/pull/1905).
-- Lua plugins: a `service` event (refuel, wash, repair, reset, teleport) [#1882](https://github.com/openOMSI-Project/openOMSI/pull/1882), and `trip_done` with the trip's ratings, `jolt` and `ticket_sold` events [#1937](https://github.com/openOMSI-Project/openOMSI/pull/1937).
-- `telemetry.json` for outside tools (the player's bus, the duty and its stops, the AI buses): written only while the file exists, see `docs/PLUGINS.md` [#1909](https://github.com/openOMSI-Project/openOMSI/pull/1909).
-- Translations: Dutch completed [#1944](https://github.com/openOMSI-Project/openOMSI/pull/1944), German reviewed [#1936](https://github.com/openOMSI-Project/openOMSI/pull/1936), Chinese [#1587](https://github.com/openOMSI-Project/openOMSI/pull/1587), French [#1713](https://github.com/openOMSI-Project/openOMSI/pull/1713), the game menu in every language [#1540](https://github.com/openOMSI-Project/openOMSI/pull/1540), the stock weather names [#1598](https://github.com/openOMSI-Project/openOMSI/pull/1598); messages with a number or a name in them are translated too [#1724](https://github.com/openOMSI-Project/openOMSI/pull/1724).
-
-### Fixes
-- Dedicated server and LAN host: AI cars no longer appear or vanish in plain view of the other players [#1893](https://github.com/openOMSI-Project/openOMSI/pull/1893).
-- Enhanced at night: no more black disc under street lamps whose light sits inside the lamp (the Ufo lamps of Spandau), and the lamp shadows got faster [#1915](https://github.com/openOMSI-Project/openOMSI/pull/1915).
-- Faster in scenes with excavations (U-Bahn entrances): the MSAA depth prepass is kept, about 1.5 ms less per frame there [#1614](https://github.com/openOMSI-Project/openOMSI/pull/1614).
-- A Shift, Ctrl or Alt whose release was missed (after a screenshot shortcut) no longer sticks [#1901](https://github.com/openOMSI-Project/openOMSI/pull/1901).
-- Vehicle descriptions are shown in full, and the phone launcher's vehicle sheet scrolls [#1932](https://github.com/openOMSI-Project/openOMSI/pull/1932).
-- The German tutorial pages show their special characters [#1552](https://github.com/openOMSI-Project/openOMSI/pull/1552).
-- Documentation fixes [#1917](https://github.com/openOMSI-Project/openOMSI/pull/1917), [#1918](https://github.com/openOMSI-Project/openOMSI/pull/1918), [#1919](https://github.com/openOMSI-Project/openOMSI/pull/1919); a deprecated call replaced [#1947](https://github.com/openOMSI-Project/openOMSI/pull/1947).
-
-## 0.2.19 - 2026-10-08
-
-### Fixes
-- Mouse steering shows its "+" again: since 0.2.17 the cursor is held while the mouse steers (so the wheel reaches its full lock past the screen's edge), and the crosshair went with it. The cross is now drawn at the point that steers and takes your clicks.
-
-## 0.2.18 - 2026-10-08
-
-### New
-- **Quality presets for each graphics mode**, the same in the launcher and the in-game options; the mode is chosen first and a preset never switches it. Your current settings stay as they are [#1873](https://github.com/openOMSI-Project/openOMSI/pull/1873).
-- **Cloud quality** (Settings → Graphics): "Low" draws the same physical clouds with fewer steps, about 0.8 ms faster on an M4; the cloud noise is kept on disk so later starts make it no more [#1872](https://github.com/openOMSI-Project/openOMSI/pull/1872).
-- **"DXT/BC textures stay compressed on the GPU"** can be switched off for drivers that draw compressed textures wrongly (the textures then take about twice the video memory) [#1873](https://github.com/openOMSI-Project/openOMSI/pull/1873).
-- **Searchable vehicle lists**, and placing, swapping or reloading a vehicle loads it in the background instead of freezing the game (1.4 s less on an articulated bus) [#1867](https://github.com/openOMSI-Project/openOMSI/pull/1867).
-- **Support package** (Setup → Export diagnostics): a ZIP for a bug report with the versions, the graphics card and driver, the graphics settings, the controllers and the last map and bus - no folders, names, chat, LAN codes or addresses. It stays on your computer and its folder opens, so you can look inside before attaching it [#1870](https://github.com/openOMSI-Project/openOMSI/pull/1870).
-- Mods: `[matl_glow] <texture> <value>` lets a script make a material glare (an openOMSI extension; stock content is unchanged) [#1853](https://github.com/openOMSI-Project/openOMSI/pull/1853).
-- Performance captures: an `OMSI_PROFILE` run now logs the frame-time percentiles, `OMSI_PROFILE_JSON=<file>` saves them, and `scripts/compare-performance.py` compares two runs [#1869](https://github.com/openOMSI-Project/openOMSI/pull/1869).
-
-### Fixes
-- A duty started from the game menu starts at the current time, not at the first trip of the day [#1864](https://github.com/openOMSI-Project/openOMSI/pull/1864).
-- Articulated buses: every exit follows its own door, passengers on foot find the nearest section's doors [#1863](https://github.com/openOMSI-Project/openOMSI/pull/1863).
-- LAN: a weather change by the host reaches the other players at once [#1865](https://github.com/openOMSI-Project/openOMSI/pull/1865).
-- Launcher: a key binding keeps the Shift, Ctrl or Alt it was pressed with [#1866](https://github.com/openOMSI-Project/openOMSI/pull/1866).
-- HafenCity: the harbour backdrop no longer stands across the road at Landungsbrücken [#1861](https://github.com/openOMSI-Project/openOMSI/pull/1861).
-- Enhanced at night: lamp shadows are no longer looked up for surfaces facing away from the lamp (same picture, a little faster) [#1875](https://github.com/openOMSI-Project/openOMSI/pull/1875).
-- The launcher opens faster: its bus preview no longer prepares resources it doesn't use [#1871](https://github.com/openOMSI-Project/openOMSI/pull/1871).
-- Build: no compiler warnings left, and two examples no longer share an output name [#1862](https://github.com/openOMSI-Project/openOMSI/pull/1862); more content tests [#1868](https://github.com/openOMSI-Project/openOMSI/pull/1868).
-
-## 0.2.17 - 2026-10-08
-
-A big one: early, mid and late seasons with trees that turn one by one, mouse steering to full
-lock, the wipers really clearing the glass, collisions with real momentum and dents, encrypted
-LAN mods, a DirectX 11 option for old graphics cards, and the game's code reorganised from the
-ground up so that it stays easy to change.
-
-### New
-- **Early, mid and late seasons.** Pick a season and under it Early, Mid or Late. The phase
-  sets a real date in that part of the season (the map's hemisphere decides which months), so
-  the sun's path, the length of the day, the natural weather's temperatures and snow, the
-  street lamps, the map's dated changes and the timetable all follow it by themselves. "By
-  date" works as before. Also on the command line: `--season autumn-late`.
-- **Trees that turn one by one.** In between two seasons the trees no longer change all
-  together: each tree takes one of the two looks, the same every time and for every LAN
-  player - early autumn is green with the first yellow trees, late autumn mostly bare with a
-  few still in leaf, early spring bare with the first green, late summer partly dry.
-- **Wipers clear the rain and snow only where the blade has passed**, along its sweep, pushing
-  the water ahead of it; drops merge and run off, and in snow the flakes settle on the glass
-  and build up at the edge of the wiped area [#1828](https://github.com/openOMSI-Project/openOMSI/pull/1828).
-- **Collisions with AI vehicles**: a car that is hit recoils by momentum and finds its way back
-  onto its lane, crash energy follows the masses and speeds of both vehicles, both the bus and
-  the AI cars get dents where they were hit, and glass shows cracks, lit like the pane it is in
-  [#1819](https://github.com/openOMSI-Project/openOMSI/pull/1819). Mouse pedal strength is a new
-  setting [#1819](https://github.com/openOMSI-Project/openOMSI/pull/1819).
-- **"ANGLE (DirectX 11)" graphics API on Windows**, for graphics chips whose DirectX 12, Vulkan
-  and OpenGL drivers don't run the game (Intel HD Graphics 2000-4000, Radeon HD 5000/6000). It
-  is tried by itself when the others fail, or chosen in Settings. The DLLs are built from
-  Google's ANGLE source in [angle-openomsi](https://github.com/openOMSI-Project/angle-openomsi)
-  and checked by their SHA-256.
-- **LAN mods are encrypted** on the network and on disk: the files a host sends can't be read
-  off the network, and copying them out of the game's folders gives you scrambled data, while
-  the game reads them normally. (This stops casual copying, not a determined person: the game
-  is open source and decrypts on the player's computer.) Hosts and players need 0.2.17 both.
-- The information bar shows how many passengers fit next to how many are aboard
-  [#1826](https://github.com/openOMSI-Project/openOMSI/pull/1826).
-- Plugins: `omsi.info()` names the stops on either side of the bus with their IDs, the
-  distance to each, and whether the bus stands at a stop
-  [#1588](https://github.com/openOMSI-Project/openOMSI/pull/1588).
-- New option (Settings → Gameplay → Traffic, off by default): timetable buses running ahead
-  of time wait for their departure only at the stops the timetable times itself, instead of
-  at every stop as in OMSI [#1773](https://github.com/openOMSI-Project/openOMSI/pull/1773).
-
-### Fixes
-- Mouse steering reaches full lock both ways: the wheel used to stop as soon as the cursor
-  hit the edge of the screen (on macOS often at a quarter of the lock). The cursor is now
-  held while you steer and comes back when you look around, open a menu or switch windows;
-  the mouse pedals reach full throttle and full brake too.
-- Dedicated server: people walk the pavements and wait at the stops around every player
-  again, and board the timetable buses there
-  [#1817](https://github.com/openOMSI-Project/openOMSI/pull/1817).
-- The offscreen pictures (and so the game's own picture checks) are taken exactly as the
-  window draws the game: the clock goes on, the AI's lights follow the daylight, the
-  collision settings count, the wet roads and the cabin air develop, the lighting is built
-  the same way.
-- No more crashes when the graphics driver fails in some ways it used to take the game down
-  with: running out of video memory while recording, a driver that can't compile a shader,
-  adapter checks that fail, closing an OpenGL context. Shader compile failures now say what
-  the driver said.
-- OpenGL: no more "Could not lock adapter context" crashes while another part of the game
-  waits for the GPU (#843, #898, #1110).
-- The LAN tests no longer fail now and then.
-
-### Under the hood
-- The game's code was reorganised without changing what it does (checked frame by frame
-  against the previous version): the frame is a sequence of named steps shared by the window
-  and the offscreen run; the AI traffic, the people and the timetable simulate in `omsi-sim`
-  with no graphics in them, and one place hands their state to the renderer; the renderer's
-  passes and pipelines each have a module of their own; the game's state is grouped by
-  subsystem; every `OMSI_*` switch is listed in `docs/DEBUG_FLAGS.md` and read through one
-  registry. No function is longer than 500 lines any more (there were ten), and a check on
-  every pull request keeps files and functions from growing past their size again.
-- openOMSI now builds on [wgpu-openomsi](https://github.com/openOMSI-Project/wgpu-openomsi),
-  the project's fork of wgpu 29.0.4 with the graphics fixes above (and a video-memory query,
-  which the log now shows).
-- `docs/ARCHITECTURE.md` describes the architecture; its history moved to `docs/HISTORY.md`.
-
-## 0.2.16 - 2026-10-07
-
-### New
-- Lua plugins can show panels (texts, icons, progress bars, buttons) and sliding notifications of their own in the game's look (`omsi.ui`); F10 gives the mouse to the panels, Esc back to the bus. See `docs/PLUGINS.md` and the `trip_panel.lua` example [#1788](https://github.com/openOMSI-Project/openOMSI/pull/1788).
-- Native TrackIR head tracking on Windows (NaturalPoint's NPClient), with sensitivity and inversion per axis in the launcher; opentrack keeps working as before [#1763](https://github.com/openOMSI-Project/openOMSI/pull/1763).
-- Night brightness (Settings → Graphics): brightens the Enhanced picture after sunset only, Off by default [#1799](https://github.com/openOMSI-Project/openOMSI/pull/1799).
-- Plugins: `trip_done` in `omsi.info()` [#1810](https://github.com/openOMSI-Project/openOMSI/pull/1810).
-
-### Fixes
-- Refuelling and the bus wash take their time, litre by litre, and stop when the bus drives off [#1785](https://github.com/openOMSI-Project/openOMSI/issues/1785).
-- Pedestrians run over are counted once each, within the bus's real box [#1805](https://github.com/openOMSI-Project/openOMSI/issues/1805).
-- Enhanced+: the buildings of a depot or other surface object cast their shadow up close too [#1783](https://github.com/openOMSI-Project/openOMSI/issues/1783).
-- Smoke, exhaust and other particles drift with the wind [#1798](https://github.com/openOMSI-Project/openOMSI/issues/1798).
-- The automated manual gearbox can be switched on in the launcher's driving settings [#1780](https://github.com/openOMSI-Project/openOMSI/issues/1780).
-- A traffic light no longer reacts to a bus on the neighbouring road or bay: the depot-gate request applies only off the lanes [#1790](https://github.com/openOMSI-Project/openOMSI/issues/1790).
-- A duty started at the real time keeps the clock instead of jumping to ten minutes before its first trip [#1792](https://github.com/openOMSI-Project/openOMSI/pull/1792).
-- Puddles are smaller, with sharp irregular edges [#1804](https://github.com/openOMSI-Project/openOMSI/pull/1804).
-- Dedicated server: AI traffic and pedestrians move smoothly on the players' screens and at their real speed; the server's clock keeps to real time [#1807](https://github.com/openOMSI-Project/openOMSI/pull/1807).
-- Hong Kong maps: AI buses of a plain `[aigroup_2]` group show their destination again [#1757](https://github.com/openOMSI-Project/openOMSI/pull/1757), and bus stop signs show their route numbers and pictures [#1765](https://github.com/openOMSI-Project/openOMSI/pull/1765).
-- AI vehicles wait before a junction when a queue on the short road pieces beyond it leaves no room, instead of blocking it [#1761](https://github.com/openOMSI-Project/openOMSI/pull/1761).
-
-## 0.2.15 - 2026-10-07
-
-### Bug Fixes & Improvements
-
-## 0.2.14 - 2026-10-07
-
-### Bug Fixes & Improvements
-
-## 0.2.13 - 2026-10-07
-
-### Bug Fixes & Improvements
-
-## 0.2.12 - 2026-10-07
-
-### Bug Fixes & Improvements
-
-## 0.2.11 - 2026-10-07
-
-### Bug Fixes & Improvements
-
-## 0.2.10 - 2026-10-07
-
-### Bug Fixes & Improvements
-
-## 0.2.9 - 2026-10-06
-
-### Bug Fixes & Improvements
-
-## 0.2.8 - 2026-10-06
-
-### Bug Fixes & Improvements
-
-## 0.2.7 - 2026-10-06
-
-### Bug Fixes & Improvements
-
-## 0.2.6 - 2026-10-06
-
-### Bug Fixes & Improvements
-
-## 0.2.5 - 2026-10-06
-
-### Bug Fixes & Improvements
-
-## 0.2.4 - 2026-10-06
-
-### Bug Fixes & Improvements
-
-## 0.2.3 - 2026-10-06
-
-### Bug Fixes & Improvements
-
-## 0.2.2 - 2026-10-06
-
-### Bug Fixes & Improvements
-
-## 0.2.1 - 2026-10-06
-
-### Bug Fixes & Improvements
-- Android: a black screen instead of the game since 0.2.0 (#1633, #1597) on phones whose graphics driver cannot compile one of 0.2's new shaders (the snowfall, the lamps in the fog, the street lamps' shadow maps): the driver's error lost the whole graphics device. The game now notices this while it starts, opens the device again without those three and draws as before (snow then falls without flakes). The log names the shaders it was compiling when the device was lost.
-
-## 0.2.0 - 2026-10-06
-
-A release about light and weather: the Enhanced and Enhanced+ pictures worked out from the physics of the eye, the air and the lamps, and a new snowfall for every graphics mode.
-
-### Night (Enhanced, Enhanced+)
-- The night is dark again: the eye's adaptation follows a lightness-perception model (Krawczyk et al. 2005) instead of nearly full adaptation, the automatic metering no longer brightens a night, and the eye adapts to the lamps and headlights actually in view (their log-average) rather than to a fixed city level.
-- Street lamps cast real shadows: shadow maps for the four lamps lighting the camera's surroundings most (the bus, poles, signs and trees throw their shadows on the street).
-- A street lamp's light goes down and out, not into the sky: tree crowns and upper floors above the lamps stay dark.
-- The lit ground throws light back up: a bus's flank or a facade beside a lit street is no longer black; much more so over snow.
-- Moonlit nights: the moon is a directional light with its own shadows; on a dark country road under a full moon the eye takes to the moonlight.
-- The night sky's glow comes from the lamps round the camera (Walker's law): a village keeps its stars, a city glows orange-grey.
-
-### Weather (Enhanced, Enhanced+)
-- Fog and mist light up round every lamp and in front of every headlight (single scattering by the droplets, a forward peak and back-scatter): halos, cones under the lamps, the glow of a bus's own beams in the fog. Rain does not do this (its drops scatter too narrowly), so headlights keep a single glow in a drizzle.
-- Shafts of sunlight between the shadows of houses and trees in haze, mist and fog.
-- Falling snow takes the view as a real snowfall does (heavy snow: some 400 m).
-- Wet porous surfaces (soil, paving, plaster, bark) turn darker and deeper in colour in the rain, not only the asphalt.
-- An overcast deck lets through light by its thickness: a raining nimbostratus is darker, a grey day over snow brighter.
-- Raindrops and snowflakes are lit by what is round them - the sky, the sun, the lamps - instead of glowing at one level in the dark.
-
-### Light and the eye (Enhanced, Enhanced+)
-- Looking at the sun blinds: the eye's scattered light round it (CIE 146 glare function) with a faint ciliary corona and lenticular halo.
-- Eye adaptation: the picture darkens when the sun comes into view and brightens in a dark cab or an underpass, quickly towards the light and slowly towards the dark.
-- Lit windows and lights have a light glow; only what is brighter than the screen's white glows.
-
-### Snowfall (all graphics modes)
-- A new snowfall: up to 150 000 flakes worked out on the graphics card (nothing per flake on the processor), fixed in the world so the bus drives through the snow, falling gently at about a metre a second, swaying and drifting with the wind; a light fall is fewer, smaller crystals. No snow falls inside the player's bus.
-
-## 0.1.1740 - 2026-10-05
-
-### Merged pull requests
-- Headlamps: the grass and hedges beside the road are no longer washed out at night, the beam keeps to the lane, and a full beam reaches far down the road [#1563](https://github.com/openOMSI-Project/openOMSI/pull/1563); a spot declared ahead of the bus's lamps shines from both headlamps, not from the middle [#1565](https://github.com/openOMSI-Project/openOMSI/pull/1565).
-- Enhanced lighting uses a material's own ambient colour: depot interiors with black diffuse and white ambient (Thüringer Wald, OVR Lichtentanne) are no longer black [#1556](https://github.com/openOMSI-Project/openOMSI/pull/1556).
-- Raised floors, markings and rails stay visible above the road surfaces at a distance, without a depth bias that moved with the camera angle [#1557](https://github.com/openOMSI-Project/openOMSI/pull/1557).
-- Linux: wheels such as the Logitech G29 are no longer taken for gamepads: linear steering and native force feedback again [#1566](https://github.com/openOMSI-Project/openOMSI/pull/1566).
-- Performance: no more regular 30-45 ms hitches near heavy collision meshes (Grand Paris-Moulon's street lamps) [#1561](https://github.com/openOMSI-Project/openOMSI/pull/1561).
-
-## 0.1.1727 - 2026-10-05
-
-### Fixes
-- The Linux build of the release no longer runs out of disk space after the workspace tests (the release of 0.1.1726 did not build).
+* **"Driver's hands in the cab view"** is gone from Settings and the pause Options; the hands are no
+  longer shown in the cab view.
+* **Android** is no longer described in the README, the user guide, the build and versioning docs or the
+  website (the `docs/ANDROID.md` page is removed). The code is untouched.
+* The updater, completely: the launcher no longer asks GitHub for a newer release when it starts
+  or every half hour, the game no longer looks for one during a session and downloads nothing in
+  the background, and nothing replaces the program (no `.openomsi-update` swap, no relaunch).
+  Gone with it: the settings *Look for updates when the launcher starts*, *Install updates
+  without asking* and *Tell me about a new version during a session* (an old `settings.cfg`'s
+  `update_*` lines are ignored), the switches `OMSI_NO_UPDATE` and `OMSI_UPDATE_URL`, the update
+  dialog and cards, and on Android the APK installer and the `REQUEST_INSTALL_PACKAGES`
+  permission. A newer build is installed by hand.
+* The "playing now" counter: the game no longer tells a Cloudflare Worker
+  (`openomsi.savvabestbrother.workers.dev`) every ten minutes that it is being played. Gone with
+  it: the setting *Count me in the website's "playing now"*, `OMSI_NO_PRESENCE` and
+  `OMSI_PRESENCE_URL`, `services/presence/` and the counter on the website and in the README.
+* The launcher no longer rests while a game runs: it keeps its window and its graphics device and
+  stays usable (the setting *The launcher rests while a game runs* and the dark cover over the
+  window are gone; an old `launcher_rest` line in `settings.cfg` is ignored). Instead the buttons
+  that start a session (Start the duty / Drive, Continue, Start the lesson) are faded while a
+  game runs or is starting, and work again when it ends. A second game from the launcher (the
+  second click on the start button, for testing LAN play on one computer) is no longer offered.
 
 ## 0.1.1726 - 2026-10-05
 

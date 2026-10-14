@@ -43,7 +43,7 @@ pub(crate) const LOWER_CASE: &[&str] = &[
     "global_strings", "groundtex", "groundwet", "group", "groups", "halfcantwidth", "heightprofile",
     "hektom", "helparrow", "hole", "holiday", "holidays", "humangeom", "ident", "illumination",
     "illumination_interior", "important", "infosystem_busstop_list", "infosystem_trip",
-    "interiorlight", "inv_min_turnradius", "isshadow", "item", "kill_rule", "kmcounter_init",
+    "int_sounds_separate", "interiorlight", "inv_min_turnradius", "isshadow", "item", "kill_rule", "kmcounter_init",
     "language", "last_driver", "last_map", "length", "light", "light_enh", "light_enh_2", "line",
     "links", "location", "loopsound", "map", "mapcam", "maplight", "mass", "matl", "matl_allcolor",
     "matl_alpha", "matl_bumpmap", "matl_change", "matl_envmap", "matl_envmap_mask",

@@ -24,14 +24,8 @@
 use std::path::{Path, PathBuf};
 
 pub mod codepage;
-pub mod collate;
-pub mod flags;
-pub mod lang;
 mod keywords;
 pub mod number;
-pub mod par;
-pub mod radio;
-pub mod panic_guard;
 pub mod vfs;
 pub mod install_search;
 pub use install_search::find_original_install;
@@ -338,12 +332,35 @@ impl<'a> CfgReader<'a> {
         parse_i32(self.line())
     }
 
+    /// A fixed-length list of `n` whole numbers, read the careful way: OMSI takes exactly `n`
+    /// lines, so a file that gives fewer ran on into whatever followed, a blank line (read as
+    /// 0: a lamp that was never named) or the next block's keyword (eaten). Here a keyword
+    /// line ends the list (and stays for the next block), and a blank or non-numeric line is
+    /// a slot with nothing in it (-1). Every well-formed list reads as it always did.
+    pub fn i32_slots(&mut self, n: usize) -> Vec<i32> {
+        let mut v = Vec::with_capacity(n);
+        while v.len() < n && self.pos < self.file.lines.len() {
+            let raw = self.file.lines[self.pos].as_str();
+            if keyword_with(raw, self.rule).is_some() {
+                break;
+            }
+            let l = raw.trim();
+            self.pos += 1;
+            // (a number as Delphi reads one: a trailing comment or a ".0" is no hindrance)
+            let first = l.split_whitespace().next().unwrap_or("");
+            let number = first.chars().next().is_some_and(|c| c.is_ascii_digit() || matches!(c, '-' | '+' | '.'))
+                && first.replace(',', ".").parse::<f64>().is_ok_and(|x| x.is_finite());
+            v.push(if number { parse_i32(l) } else { -1 });
+        }
+        v
+    }
+
     /// `n` integers, then any further whole-number lines that follow at once (a blank line,
     /// a keyword or anything else ends the list): OMSI's fixed-length lists read as always,
     /// and a file may give more (openOMSI: `[illumination_interior]` with more than four
     /// lamps).
     pub fn i32_list(&mut self, n: usize) -> Vec<i32> {
-        let mut v: Vec<i32> = (0..n).map(|_| self.i32()).collect();
+        let mut v = self.i32_slots(n);
         while self.pos < self.file.lines.len() {
             let l = self.file.lines[self.pos].trim();
             let whole = !l.is_empty() && l.strip_prefix('-').unwrap_or(l).chars().all(|c| c.is_ascii_digit());
@@ -473,12 +490,8 @@ fn name_key(name: &str) -> String {
     }
 }
 
-/// The entries of one directory by [`name_key`]. A key holds more than one name only on a
-/// case-sensitive file system that has two spellings of it side by side (`maps` and `Maps`,
-/// after an add-on was unpacked next to the original folders) - a name means any of them.
-type Listing = std::sync::Arc<std::collections::HashMap<String, Vec<std::ffi::OsString>>>;
-// (read far more often than added to, by the loaders side by side: a lock for readers)
-static LISTINGS: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<PathBuf, Listing>>> = std::sync::OnceLock::new();
+type Listing = std::sync::Arc<std::collections::HashMap<String, std::ffi::OsString>>;
+static LISTINGS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Listing>>> = std::sync::OnceLock::new();
 /// Bumped whenever content may have come or gone (a root added or taken away, a mod
 /// installed while the game runs): the caches of what is where start afresh.
 static CONTENT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -488,7 +501,7 @@ static CONTENT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 pub fn content_changed() {
     CONTENT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if let Some(l) = LISTINGS.get() {
-        l.write().unwrap_or_else(|e| e.into_inner()).clear();
+        l.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 }
 
@@ -498,80 +511,39 @@ pub fn content_generation() -> u64 {
     CONTENT_GENERATION.load(std::sync::atomic::Ordering::SeqCst)
 }
 
-/// Pictures that came with a model of another tool's format (a `.glb`'s packed textures,
-/// the `.png` beside an `.fbx`), by the bare file name its material gives: the texture
-/// lookup takes them when the usual folders have no picture of that name. The material
-/// keeps the bare name, so the `[matl]` lines of a model's `.cfg` find it as in OMSI.
-static MODEL_TEXTURES: std::sync::RwLock<Option<std::collections::HashMap<String, PathBuf>>> = std::sync::RwLock::new(None);
-
-pub fn register_model_texture(name: &str, path: PathBuf) {
-    MODEL_TEXTURES.write().unwrap().get_or_insert_with(std::collections::HashMap::new).entry(name.to_lowercase()).or_insert(path);
-}
-
-/// The picture a model brought for the bare name `name` (see [`register_model_texture`]).
-pub fn model_texture(name: &str) -> Option<PathBuf> {
-    MODEL_TEXTURES.read().unwrap().as_ref()?.get(&name.trim().to_lowercase()).cloned()
-}
-
 /// The entries of a directory by [`name_key`], listed once.
 fn dir_listing(dir: &Path) -> Listing {
-    let cache = LISTINGS.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
-    if let Some(l) = cache.read().unwrap().get(dir) {
+    let cache = LISTINGS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    if let Some(l) = cache.lock().unwrap().get(dir) {
         return l.clone();
     }
-    let mut map: std::collections::HashMap<String, Vec<std::ffi::OsString>> = std::collections::HashMap::new();
+    let mut map = std::collections::HashMap::new();
     let entries = vfs::list_dir(dir).unwrap_or_default();
     for (name, _) in &entries {
-        // every spelling, not the last one read: one that held the rest of a path used to be
-        // dropped for another differing only in case, and its content went missing
-        let names = map.entry(name_key(&name.to_string_lossy())).or_default();
-        if !names.contains(name) {
-            names.push(name.clone());
-        }
-    }
-    // the file system's own order is no order of ours: sorted, the spelling a lookup
-    // settles on is the same from one run to the next
-    for names in map.values_mut() {
-        if names.len() > 1 {
-            names.sort();
-        }
+        map.insert(name_key(&name.to_string_lossy()), name.clone());
     }
     // the other spellings of names beyond ASCII (see `codepage::name_variants`), behind
     // every real name
     for (name, _) in &entries {
         for v in codepage::name_variants(&name.to_string_lossy()) {
-            map.entry(name_key(&v)).or_insert_with(|| vec![name.clone()]);
+            map.entry(name_key(&v)).or_insert_with(|| name.clone());
         }
     }
     let l = std::sync::Arc::new(map);
-    cache.write().unwrap().insert(dir.to_path_buf(), l.clone());
+    cache.lock().unwrap().insert(dir.to_path_buf(), l.clone());
     l
 }
 
-/// Every entry of `dir` that `name` can mean, the spelling asked for first: the same name
-/// without regard to case, or one of its other spellings (a name beyond ASCII read in
-/// another code page on the way). More than one only where the file system holds two names
-/// differing in case alone - which of them is meant is decided by what lies inside, so the
-/// walk over a path ([`resolve_existing`]) tries each.
-fn candidates_in_dir(dir: &Path, name: &str) -> Vec<std::ffi::OsString> {
-    let listing = dir_listing(dir);
-    let mut out = listing.get(&name_key(name)).cloned().unwrap_or_default();
-    if out.is_empty() {
-        out = codepage::name_variants(name)
-            .iter()
-            .find_map(|v| listing.get(&name_key(v)).cloned())
-            .unwrap_or_default();
-    }
-    // the folder spells it exactly as asked: that one is meant
-    if let Some(i) = out.iter().position(|n| n.as_os_str() == std::ffi::OsStr::new(name)) {
-        out.swap(0, i);
-    }
-    out
-}
-
-/// The entry of `dir` that `name` means (the first of [`candidates_in_dir`]).
+/// The entry of `dir` that `name` means: the same name without regard to case, or one of
+/// its other spellings (a name beyond ASCII read in another code page on the way).
 fn find_in_dir(dir: &Path, name: &str) -> Option<std::ffi::OsString> {
-    candidates_in_dir(dir, name).into_iter().next()
+    let listing = dir_listing(dir);
+    if let Some(n) = listing.get(&name_key(name)) {
+        return Some(n.clone());
+    }
+    codepage::name_variants(name)
+        .iter()
+        .find_map(|v| listing.get(&name_key(v)).cloned())
 }
 
 /// Content roots, highest priority first: the game's own content folder next to its
@@ -691,28 +663,14 @@ fn mirrored_base(base: &Path, root: &Path, roots: &[PathBuf]) -> Option<PathBuf>
     if owner == root {
         return None;
     }
-    base.strip_prefix(owner).ok().map(|suffix| {
-        // The suffix is spelled as in `base`'s root, which need not be how `root` spells it:
-        // a mod that ships `Vehicles/Foo/texture/...` next to the original pack's
-        // `Vehicles/Foo/Texture`. A case-sensitive file system (Linux) would not find the
-        // original's folder under the mod's spelling, so walk the suffix case-insensitively.
-        let parts: Vec<String> = suffix
-            .components()
-            .filter_map(|c| match c {
-                std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
-                _ => None,
-            })
-            .collect();
-        let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
-        resolve_existing(root, &refs).unwrap_or_else(|| root.join(suffix))
-    })
+    base.strip_prefix(owner).ok().map(|suffix| root.join(suffix))
 }
 
 /// Case-insensitive walk of the components `rel` from `base` using the cached directory
 /// listings only; None as soon as a component does not exist.
 fn resolve_existing(base: &Path, rel: &[&str]) -> Option<PathBuf> {
     let mut cur = base.to_path_buf();
-    for (i, comp) in rel.iter().enumerate() {
+    for comp in rel {
         if comp.is_empty() || *comp == "." {
             continue;
         }
@@ -720,17 +678,8 @@ fn resolve_existing(base: &Path, rel: &[&str]) -> Option<PathBuf> {
             cur.pop();
             continue;
         }
-        let names = candidates_in_dir(&cur, comp);
-        if names.len() < 2 {
-            cur = cur.join(names.into_iter().next()?);
-            continue;
-        }
-        // Two names differing in case alone, on a case-sensitive file system: the folder
-        // meant is whichever one holds the rest of the path. An add-on unpacked beside the
-        // original folders leaves a `Maps` with the new map next to the `maps` holding all
-        // the others; both have to stay reachable.
-        let rest = &rel[i + 1..];
-        return names.iter().find_map(|n| resolve_existing(&cur.join(n), rest));
+        let found = find_in_dir(&cur, comp).map(|n| cur.join(n))?;
+        cur = found;
     }
     Some(cur)
 }
@@ -852,10 +801,40 @@ pub fn read_dir_merged(rel: &str) -> Vec<PathBuf> {
     out
 }
 
+/// [ROLLBACK userpath-93] The folders of an OMSI installation a whole path can be cut at.
+const OMSI_FOLDERS: &[&str] = &[
+    "vehicles", "maps", "sceneryobjects", "splines", "texture", "fonts", "sound", "humans", "drivers", "airplanes", "weather", "archives", "inputs", "ticketpacks", "model",
+];
+
+/// [ROLLBACK userpath-93] For a path that names a place on somebody's disk (a drive letter, or
+/// `\Users\<name>\...`) that is not here: the part from the first OMSI folder on, as content is
+/// named. None for a relative path, for one that exists as written, and for one with no such
+/// folder in it.
+fn foreign_absolute_tail(rel: &str) -> Option<String> {
+    let t = rel.trim();
+    let b = t.as_bytes();
+    let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
+    let comps = windows_components(t);
+    let users = comps.first().is_some_and(|c| c.eq_ignore_ascii_case("users") || c.eq_ignore_ascii_case("home")) && comps.len() > 3;
+    if !(drive || users) {
+        return None;
+    }
+    if drive && Path::new(t).exists() {
+        return None;
+    }
+    let i = comps.iter().enumerate().skip(1).find(|(_, c)| OMSI_FOLDERS.iter().any(|f| c.eq_ignore_ascii_case(f)))?.0;
+    Some(comps[i..].join("/"))
+}
+
 /// The file a content file names (`rel`, relative to the folder `base`), found the way
 /// Windows finds it: see [`windows_components`] for the spelling rules, names compare without
 /// regard to case, and a mod's copy under a content root of higher priority comes first.
 pub fn resolve_path(base: &Path, rel: &str) -> PathBuf {
+    // [ROLLBACK userpath-93] a path saved whole on another machine (`C:\Users\<him>\OMSI 2\
+    // Vehicles\...`): the file is found under this machine's content from its OMSI folder on
+    if let Some(tail) = foreign_absolute_tail(rel) {
+        return resolve_path(base, &tail);
+    }
     let rel = windows_components(rel);
     let rel = rel.as_slice();
     // a mod's copy first: the same place under a content root of higher priority than the
@@ -885,13 +864,6 @@ pub fn resolve_path(base: &Path, rel: &str) -> PathBuf {
             cur.pop();
             continue;
         }
-        // the folder's listing, kept from the first time, has the name spelled just so:
-        // the path as asked for, which the file system would only confirm (a look on the
-        // disk for every component of every path was most of a lookup's time)
-        if dir_listing(&cur).get(&name_key(comp)).is_some_and(|names| names.iter().any(|n| n.as_os_str() == std::ffi::OsStr::new(comp))) {
-            cur.push(comp);
-            continue;
-        }
         let direct = cur.join(comp);
         if vfs::exists(&direct) {
             cur = direct;
@@ -901,15 +873,6 @@ pub fn resolve_path(base: &Path, rel: &str) -> PathBuf {
         // time (scanning the folder afresh for every miss made texture lookups crawl)
         let found = find_in_dir(&cur, comp).map(|n| cur.join(n));
         cur = found.unwrap_or(direct);
-    }
-    // The walk above takes each component on its own, which is enough until a folder has two
-    // names differing in case alone: it then follows the spelling asked for, and the rest of
-    // the path may lie under the other one. Looking the whole path up at once weighs the
-    // spellings against what is inside them (see `resolve_existing`).
-    if !vfs::exists(&cur) {
-        if let Some(p) = resolve_existing(base, rel) {
-            return p;
-        }
     }
     if let (Some(owner), false) = (&owner, vfs::exists(&cur)) {
         // not in `base`'s root either: another root may still have it - a lower-priority
@@ -983,7 +946,7 @@ pub fn missing_original_essentials(root: &Path) -> Vec<String> {
 /// folder is laid out with these names, so the mod installer and mounted archives can merge
 /// them into the same virtual installation.
 pub const CONTENT_FOLDERS: &[&str] = &[
-    "Vehicles", "HOFs", "maps", "Sceneryobjects", "Splines", "Texture", "Fonts", "Plugins", "TicketPacks", "Drivers", "Weather", "Announcements", "Humans", "Money", "Scripts", "Trains", "Situations", "Inputs", "Sounds",
+    "Vehicles", "HOFs", "maps", "Sceneryobjects", "Splines", "Texture", "Fonts", "Plugins", "TicketPacks", "Drivers", "Weather", "Announcements", "Humans", "Money", "Scripts", "Trains", "Situations", "Inputs", "Sound",
 ];
 
 /// Marker file of an openOMSI content folder (so it is never mistaken for the OMSI 2
@@ -1072,105 +1035,9 @@ pub fn is_writable(dir: &Path) -> bool {
     ok
 }
 
-/// The game's own content folder, where it writes what it makes (drivers, saves, journeys):
-/// `OMSI_CONTENT`, else the content folder beside the program (beside an .app bundle) when it
-/// may be written, else `~/.openomsi/content`.
-pub fn content_dir() -> Option<PathBuf> {
-    if let Some(d) = crate::flags::OMSI_CONTENT.os() {
-        return Some(PathBuf::from(d));
-    }
-    let cand = content_folder_of_program(&std::env::current_exe().ok()?)?;
-    if !is_programs_folder(&cand) && (cand.exists() || std::fs::create_dir_all(&cand).is_ok()) && is_writable(&cand) {
-        Some(cand)
-    } else {
-        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-        let fallback = PathBuf::from(home).join(".openomsi").join("content");
-        let _ = ensure_content_layout(&fallback);
-        Some(fallback)
-    }
-}
-
-fn content_folder_of_program(exe: &Path) -> Option<PathBuf> {
-    let dir = exe.parent()?;
-    // inside an .app bundle the binary sits in Contents/MacOS: use the folder beside the bundle
-    let dir = if dir.ends_with("Contents/MacOS") { dir.parent()?.parent()?.parent()? } else { dir };
-    Some(content_folder_of(dir))
-}
-
-const OWN_INPUTS: [&str; 2] = ["keyboard.cfg", "gamectrler.cfg"];
-
-pub fn own_input(name: &str) -> Option<PathBuf> {
-    if crate::flags::OMSI_CONTENT.os().is_some() {
-        return content_dir().map(|c| c.join("Inputs").join(name));
-    }
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    Some(PathBuf::from(home).join(".openomsi").join("Inputs").join(name))
-}
-
-pub fn input_in_use(name: &str) -> Option<PathBuf> {
-    newest([own_input(name), content_dir().map(|c| c.join("Inputs").join(name))])
-}
-
-pub fn adopt_own_inputs(previous_program: Option<&Path>) {
-    if crate::flags::OMSI_CONTENT.os().is_some() {
-        return;
-    }
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| PathBuf::from(h).join(".openomsi").join("content"));
-    let here = std::env::current_exe().ok().and_then(|e| content_folder_of_program(&e));
-    for name in OWN_INPUTS {
-        let Some(own) = own_input(name).filter(|p| !p.exists()) else { continue };
-        let mut dirs: Vec<PathBuf> = [content_dir(), previous_program.and_then(content_folder_of_program), home.clone()].into_iter().flatten().collect();
-        dirs.extend(here.as_deref().map(sibling_installs).unwrap_or_default());
-        if let Some(found) = newest(dirs.iter().map(|d| Some(d.join("Inputs").join(name)))) {
-            adopt_input(&own, &found);
-        }
-    }
-}
-
-fn sibling_installs(here: &Path) -> Vec<PathBuf> {
-    let Some(parent) = here.parent() else { return Vec::new() };
-    let Ok(entries) = std::fs::read_dir(parent) else { return Vec::new() };
-    entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|d| ["openomsi", "openomsi.exe", "openOMSI.app"].iter().any(|p| d.join(p).exists()))
-        .map(|d| content_folder_of(&d))
-        .collect()
-}
-
-fn newest(paths: impl IntoIterator<Item = Option<PathBuf>>) -> Option<PathBuf> {
-    let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
-    for p in paths.into_iter().flatten() {
-        let Some(t) = std::fs::metadata(&p).ok().filter(|m| m.is_file()).and_then(|m| m.modified().ok()) else { continue };
-        if best.as_ref().is_none_or(|(_, b)| t > *b) {
-            best = Some((p, t));
-        }
-    }
-    best.map(|(p, _)| p)
-}
-
-fn adopt_input(own: &Path, from: &Path) {
-    let (Some(dir), Some(name)) = (own.parent(), own.file_name()) else { return };
-    if own.exists() || own == from {
-        return;
-    }
-    let tmp = dir.join(format!("{}.{}.tmp", name.to_string_lossy(), std::process::id()));
-    let _ = std::fs::create_dir_all(dir).and_then(|_| std::fs::copy(from, &tmp)).and_then(|_| {
-        std::fs::hard_link(&tmp, own).or_else(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { std::fs::rename(&tmp, own) })
-    });
-    let _ = std::fs::remove_file(&tmp);
-}
-
 /// Create the content folder layout at `dir` (idempotent).
 pub fn ensure_content_layout(dir: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    // (versions up to 0.2.9 made it `Sound`; OMSI 2's folder is `Sounds`)
-    let (old, new) = (dir.join("Sound"), dir.join("Sounds"));
-    if old.is_dir() && !new.exists() {
-        let _ = std::fs::rename(&old, &new);
-    } else if old.is_dir() {
-        let _ = std::fs::remove_dir(&old); // only when empty
-    }
     for f in CONTENT_FOLDERS {
         std::fs::create_dir_all(dir.join(f))?;
     }
@@ -1189,68 +1056,6 @@ pub fn ensure_content_layout(dir: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_mods_lowercase_texture_folder_does_not_hide_the_originals() {
-        // A mod ships `Vehicles/Pack/texture/..` (a livery) next to the original pack's
-        // `Vehicles/Pack/Texture/..`: a file asked for from the mod's folder is found in the
-        // original's, whatever the case of the folder, as on a case-insensitive file system
-        let t = std::env::temp_dir().join(format!("omsi-cfg-mirror-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&t);
-        let (mods, omsi) = (t.join("mods"), t.join("omsi"));
-        std::fs::create_dir_all(mods.join("Vehicles/Pack/texture")).unwrap();
-        std::fs::create_dir_all(omsi.join("Vehicles/Pack/Texture")).unwrap();
-        std::fs::write(omsi.join("Vehicles/Pack/Texture/black.dds"), b"x").unwrap();
-        let roots = vec![mods.clone(), omsi.clone()];
-        let mirrored = mirrored_base(&mods.join("Vehicles/Pack/texture"), &omsi, &roots).unwrap();
-        assert_eq!(mirrored, omsi.join("Vehicles/Pack/Texture"));
-        assert!(resolve_existing(&mirrored, &["black.dds"]).is_some());
-        // a folder the other root does not have keeps the plain spelling
-        let none = mirrored_base(&mods.join("Vehicles/Other/texture"), &omsi, &roots).unwrap();
-        assert_eq!(none, omsi.join("Vehicles/Other/texture"));
-        std::fs::remove_dir_all(&t).unwrap();
-    }
-
-    #[test]
-    fn a_folder_spelled_twice_hides_neither_ones_content() {
-        // An add-on unpacked beside the original folders leaves `Maps` with the new map next
-        // to the `maps` holding all the others. Both spellings lower-case to one key, and the
-        // listing used to keep whichever the file system happened to read last - the stock
-        // maps then went missing (`missing: maps/Grundorf/global.cfg`).
-        let t = std::env::temp_dir().join(format!("omsi-cfg-case-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&t);
-        std::fs::create_dir_all(t.join("maps/Grundorf")).unwrap();
-        if t.join("Maps").exists() {
-            // a case-insensitive file system cannot hold both spellings, so there is nothing
-            // to tell apart here
-            std::fs::remove_dir_all(&t).unwrap();
-            return;
-        }
-        std::fs::create_dir_all(t.join("Maps/Keedlestone 1.8")).unwrap();
-        std::fs::write(t.join("maps/Grundorf/global.cfg"), b"x").unwrap();
-        std::fs::write(t.join("Maps/Keedlestone 1.8/global.cfg"), b"x").unwrap();
-        content_changed();
-
-        // each map is found under the spelling the file asks for, whichever folder holds it
-        assert_eq!(
-            resolve_existing(&t, &["maps", "Grundorf", "global.cfg"]),
-            Some(t.join("maps/Grundorf/global.cfg")),
-        );
-        assert_eq!(
-            resolve_existing(&t, &["maps", "Keedlestone 1.8", "global.cfg"]),
-            Some(t.join("Maps/Keedlestone 1.8/global.cfg")),
-        );
-        // and the capitalised spelling reaches the lower-case folder just as well
-        assert_eq!(
-            resolve_existing(&t, &["Maps", "Grundorf", "global.cfg"]),
-            Some(t.join("maps/Grundorf/global.cfg")),
-        );
-        // a name neither folder has is still absent
-        assert_eq!(resolve_existing(&t, &["maps", "Nowhere", "global.cfg"]), None);
-
-        std::fs::remove_dir_all(&t).unwrap();
-        content_changed();
-    }
 
     #[test]
     fn writable_check() {
@@ -1275,41 +1080,6 @@ mod tests {
         std::fs::create_dir_all(dir.join("Vehicles").join("MAN_SD200")).unwrap();
         assert!(!is_programs_folder(&dir));
         std::fs::remove_dir_all(dir.parent().unwrap()).unwrap();
-    }
-
-    #[test]
-    fn own_inputs_outlive_the_program_folder() {
-        let t = std::env::temp_dir().join(format!("omsi-own-inputs-{}", std::process::id()));
-        let own = t.join("home").join("Inputs").join("keyboard.cfg");
-        let (first, second) = (t.join("openOMSI-0.2.38").join("keyboard.cfg"), t.join("openOMSI-0.2.39").join("keyboard.cfg"));
-        std::fs::create_dir_all(first.parent().unwrap()).unwrap();
-        std::fs::create_dir_all(second.parent().unwrap()).unwrap();
-        let at = |p: &Path, secs: u64| std::fs::File::options().write(true).open(p).unwrap().set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)).unwrap();
-        assert_eq!(newest([Some(own.clone()), Some(first.clone())]), None);
-        std::fs::write(&first, b"[game]\nsim_pause\n25\n0\n").unwrap();
-        std::fs::write(&second, b"[game]\n").unwrap();
-        at(&first, 2_000_000_000);
-        at(&second, 1_000_000_000);
-        let found = newest([None, Some(second.clone()), Some(first.clone())]).unwrap();
-        assert_eq!(found, first);
-        adopt_input(&own, &found);
-        assert_eq!(std::fs::read(&own).unwrap(), b"[game]\nsim_pause\n25\n0\n");
-        std::fs::write(&own, b"[game]\nsim_pause\n26\n0\n").unwrap();
-        adopt_input(&own, &second);
-        assert_eq!(std::fs::read(&own).unwrap(), b"[game]\nsim_pause\n26\n0\n");
-        at(&own, 2_000_000_000);
-        assert_eq!(newest([Some(own.clone()), Some(first.clone())]), Some(own.clone()));
-        at(&first, 2_000_000_001);
-        assert_eq!(newest([Some(own.clone()), Some(first.clone())]), Some(first.clone()));
-        assert_eq!(std::fs::read_dir(own.parent().unwrap()).unwrap().count(), 1);
-        std::fs::remove_dir_all(&t).unwrap();
-        std::fs::create_dir_all(t.join("openOMSI-0.2.38")).unwrap();
-        std::fs::write(t.join("openOMSI-0.2.38").join("openomsi.exe"), b"x").unwrap();
-        std::fs::create_dir_all(t.join("photos")).unwrap();
-        assert_eq!(sibling_installs(&t.join("openOMSI-0.2.40")), vec![t.join("openOMSI-0.2.38")]);
-        std::fs::remove_dir_all(&t).unwrap();
-        assert_eq!(content_folder_of_program(Path::new("/x/Games/openOMSI.app/Contents/MacOS/openomsi")), Some(PathBuf::from("/x/Games")));
-        assert_eq!(content_folder_of_program(Path::new("/x/openOMSI-0.2.38/openomsi.exe")), Some(PathBuf::from("/x/openOMSI-0.2.38")));
     }
 
     #[test]

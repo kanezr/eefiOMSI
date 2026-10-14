@@ -2,53 +2,6 @@
 
 use super::*;
 
-/// The folder beside a situation file that keeps its bus's script textures (the
-/// destination displays, the IBIS, the ticket printer as they were drawn), as OMSI keeps
-/// them with a situation (#1559).
-pub(crate) fn script_texture_dir(osn: &Path) -> PathBuf {
-    let mut name = osn.file_name().map(|n| n.to_os_string()).unwrap_or_default();
-    name.push(".scripttex");
-    osn.with_file_name(name)
-}
-
-/// Write the player's bus's script textures beside the situation `osn` was saved to.
-pub(crate) fn save_script_textures(osn: &Path, vehicle: &omsi_sim::VehicleInstance) {
-    let all: Vec<(&[u8], u32, u32)> = vehicle.host.script_textures.iter().map(|st| (&st.rgba[..], st.width, st.height)).collect();
-    write_script_textures(osn, &all);
-}
-
-/// [`save_script_textures`] from the textures' pixels (rgba, width, height), in their order.
-pub(crate) fn write_script_textures<P: AsRef<[u8]>>(osn: &Path, textures: &[(P, u32, u32)]) {
-    let dir = script_texture_dir(osn);
-    let _ = std::fs::remove_dir_all(&dir);
-    if textures.is_empty() || std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    for (i, (rgba, width, height)) in textures.iter().enumerate() {
-        if let Err(e) = image::save_buffer(dir.join(format!("{i}.png")), rgba.as_ref(), *width, *height, image::ColorType::Rgba8) {
-            log::warn!("saving script texture {i} beside {}: {e}", osn.display());
-        }
-    }
-}
-
-/// Put the script textures saved beside the situation `osn` back on the bus. How many.
-pub(crate) fn restore_script_textures(osn: &Path, vehicle: &mut omsi_sim::VehicleInstance) -> usize {
-    let dir = script_texture_dir(osn);
-    let mut n = 0;
-    for (i, st) in vehicle.host.script_textures.iter_mut().enumerate() {
-        let Ok(img) = image::open(dir.join(format!("{i}.png"))) else { continue };
-        let img = img.to_rgba8();
-        n += usize::from(st.restore(img.width(), img.height(), img.into_raw()));
-    }
-    n
-}
-
-/// The situation file a session was started from (as `apply_situation` finds it).
-pub(crate) fn situation_file(args: &Args) -> Option<PathBuf> {
-    let rel = args.situation.as_ref()?;
-    Some(if Path::new(rel).is_absolute() { PathBuf::from(rel) } else { omsi_cfg::resolve_path(&args.root, rel) })
-}
-
 /// The depot file of a vehicle for this map: `--hof`, else the hof named by the map's
 /// `[aigroup_depot]`, else the first .hof next to the .bus file.
 pub(crate) fn find_hof(
@@ -56,21 +9,12 @@ pub(crate) fn find_hof(
     world: &World,
     vt: &omsi_sim::VehicleType,
 ) -> Option<std::sync::Arc<omsi_vehicle::Hof>> {
-    find_hof_named(args.hof.as_deref(), world, vt)
-}
-
-/// [`find_hof`] with the depot asked for (`--hof`) given alone.
-pub(crate) fn find_hof_named(
-    hof: Option<&str>,
-    world: &World,
-    vt: &omsi_sim::VehicleType,
-) -> Option<std::sync::Arc<omsi_vehicle::Hof>> {
     let dir = vt.def.dir();
     let mut names: Vec<String> = Vec::new();
-    if let Some(h) = hof {
-        names.push(h.to_string());
+    if let Some(h) = &args.hof {
+        names.push(h.clone());
     }
-    names.extend(world.map().ailists.groups.iter().filter_map(|g| g.hof.clone()));
+    names.extend(world.ailists.groups.iter().filter_map(|g| g.hof.clone()));
     // every wanted name in order: the bus's own depot files first (by file name, then by
     // the [name] inside), then the map's depot as another vehicle folder has it (a mod bus
     // brings only the depot of its own map: see `omsi_vehicle::hof::depot_anywhere`)
@@ -110,7 +54,18 @@ pub(crate) fn find_hof_named(
 }
 
 pub(crate) fn start_clock(args: &Args) -> omsi_sim::SimClock {
-    omsi_sim::SimClock::starting(args.date.as_deref(), args.day_of_year, &args.time)
+    let mut c = omsi_sim::SimClock::default();
+    if let Some(d) = &args.date {
+        let v: Vec<i32> = d.split('-').filter_map(|x| x.trim().parse().ok()).collect();
+        if v.len() == 3 {
+            c.set_date(v[0], v[1], v[2]);
+        }
+    }
+    if let Some(doy) = args.day_of_year {
+        c.day_of_year = doy.max(1);
+    }
+    c.time = parse_time(&args.time);
+    c
 }
 
 /// Fill the arguments from a situation file (`.osn`): the original's saved game state.
@@ -134,7 +89,6 @@ pub(crate) fn apply_situation(args: &mut Args) -> Result<()> {
 }
 
 pub(crate) fn apply_situation_parsed(sit: &omsi_content::situation::Situation, args: &mut Args) {
-    args.situation_odometer_km = None;
     args.map = sit.map.replace('\\', "/");
     // A map from an archive was saved as its whole path (`\Users\…\Archives\x.zip\Maps\
     // Novi Sad\global.cfg`), which then went after the root and the game closed at once:
@@ -157,14 +111,6 @@ pub(crate) fn apply_situation_parsed(sit: &omsi_content::situation::Situation, a
             sit.vehicles
                 .get(sit.my_vehicle.max(0) as usize)
                 .map(|_| sit.my_vehicle as usize)
-        });
-    // Older openOMSI wrote ordinal ids here, not mileage: 1 for the player, then 2+k
-    // for placed buses (or 2+k alone without a player). Recognize the complete old
-    // writer's pattern, including its description, so genuine OMSI starts at 8..10 km
-    // survive and even the tenth legacy bus does not acquire a 10 km reading.
-    let legacy_odometer_ids = sit.description.starts_with("Saved by the openOMSI at ")
-        && sit.vehicles.iter().enumerate().all(|(i, v)| {
-            v.odometer_km == (i + if mine == Some(0) { 1 } else { 2 }) as f64
         });
     // the map's tile grid first: a position is a tile and a place in it, and a
     // `[worldcoordinates]` map's tiles are ~372 m and scaled onto the grid
@@ -202,7 +148,6 @@ pub(crate) fn apply_situation_parsed(sit: &omsi_content::situation::Situation, a
             }
         }
         args.situation_vars = v.vars.iter().map(|(n, x)| (n.clone(), *x as f32)).collect();
-        args.situation_odometer_km = saved_odometer_km(v, legacy_odometer_ids);
         // the livery it was driven in: the scheme's index is the `Colorscheme` variable (the
         // bus came back in its default paint - the variable alone repaints nothing)
         if let Some((_, c)) = v.vars.iter().find(|(n, _)| n.eq_ignore_ascii_case("Colorscheme")).filter(|(_, c)| *c >= 0.0) {
@@ -243,29 +188,12 @@ pub(crate) fn apply_situation_parsed(sit: &omsi_content::situation::Situation, a
                 paint,
                 vars: v.vars.iter().map(|(n, x)| (n.clone(), *x as f32)).collect(),
                 strvars: v.string_vars.clone(),
-                odometer_km: saved_odometer_km(v, legacy_odometer_ids),
             }
         })
         .collect();
     if !args.situation_others.is_empty() {
         log::info!("situation: {} more vehicle(s) placed", args.situation_others.len());
     }
-}
-
-/// Prefer OMSI's saved total; old openOMSI only kept it in the script variables.
-/// A new bus starts at least at 8 km (Omsi.exe 0x7D1E42), so smaller header values
-/// are placeholders. The old writer's ordinal pattern also excludes its 8, 9, 10...
-/// ids; rejecting every reading below 10 would discard legitimate OMSI situations.
-fn saved_odometer_km(v: &omsi_content::situation::SituationVehicle, legacy_ids: bool) -> Option<f64> {
-    if !legacy_ids && v.odometer_km.is_finite() && v.odometer_km >= 8.0 {
-        return Some(v.odometer_km);
-    }
-    let var = |name: &str| v.vars.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, x)| *x);
-    let km = var("kmcounter_km")?;
-    let metres = var("kmcounter_m").unwrap_or(0.0);
-    let total = km + metres / 1000.0;
-    (km.is_finite() && metres.is_finite() && km >= 0.0 && (0.0..1000.0).contains(&metres)
-        && total.is_finite() && total >= 8.0).then_some(total)
 }
 
 /// Build a `.osn` situation from the running world: map, clock, weather and every vehicle
@@ -291,13 +219,13 @@ pub(crate) fn build_situation(
             .to_string_lossy()
             .replace('/', "\\")
     };
-    let vehicle_record = |v: &omsi_sim::VehicleInstance, mine: bool| -> SituationVehicle {
+    let vehicle_record = |v: &omsi_sim::VehicleInstance, id: f64, mine: bool| -> SituationVehicle {
         let (tile, (lx, ly)) = omsi_map::world_to_tile_local(v.position.x, v.position.y);
         // the body's rotation as OMSI writes it: a quaternion (x, y, z, w) about the up axis,
         // then three more numbers (zero for a standing vehicle)
         let h = v.heading.to_radians() / 2.0;
         let orientation = [0.0, h.sin(), 0.0, h.cos(), 0.0, 0.0, 0.0, 0.0, 0.0];
-        let vars: Vec<(String, f64)> =
+        let mut vars: Vec<(String, f64)> =
             v.ty.program
                 .var_names
                 .iter()
@@ -309,6 +237,14 @@ pub(crate) fn build_situation(
                     )
                 })
                 .collect();
+        // [ROLLBACK odometer-63] the odometer is kept even where no script declares it
+        for key in ["kmcounter_km", "kmcounter_m"] {
+            if !vars.iter().any(|(n, _)| n.eq_ignore_ascii_case(key)) {
+                if let Some(x) = v.var(key) {
+                    vars.push((key.to_string(), x as f64));
+                }
+            }
+        }
         let string_vars: Vec<(String, String)> =
             v.ty.program
                 .str_var_names
@@ -326,7 +262,7 @@ pub(crate) fn build_situation(
             pos: [lx, v.position.z, ly],
             orientation,
             tile,
-            odometer_km: v.odometer_km(),
+            id,
             paint: v
                 .host
                 .hof
@@ -344,7 +280,7 @@ pub(crate) fn build_situation(
     let mut my = -1;
     if let Some(p) = player {
         my = 0;
-        let mut rec = vehicle_record(&p.vehicle, true);
+        let mut rec = vehicle_record(&p.vehicle, 1.0, true);
         // the duty: line, tour, the trip under way and its next stop (OMSI writes two more
         // numbers whose meaning is not settled; they are left at 0 and not read back)
         if let Some(d) = duty {
@@ -361,8 +297,8 @@ pub(crate) fn build_situation(
     }
     // and the vehicles placed besides it, standing where they are (only the driven one was
     // written: a session continued with the last one alone, #139)
-    for q in placed {
-        vehicles.push(vehicle_record(&q.vehicle, false));
+    for (k, q) in placed.iter().enumerate() {
+        vehicles.push(vehicle_record(&q.vehicle, 2.0 + k as f64, false));
     }
     let (cam_tile, cam_local) = omsi_map::world_to_tile_local(camera.position.x, camera.position.y);
     Situation {
@@ -450,55 +386,6 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn saved_odometer_prefers_the_header_and_recovers_legacy_variables() {
-        use omsi_content::situation::SituationVehicle;
-        let mut v = SituationVehicle {
-            odometer_km: 75556.639,
-            vars: vec![("KMCOUNTER_KM".into(), 12345.0), ("kmcounter_m".into(), 678.0)],
-            ..Default::default()
-        };
-        assert_eq!(saved_odometer_km(&v, false), Some(75556.639));
-        for placeholder in [1.0, 2.0, 8.0, 9.0, 10.0] {
-            v.odometer_km = placeholder;
-            assert_eq!(saved_odometer_km(&v, true), Some(12345.678));
-        }
-        v.odometer_km = 1.0;
-        assert_eq!(saved_odometer_km(&v, false), Some(12345.678));
-        v.vars.clear();
-        assert_eq!(saved_odometer_km(&v, true), None);
-        for actual in [8.0, 8.5, 9.9] {
-            v.odometer_km = actual;
-            assert_eq!(saved_odometer_km(&v, false), Some(actual));
-        }
-        v.odometer_km = f64::NAN;
-        v.vars = vec![("kmcounter_km".into(), f64::INFINITY)];
-        assert_eq!(saved_odometer_km(&v, false), None);
-    }
-
-    #[test]
-    fn legacy_odometer_ids_fall_back_for_player_and_placed_buses() {
-        use omsi_content::situation::{Situation, SituationVehicle};
-        let mut sit = Situation {
-            description: "Saved by the openOMSI at 08:45".into(),
-            vehicles: (1..=10).map(|id| SituationVehicle {
-                odometer_km: id as f64,
-                is_my_vehicle: id == 1,
-                vars: vec![("kmcounter_km".into(), 12000.0 + id as f64), ("kmcounter_m".into(), 125.0)],
-                ..Default::default()
-            }).collect(),
-            ..Default::default()
-        };
-        let mut args = Args::parse_from(["openomsi"]);
-        apply_situation_parsed(&sit, &mut args);
-        assert_eq!(args.situation_odometer_km, Some(12001.125));
-        assert_eq!(args.situation_others[0].odometer_km, Some(12002.125));
-        assert_eq!(args.situation_others[8].odometer_km, Some(12010.125));
-        sit.vehicles[0].vars.clear();
-        apply_situation_parsed(&sit, &mut args);
-        assert_eq!(args.situation_odometer_km, None);
-    }
-
-    #[test]
     fn situation_others_preserve_their_colorscheme() {
         let sit = omsi_content::situation::Situation {
             map: "maps/Berlin/global.cfg".into(),
@@ -506,14 +393,12 @@ mod tests {
                 omsi_content::situation::SituationVehicle {
                     file: "Vehicles/MAN_SD200/MAN_SD77.bus".into(),
                     is_my_vehicle: true,
-                    odometer_km: 10001.125,
                     vars: vec![("Colorscheme".into(), 1.0)],
                     ..Default::default()
                 },
                 omsi_content::situation::SituationVehicle {
                     file: "Vehicles/MAN_NL_NG/MAN_EN92.bus".into(),
                     is_my_vehicle: false,
-                    odometer_km: 20002.375,
                     vars: vec![("Colorscheme".into(), 4.0)],
                     string_vars: vec![("destination".into(), "  Manual destination  ".into())],
                     ..Default::default()
@@ -524,10 +409,8 @@ mod tests {
         let mut args = crate::cli::Args::parse_from(["openomsi"]);
         apply_situation_parsed(&sit, &mut args);
         assert_eq!(args.paint.as_deref(), Some("1"));
-        assert_eq!(args.situation_odometer_km, Some(10001.125));
         assert_eq!(args.situation_others.len(), 1);
         assert_eq!(args.situation_others[0].paint.as_deref(), Some("4"));
-        assert_eq!(args.situation_others[0].odometer_km, Some(20002.375));
         assert_eq!(
             args.situation_others[0].strvars,
             vec![("destination".into(), "  Manual destination  ".into())]
@@ -584,13 +467,6 @@ mod tests {
         assert!(!args.is_resuming());
         args.situation_strvars
             .push(("destination".into(), "Manual".into()));
-        assert!(args.is_resuming());
-    }
-
-    #[test]
-    fn an_odometer_only_snapshot_is_a_resume() {
-        let mut args = Args::parse_from(["openomsi"]);
-        args.situation_odometer_km = Some(75556.639);
         assert!(args.is_resuming());
     }
 }

@@ -234,7 +234,7 @@ impl Editor {
         let k = self.editing_added?;
         let cur = self.added[k].sco.clone();
         let dir = cur.parent()?;
-        let mut all: Vec<PathBuf> = omsi_cfg::vfs::list_dir(dir)?.into_iter().map(|(n, _)| dir.join(n)).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("sco"))).collect();
+        let mut all: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("sco"))).collect();
         all.sort();
         let i = all.iter().position(|p| p == &cur).map(|i| (i + 1) % all.len()).unwrap_or(0);
         self.added[k].sco = all.get(i)?.clone();
@@ -351,10 +351,6 @@ impl Editor {
         let mut written = Vec::new();
         for ((tx, ty), edits) in by_tile {
             let src = world.tile_source(tx, ty).ok_or_else(|| format!("tile ({tx}, {ty}) is not in the map"))?;
-            // (a LAN host's map is sealed: never written out in plain form, edited or not)
-            if omsi_cfg::vfs::is_sealed(&src) {
-                return Err(format!("{} is the LAN host's map: not written", src.display()));
-            }
             let name = src.file_name().ok_or("tile without a name")?.to_owned();
             let out = content.join(map_dir).join(&name);
             // never into the installation itself
@@ -381,10 +377,6 @@ impl Editor {
         let terrains = world.terrain_edits.lock().clone();
         for ((tx, ty), t) in terrains {
             let src = world.tile_source(tx, ty).ok_or_else(|| format!("tile ({tx}, {ty}) is not in the map"))?;
-            // (a LAN host's map is sealed: never written out in plain form, edited or not)
-            if omsi_cfg::vfs::is_sealed(&src) {
-                return Err(format!("{} is the LAN host's map: not written", src.display()));
-            }
             let name = format!("{}.terrain", src.file_name().ok_or("tile without a name")?.to_string_lossy());
             let out = content.join(map_dir).join(&name);
             if let (Some(dir), Ok(r)) = (out.parent(), original.canonicalize()) {

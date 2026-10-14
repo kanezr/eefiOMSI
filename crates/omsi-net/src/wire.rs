@@ -437,9 +437,6 @@ fn put_tail(w: &mut BitWriter, pose: &Pose) {
         }
         None => w.put(0, 1),
     }
-    // later still: the bus radio key (map-wide voice while held; older games end before it)
-    w.put(1, 1);
-    w.put(pose.radio_keyed as u64, 1);
 }
 
 fn get_tail(r: &mut BitReader, p: &mut Pose) {
@@ -473,11 +470,6 @@ fn get_tail(r: &mut BitReader, p: &mut Pose) {
             w.course = (c as f64 * 360.0 / 65536.0) as f32;
         }
     }
-    // (an older game's state ends here)
-    if r.get(1).unwrap_or(0) == 0 {
-        return;
-    }
-    p.radio_keyed = r.get(1).unwrap_or(0) == 1;
 }
 
 fn put_walker(w: &mut BitWriter, walker: Option<Walker>) {
@@ -715,7 +707,6 @@ mod tests {
         p.doors = vec![0.37, 0.5, 1.0];
         p.walker = Some(Walker { x: 1.0, y: 2.0, z: 3.0, heading: 10.0, speed: 1.4, course: 100.0, seated: false, aboard: None });
         p.sent_ms = 1234;
-        p.radio_keyed = true;
         let (_, _, q) = decode_state(&encode_state(&p, 3, 0), 3).unwrap();
         // 1/255 now, not the sixteen steps of the 4 bits before the tail
         for (a, b) in q.doors.iter().zip(&p.doors) {
@@ -723,7 +714,6 @@ mod tests {
         }
         let w = q.walker.unwrap();
         assert!((w.course - 100.0).abs() < 0.01 && (w.heading - 10.0).abs() < 0.01);
-        assert!(q.radio_keyed);
     }
 
     #[test]

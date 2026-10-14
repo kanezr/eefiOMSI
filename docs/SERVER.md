@@ -64,15 +64,12 @@ the player into the channel `voice_channel` (its id or its name, with
 `voice_channel_password`) and renames them `<name> #<player id>` - the name every other
 game of the session gives them there - and the game tells it ten times a second where the
 camera is and where everybody else is. A player who is speaking has "speaking" under their
-name tag. With `voice_radio` on (the default), a driver is put on a map-wide **bus radio**
-automatically: hold the bindable *Multiplayer: bus radio* key (Controls; X by default) to
-transmit to every other driver on the map while proximity voice still reaches people next
-to the bus; their name tag shows "radio". A player hosting by code names the voice server in
-`~/.openomsi/voice.cfg` with the same keys. Settings → General → *Voice chat through
-GreenTeaSpeak* switches it off. `voice_channel_password` is sent to every player who joins
-(their game needs it to enter the channel): it keeps strangers on the voice server out of
-the channel, not the server's own players. The settings together must fit a chat command
-(160 characters after encoding), or the server says so in its log and has no voice chat.
+name tag. A player hosting by code names the voice server in `~/.openomsi/voice.cfg` with
+the same keys. Settings → General → *Voice chat through GreenTeaSpeak* switches it off.
+`voice_channel_password` is sent to every player who joins (their game needs it to enter
+the channel): it keeps strangers on the voice server out of the channel, not the server's
+own players. The three settings together must fit a chat command (160 characters after
+encoding), or the server says so in its log and has no voice chat.
 
 The same gateway and tunnel open for a player hosting by **code** (Connect by Code): its
 address goes to the rendezvous topic, and a joining game that gets no answer from the

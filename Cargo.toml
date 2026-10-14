@@ -14,29 +14,13 @@ members = [
     "crates/omsi-geometry",
     "crates/omsi-render",
     "crates/omsi-sim",
-    "crates/omsi-htmlengine",
     "crates/omsi-audio",
     "crates/omsi-net",
     "crates/omsi-plugin",
     "crates/omsi-plugin/demo",
     "crates/omsi-ui",
     "crates/omsi-launcher-core",
-    "crates/omsi-launcher-api",
-    "crates/omsi-launcher-model",
-    "crates/omsi-lan",
-    "crates/omsi-platform",
-    "crates/omsi-guard",
-    "crates/omsi-input",
-    "crates/omsi-xr",
-    "crates/omsi-plugin-ui",
-    "crates/omsi-weather",
-    "crates/omsi-career",
-    "crates/omsi-soundscape",
-    "crates/omsi-world",
-    "crates/omsi-scene",
-    "crates/omsi-photo",
     "crates/omsi-app",
-    "crates/omsi-srcscan",
     "tools/omsi-check",
 ]
 exclude = ["launcher/src-tauri"]
@@ -61,8 +45,6 @@ clap = { version = "4", features = ["derive"] }
 hashbrown = "0.17"
 smallvec = "1"
 parking_lot = "0.12"
-# (the world snapshot the simulation reads without a lock: `omsi-sim::world_data`)
-arc-swap = "1.7"
 rand = "0.9"
 wgpu = { version = "29", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "dx12", "gles", "wgsl", "noop"] }
 # wgpu's parts that are used directly: always wgpu's own version, or their types do not
@@ -72,15 +54,12 @@ naga = "29"
 winit = "0.30"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
-# (every picture format a mod or a photo may come in; DDS and TGA have readers of our own)
-image = { version = "0.25", default-features = false, features = ["png", "bmp", "tga", "dds", "jpeg", "webp", "gif", "tiff", "hdr", "exr", "pnm", "qoi", "ico", "ff"] }
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "tga", "dds", "jpeg"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 ureq = { version = "2", default-features = false, features = ["tls"] }
 sha2 = "0.10"
-# the LAN mods' encryption (X25519, HKDF, ChaCha20-Poly1305) and omsi-net's signatures
-ring = "0.17"
 flate2 = "1"
 ab_glyph = "0.2"
 rfd = "0.15"
@@ -108,17 +87,3 @@ strip = "debuginfo"
 # the Security audit workflow fails when Cargo.lock lists one as unused)
 [patch.crates-io]
 gpu-allocator = { git = "https://github.com/openOMSI-Project/gpu-allocator", rev = "6ad8a7eeb9c3e1dcd65656f718c593a0a1a3915d" }
-# wgpu from the org's fork (upstream v29.0.4 plus fixes): GL texture units sized from the driver,
-# the GL context released while a thread waits for the GPU, errors instead of panics on driver
-# failures, Adapter::memory_info, GLES over ANGLE (Direct3D 11) on Windows, and fixes backported from
-# v30 (Vulkan acquire fence, out-of-memory checks, DX12 textureNumLevels, 3D texture init); every crate of the
-# fork that Cargo.lock lists is patched, or the fork's and crates.io's halves would not match
-wgpu = { git = "https://github.com/openOMSI-Project/wgpu-openomsi", rev = "4eb06e5bf8062be2978d93e95556a4dd83f1d3b8" }
-wgpu-core = { git = "https://github.com/openOMSI-Project/wgpu-openomsi", rev = "4eb06e5bf8062be2978d93e95556a4dd83f1d3b8" }
-wgpu-core-deps-apple = { git = "https://github.com/openOMSI-Project/wgpu-openomsi", rev = "4eb06e5bf8062be2978d93e95556a4dd83f1d3b8" }
-wgpu-core-deps-emscripten = { git = "https://github.com/openOMSI-Project/wgpu-openomsi", rev = "4eb06e5bf8062be2978d93e95556a4dd83f1d3b8" }
-wgpu-core-deps-windows-linux-android = { git = "https://github.com/openOMSI-Project/wgpu-openomsi", rev = "4eb06e5bf8062be2978d93e95556a4dd83f1d3b8" }
-wgpu-hal = { git = "https://github.com/openOMSI-Project/wgpu-openomsi", rev = "4eb06e5bf8062be2978d93e95556a4dd83f1d3b8" }
-wgpu-types = { git = "https://github.com/openOMSI-Project/wgpu-openomsi", rev = "4eb06e5bf8062be2978d93e95556a4dd83f1d3b8" }
-wgpu-naga-bridge = { git = "https://github.com/openOMSI-Project/wgpu-openomsi", rev = "4eb06e5bf8062be2978d93e95556a4dd83f1d3b8" }
-naga = { git = "https://github.com/openOMSI-Project/wgpu-openomsi", rev = "4eb06e5bf8062be2978d93e95556a4dd83f1d3b8" }
