@@ -44,7 +44,7 @@ with the English text as the key. A pull request that changes it is checked auto
   opens again by itself once it is edited into English. Logs and game text can stay as
   they are.
 * One problem or idea per issue, on the latest release. Questions go to the
-  [Discord server](https://discord.gg/FQpVKtVJxD).
+  [Discord server](https://discord.gg/unmX7BXuB8).
 * New issues are sorted automatically: the form's "What is it about?" becomes an `area:`
   label and the issue gets a first milestone (a regression or a crash: v0.1.x), which the
   maintainers move when it fits better elsewhere. A crash report with the same panic as an
