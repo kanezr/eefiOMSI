@@ -15,7 +15,7 @@
 > [!WARNING]
 > **Early release. Expect bugs.** openOMSI is in an early stage of development: things may be
 > missing, broken or change between versions. Please report problems in
-> [Issues](https://github.com/kanezr/eefiOMSI/issues) or on the discord server.
+> [Issues](https://github.com/kanezr/eefiOMSI/issues) or in the [discord server](https://discord.gg/unmX7BXuB8).
 
 **openOMSI** is a from-scratch recreation of the bus simulator **OMSI 2**, written in Rust:
 64-bit, multithreaded, with a modern renderer (Metal / Vulkan / DirectX 12 through wgpu),
