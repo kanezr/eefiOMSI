@@ -113,6 +113,26 @@ fn nordic(b: u8) -> bool {
     matches!(b, 0xE6 | 0xE5 | 0xC6 | 0xC5)
 }
 
+/// Bytes that are Serbian, Croatian, Bosnian or Slovene letters in Windows-1250 and other
+/// letters in 1252: Č č (È è), Ć ć (Æ æ), Đ đ (Ð ð). Š Ž š ž are the same bytes in both,
+/// so a stop list with them alone reads right either way.
+fn south_slavic(b: u8) -> bool {
+    matches!(b, 0xC8 | 0xE8 | 0xC6 | 0xE6 | 0xD0 | 0xF0)
+}
+
+/// Š Ž š ž: the same bytes in 1250 and 1252, a sign a text is from these parts at all.
+fn s_z_caron(b: u8) -> bool {
+    matches!(b, 0x8A | 0x8E | 0x9A | 0x9E)
+}
+
+/// Letters a Western text has and a South Slavic one never: every accented letter of
+/// Windows-1252 but the three that are č ć đ there (è æ ð) and the shared š ž - à á â ã ä å
+/// ç é ê ë ì í î ï ñ ò ó ô õ ö ø ù ú û ü ý ÿ and their capitals. Serbian, Croatian, Bosnian
+/// and Slovene write none of them.
+fn western_only(b: u8) -> bool {
+    matches!(b, 0xC0..=0xC5 | 0xC7 | 0xC9..=0xCF | 0xD1..=0xD6 | 0xD8..=0xDD | 0xE0..=0xE5 | 0xE7 | 0xE9..=0xEF | 0xF1..=0xF6 | 0xF8..=0xFD | 0xFF)
+}
+
 /// The code page `bytes` (without a byte-order mark) were most likely written in.
 ///
 /// * valid UTF-8 with anything beyond ASCII in it is UTF-8 (newer mods);
@@ -194,6 +214,17 @@ fn detect_on(bytes: &[u8], system: Option<CodePage>) -> CodePage {
         })
         .count();
     if czech >= 2 && czech > bytes.iter().filter(|b| nordic(**b)).count() {
+        return CodePage::Windows1250;
+    }
+    // "BEČEJ", "Sremčica", "Ćuprija": a Serbian or Croatian letter inside a word, beside
+    // a Š or Ž in the same file (a stop list from these parts always has one; French and
+    // Danish never do), and no letter only a Western text has ("Næstved", "Première")
+    let south = bytes
+        .iter()
+        .enumerate()
+        .filter(|(i, b)| south_slavic(**b) && letter(Some(i + 1)) && (**b < 0xE0 || letter(i.checked_sub(1))))
+        .count();
+    if south >= 1 && bytes.iter().any(|b| s_z_caron(*b)) && !bytes.iter().any(|b| western_only(*b)) {
         return CodePage::Windows1250;
     }
     if system == Some(CodePage::Windows1250) {
@@ -345,6 +376,9 @@ mod tests {
 
     #[test]
     fn detects_the_code_page() {
+        // Test the heuristic independently of this machine's ANSI code page.
+        // System overrides are exercised explicitly in the tests below.
+        let detect = |bytes: &[u8]| detect_on(bytes, None);
         assert_eq!(detect(&cp1251("[friendlyname]\r\nЛиАЗ\r\n5292.20\r\nЗаводская\r\n")), CodePage::Windows1251);
         assert_eq!(detect(&cp1251("верх.png")), CodePage::Windows1251);
         // German never has three accented letters in a row, even with "Größe"
@@ -378,6 +412,22 @@ mod tests {
         // and a Czech Windows still finds Russian and UTF-8 text
         assert_eq!(detect_on(&cp1251("Улица Ленина"), Some(CodePage::Windows1250)), CodePage::Windows1251);
         assert_eq!(detect_on("Liběchov".as_bytes(), Some(CodePage::Windows1250)), CodePage::Utf8);
+    }
+
+    #[test]
+    fn detects_serbian_and_croatian() {
+        let cp1250 = |s: &str| encoding_rs::WINDOWS_1250.encode(s).0.into_owned();
+        assert_eq!(detect_on(&cp1250("BEČEJ, ŽABALJ, NOVI SAD"), None), CodePage::Windows1250);
+        assert_eq!(detect_on(&cp1250("Sremčica, Ćuprija, Đurđevo, Šabac"), None), CodePage::Windows1250);
+        // without a Š or Ž beside them the letters read the same as French è and Danish æ
+        assert_eq!(detect_on(&cp1250("Sremčica, Ćuprija"), None), CodePage::Windows1252);
+        assert_eq!(detect_on(&cp1250("ČUKARICKA PADINA, ZA GARAŽU"), None), CodePage::Windows1250);
+        assert_eq!(detect_on(&cp1250("Avijatičarsko naselje, Žel. stanica"), None), CodePage::Windows1250);
+        // Western text keeps its page
+        assert_eq!(detect_on(&cp1252("Genève, Lausanne"), None), CodePage::Windows1252);
+        assert_eq!(detect_on(&cp1252("Grève à Genève, Neuchâtel"), None), CodePage::Windows1252);
+        assert_eq!(detect_on(&cp1252("Næstved, Køge, Ålborg"), None), CodePage::Windows1252);
+        assert_eq!(detect_on(&cp1252("Größe, Straße, Köln"), None), CodePage::Windows1252);
     }
 
     #[test]

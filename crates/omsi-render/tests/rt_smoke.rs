@@ -1,4 +1,4 @@
-//! Enhanced+'s ray tracing on whatever adapter this machine has (`OMSI_RT=1`: on Vulkan and
+//! Enhanced+'s ray tracing on whatever adapter this machine has (on Vulkan and
 //! Direct3D 12 as well as on Metal): a small scene drawn for several frames must raise no
 //! device error. CI runs it on Mesa's lavapipe (Vulkan, VK_KHR_ray_query) and on WARP
 //! (Direct3D 12), where no graphics card is needed. (A test binary of its own: the switch
@@ -37,7 +37,6 @@ fn box_mesh(c: Vec3, h: Vec3) -> MeshData {
 #[ignore = "needs a GPU adapter (rt_check.yml)"]
 fn ray_traced_frames_raise_no_device_error() {
     let _ = env_logger::builder().is_test(false).filter_level(log::LevelFilter::Warn).try_init();
-    std::env::set_var("OMSI_RT", "1");
     println!("creating the renderer");
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let mut renderer = pollster::block_on(Renderer::new_with(
@@ -48,7 +47,7 @@ fn ray_traced_frames_raise_no_device_error() {
     ))
     .expect("renderer");
     println!("adapter: {} {:?}", renderer.adapter_name, renderer.device.features());
-    let traced = renderer.device.features().contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) && std::env::var_os("OMSI_NO_RT").is_none();
+    let traced = renderer.device.features().contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) && omsi_cfg::flags::OMSI_NO_RT.live_os().is_none();
     println!("ray queries: {traced}");
     let mut scene = renderer.new_scene();
     let ground = renderer.add_mesh(&mut scene, &box_mesh(Vec3::new(0.0, 0.0, -0.5), Vec3::new(60.0, 60.0, 0.5)));
@@ -93,7 +92,6 @@ fn ray_traced_frames_raise_no_device_error() {
 #[ignore = "needs a GPU adapter (rt_check.yml)"]
 fn a_map_sized_scene_traces_without_device_errors() {
     let _ = env_logger::builder().is_test(false).filter_level(log::LevelFilter::Warn).try_init();
-    std::env::set_var("OMSI_RT", "1");
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let mut renderer = pollster::block_on(Renderer::new_with(
         &instance,

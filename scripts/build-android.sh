@@ -53,13 +53,17 @@ fi
 
 # --- the activity (Java)
 "$JAVA_HOME/bin/javac" -source 8 -target 8 -nowarn -Xlint:-options -encoding UTF-8 \
-    -classpath "$ANDROID_JAR" -d "$build/classes" android/java/org/openomsi/game/OmsiActivity.java
+    -classpath "$ANDROID_JAR" -d "$build/classes" android/java/org/openomsi/game/OmsiActivity.java android/java/org/openomsi/game/LauncherBridge.java
 "$BUILD_TOOLS/d8" --release --min-api 26 --lib "$ANDROID_JAR" --output "$build/apk" \
     $(find "$build/classes" -name '*.class')
 
+# --- the launcher page (the desktop launcher's, shown in a web view over the window)
+mkdir -p "$build/assets/launcher"
+cp -R launcher/ui "$build/assets/launcher/ui"
+
 # --- the package
 sed -e "s/@VERSION_CODE@/$code/" -e "s/@VERSION_NAME@/$version/" -e "s/android:label=\"openOMSI\"/android:label=\"$label\"/"     android/AndroidManifest.xml > "$build/AndroidManifest.xml"
-"$BUILD_TOOLS/aapt" package -f --rename-manifest-package "$package" -M "$build/AndroidManifest.xml" -S android/res -I "$ANDROID_JAR" -F "$build/unsigned.apk"
+"$BUILD_TOOLS/aapt" package -f --rename-manifest-package "$package" -M "$build/AndroidManifest.xml" -S android/res -A "$build/assets" -I "$ANDROID_JAR" -F "$build/unsigned.apk"
 ( cd "$build/apk" && "$BUILD_TOOLS/aapt" add ../unsigned.apk classes.dex lib/arm64-v8a/* >/dev/null )
 "$BUILD_TOOLS/zipalign" -f -p 4 "$build/unsigned.apk" "$build/aligned.apk"
 key=android/debug.keystore

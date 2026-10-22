@@ -193,7 +193,7 @@ fn read_addresses() -> Vec<LocalAddr> {
     let routed = default_route_ip();
     list.sort_by_key(|a| (a.kind.rank(), Some(a.ip) != routed, a.interface.clone()));
     list.dedup_by_key(|a| a.ip);
-    if let Ok(v) = std::env::var("OMSI_LAN_IP") {
+    if let Ok(v) = omsi_cfg::flags::OMSI_LAN_IP.live_var() {
         let forced: Vec<Ipv4Addr> = v
             .split([',', ' ', ';'])
             .filter_map(|s| s.trim().parse().ok())
@@ -337,6 +337,12 @@ pub fn parse_ipconfig(text: &str) -> Vec<LocalAddr> {
         }
     }
     out
+}
+
+pub fn is_local_peer(addr: std::net::SocketAddr) -> bool {
+    let std::net::SocketAddr::V4(a) = addr else { return false };
+    let ip = *a.ip();
+    ip.is_loopback() || classify(ip, "") != AddrKind::Public || local_addresses().iter().any(|l| l.ip.octets()[..3] == ip.octets()[..3])
 }
 
 /// The addresses another player may join at, best first: those of `local_addresses` a

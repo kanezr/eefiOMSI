@@ -1,0 +1,367 @@
+# The ambience's slots: what the game asks for by name, and what the pack builder files each
+# recording under. A slot holds any number of recordings; the game takes turns between them.
+#
+# kind = "bed"    a layer that plays continuously while its conditions hold, faded by weight;
+#                 cut to `length` seconds of the calmest stretch, played with crossfades
+#                 between takes (no loop point is needed in the file)
+# kind = "event"  a one-shot scattered in time (and placed around the listener in 3D);
+#                 long recordings are cut into several calls of `min`..`max` seconds
+# kind = "point"  a sound attached to a verified map object or a spline; looped like a bed
+#                 or fired like an event, as `mode` says
+# kind = "ir"     an impulse response (kept for the echo of tunnels and courtyards)
+
+# ---------------------------------------------------------------- places (beds)
+[slot."place.city_day"]
+kind = "bed"
+about = "dense town centre, distant traffic wash between buildings, day"
+[slot."place.city_night"]
+kind = "bed"
+about = "town at night: far hum, an occasional far car"
+[slot."place.courtyard_day"]
+kind = "bed"
+about = "apartment-block courtyard (Hinterhof) by day: distant city, far voices, birds"
+[slot."place.courtyard_night"]
+kind = "bed"
+about = "courtyard in the evening / at night"
+[slot."place.suburb"]
+kind = "bed"
+about = "detached houses: quiet, a distant road, garden birds"
+[slot."place.village"]
+kind = "bed"
+about = "very quiet rural village, distant farm machinery"
+[slot."place.motorway"]
+kind = "bed"
+about = "distant motorway roar (300-1000 m) - placed along fast multi-lane roads"
+[slot."place.arterial"]
+kind = "bed"
+about = "distant arterial road"
+[slot."place.railway"]
+kind = "bed"
+about = "rail yard / station area hum near bundles of tracks"
+[slot."place.industrial"]
+kind = "bed"
+about = "industrial area: factory hum, ventilation"
+[slot."place.tunnel"]
+kind = "bed"
+about = "empty reverberant room tone: tunnel, underpass, under a bridge"
+
+# ---------------------------------------------------------------- nature (beds)
+[slot."nature.dawn_urban"]
+kind = "bed"
+about = "spring/summer dawn chorus in an urban park or garden"
+[slot."nature.dawn_wood"]
+kind = "bed"
+about = "dawn chorus in woodland"
+[slot."nature.wood_deciduous"]
+kind = "bed"
+about = "daytime deciduous woodland in summer"
+[slot."nature.wood_conifer"]
+kind = "bed"
+about = "coniferous forest"
+[slot."nature.wood_winter"]
+kind = "bed"
+about = "winter forest: sparse and quiet"
+[slot."nature.field_summer"]
+kind = "bed"
+about = "open field/meadow in summer: skylark, grasshoppers"
+[slot."nature.field_autumn"]
+kind = "bed"
+about = "autumn field"
+[slot."nature.night_crickets"]
+kind = "bed"
+about = "warm summer night: crickets, bush-crickets"
+[slot."nature.night_country"]
+kind = "bed"
+about = "quiet countryside night"
+[slot."nature.water"]
+kind = "bed"
+about = "pond/lake shore: water lapping, ducks, coots - placed at the map's water"
+[slot."nature.frogs"]
+kind = "bed"
+about = "spring frog chorus - at the map's water, spring evenings"
+[slot."nature.garden"]
+kind = "bed"
+about = "urban courtyard/garden birds with faint distant city"
+[slot."nature.bees"]
+kind = "bed"
+about = "bees on flowers, summer days near foliage"
+
+# ---------------------------------------------------------------- weather (beds)
+[slot."rain.light"]
+kind = "bed"
+[slot."rain.moderate"]
+kind = "bed"
+[slot."rain.heavy"]
+kind = "bed"
+[slot."rain.asphalt"]
+kind = "bed"
+about = "rain on a street"
+[slot."rain.foliage"]
+kind = "bed"
+about = "rain on leaves (scaled by the trees around)"
+[slot."rain.shelter"]
+kind = "bed"
+about = "rain on a shelter roof, heard from underneath"
+[slot."rain.puddles"]
+kind = "bed"
+[slot."rain.downpipe"]
+kind = "bed"
+about = "gutters and downpipes gurgling (built-up places, while and after rain)"
+[slot."rain.drain"]
+kind = "bed"
+about = "water running in a street gutter into a drain"
+[slot."rain.drips"]
+kind = "bed"
+about = "drips from trees after the rain"
+[slot."snow.light"]
+kind = "bed"
+about = "light snowfall, a muffled town"
+[slot."snow.wet"]
+kind = "bed"
+about = "wet snow / sleet"
+[slot."snow.blizzard"]
+kind = "bed"
+about = "blizzard: wind and snow"
+[slot."hail"]
+kind = "bed"
+about = "hail on street and roofs"
+[slot."wind.light"]
+kind = "bed"
+[slot."wind.moderate"]
+kind = "bed"
+[slot."wind.strong"]
+kind = "bed"
+[slot."wind.deciduous"]
+kind = "bed"
+about = "wind through trees in leaf"
+[slot."wind.conifer"]
+kind = "bed"
+about = "wind through conifers"
+[slot."wind.bare"]
+kind = "bed"
+about = "wind through bare winter branches"
+[slot."wind.leaves_ground"]
+kind = "bed"
+about = "dry autumn leaves skittering on pavement"
+[slot."wind.wires"]
+kind = "bed"
+about = "wind singing in overhead wires (near catenary and cable splines)"
+
+# ---------------------------------------------------------------- weather (events)
+[slot."thunder.close"]
+kind = "event"
+[slot."thunder.mid"]
+kind = "event"
+[slot."thunder.far"]
+kind = "event"
+[slot."thunder.rain"]
+kind = "event"
+about = "thunder with rain baked in"
+
+# ---------------------------------------------------------------- creatures (events)
+# one slot per species; the game schedules them by season, hour and place
+[slot."bird.blackbird"]
+kind = "event"
+[slot."bird.robin"]
+kind = "event"
+[slot."bird.chaffinch"]
+kind = "event"
+[slot."bird.great_tit"]
+kind = "event"
+[slot."bird.blue_tit"]
+kind = "event"
+[slot."bird.sparrow"]
+kind = "event"
+[slot."bird.wood_pigeon"]
+kind = "event"
+[slot."bird.feral_pigeon"]
+kind = "event"
+[slot."bird.swift"]
+kind = "event"
+[slot."bird.crow"]
+kind = "event"
+[slot."bird.rook"]
+kind = "event"
+[slot."bird.jackdaw"]
+kind = "event"
+[slot."bird.magpie"]
+kind = "event"
+[slot."bird.starling"]
+kind = "event"
+[slot."bird.skylark"]
+kind = "event"
+[slot."bird.tawny_owl"]
+kind = "event"
+[slot."bird.nightingale"]
+kind = "event"
+[slot."bird.cuckoo"]
+kind = "event"
+[slot."bird.woodpecker"]
+kind = "event"
+[slot."bird.geese"]
+kind = "event"
+about = "geese flying over (spring/autumn migration)"
+[slot."bird.mallard"]
+kind = "event"
+[slot."bird.gull"]
+kind = "event"
+[slot."animal.dog"]
+kind = "event"
+about = "distant dog barking"
+[slot."animal.cow"]
+kind = "event"
+[slot."animal.rooster"]
+kind = "event"
+[slot."animal.frog"]
+kind = "event"
+about = "single frog/toad calls"
+
+# ---------------------------------------------------------------- distant life (events)
+[slot."far.aircraft"]
+kind = "event"
+[slot."far.helicopter"]
+kind = "event"
+[slot."far.siren_de"]
+kind = "event"
+[slot."far.siren_uk"]
+kind = "event"
+[slot."far.lawnmower"]
+kind = "event"
+[slot."far.chainsaw"]
+kind = "event"
+[slot."far.tractor"]
+kind = "event"
+[slot."far.door"]
+kind = "event"
+about = "building entrance door slam"
+[slot."far.bin_lorry"]
+kind = "event"
+about = "rubbish truck, weekday mornings"
+[slot."far.snow_shovel"]
+kind = "event"
+[slot."far.leaf_blower"]
+kind = "event"
+[slot."far.fireworks"]
+kind = "event"
+about = "New Year's Eve fireworks"
+[slot."far.train"]
+kind = "event"
+about = "a distant train passing (near rail lines)"
+[slot."far.rail_clatter"]
+kind = "event"
+[slot."far.forklift"]
+kind = "event"
+about = "forklift reversing beeps (industrial)"
+[slot."crowd.de"]
+kind = "bed"
+about = "unintelligible German-speaking groups, distant"
+[slot."crowd.en"]
+kind = "bed"
+about = "unintelligible English-speaking groups, distant"
+
+# ---------------------------------------------------------------- map objects (points)
+[slot."church.peal_protestant"]
+kind = "point"
+mode = "event"
+[slot."church.peal_catholic"]
+kind = "point"
+mode = "event"
+[slot."church.strike"]
+kind = "point"
+mode = "event"
+about = "single hour strokes (cut one stroke per file where possible)"
+[slot."church.angelus"]
+kind = "point"
+mode = "event"
+[slot."church.change_ringing"]
+kind = "point"
+mode = "event"
+about = "English change ringing (left-hand-traffic maps)"
+[slot."school.gong"]
+kind = "point"
+mode = "event"
+[slot."school.bell"]
+kind = "point"
+mode = "event"
+[slot."school.yard"]
+kind = "point"
+mode = "loop"
+about = "schoolyard at break time"
+[slot."kindergarten.yard"]
+kind = "point"
+mode = "loop"
+[slot."petrol.forecourt"]
+kind = "point"
+mode = "loop"
+[slot."supermarket.outside"]
+kind = "point"
+mode = "loop"
+[slot."imbiss.outside"]
+kind = "point"
+mode = "loop"
+[slot."pool.outdoor"]
+kind = "point"
+mode = "loop"
+[slot."sports.football"]
+kind = "point"
+mode = "loop"
+[slot."sports.tennis"]
+kind = "point"
+mode = "loop"
+[slot."pigeons.loft"]
+kind = "point"
+mode = "loop"
+[slot."farm.yard"]
+kind = "point"
+mode = "loop"
+[slot."farm.tractor"]
+kind = "point"
+mode = "event"
+[slot."depot.yard"]
+kind = "point"
+mode = "loop"
+[slot."depot.air"]
+kind = "point"
+mode = "event"
+about = "air-brake / compressor hiss"
+[slot."workshop.metal"]
+kind = "point"
+mode = "loop"
+[slot."roadworks"]
+kind = "point"
+mode = "loop"
+[slot."hum.substation"]
+kind = "point"
+mode = "loop"
+[slot."hum.lamp"]
+kind = "point"
+mode = "loop"
+about = "sodium street lamp buzz"
+[slot."station.platform"]
+kind = "point"
+mode = "loop"
+[slot."station.announce"]
+kind = "point"
+mode = "event"
+[slot."station.door_warning"]
+kind = "point"
+mode = "event"
+about = "S-Bahn Berlin door-closing signal"
+[slot."crossing.bell"]
+kind = "point"
+mode = "event"
+[slot."ped.blind_de"]
+kind = "point"
+mode = "loop"
+about = "German acoustic pedestrian signal (tack-tack)"
+[slot."ped.puffin_uk"]
+kind = "point"
+mode = "loop"
+
+# ---------------------------------------------------------------- echo
+[slot."ir.tunnel"]
+kind = "ir"
+[slot."ir.street"]
+kind = "ir"
+[slot."ir.courtyard"]
+kind = "ir"

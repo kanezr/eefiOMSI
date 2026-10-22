@@ -1,5 +1,5 @@
 // openOMSI Voice - a GreenTeaSpeak 2 plugin (@greentea/plugin-sdk) for positional voice in
-// openOMSI multiplayer, the way SaltyChat does it for FiveM.
+// openOMSI multiplayer, the way SaltyChat does it for FiveM, plus a map-wide bus radio.
 //
 // The game (crates/omsi-app/src/voice.rs) connects to 127.0.0.1:38088 and sends one JSON
 // object a line:
@@ -7,12 +7,14 @@
 //             Whatever else connects (a web page posting to the port, another program) is
 //             hung up on; one game is linked at a time. Answered with welcome / refused.
 //   initiate  {serverUid, channel, password, nickname, range}: go to the session's channel
-//   self      {x, y, z, yaw}: the listener (yaw in degrees, SaltyChat's Rotation)
-//   players   {players: [{nickname, x, y, z, range, volume}]}: everybody else who can be heard
+//   self      {x, y, z, yaw, onRadio, keyed}: the listener; keyed opens the mic for the
+//             bus radio while held (proximity voice keeps working for people nearby)
+//   players   {players: [{nickname, x, y, z, range, volume, radio}], onRadio}: everybody
+//             else; radio=true places them at the listener (map-wide) with a radio feel
 //   reset     the session is over: 3D voice off, the nickname and channel as before
 // and is told back:
 //   state     {connected, inChannel, error}
-//   talk      {nickname, talking}
+//   talk      {nickname, talking, radio}
 //   mute      {microphoneMuted, soundMuted}
 //
 // Plain JavaScript (ES module, no dependencies, no build step): the SDK's types are only
@@ -35,6 +37,8 @@ const MAX_LINE = 64 * 1024;
 /** The game's hello is at most this long and comes within this long (ms). */
 const MAX_HELLO = 1024;
 const HELLO_MS = 5000;
+/** How loud a map-wide radio transmission is (volumeOverride 0..1). */
+const RADIO_VOLUME = 0.78;
 
 let ctx = null;
 let server = null;
@@ -54,6 +58,14 @@ const clients = new Map();
 let posed = new Set();
 /** The user's nickname and channel before the session moved them: back there after it. */
 let before = null;
+/** Last listener pose (for placing radio transmitters at the ear). */
+let listener = { x: 0, y: 0, z: 0, yaw: 0 };
+/** We drive a bus and are on the company radio. */
+let onRadio = false;
+/** We are holding the in-game radio key. */
+let keyed = false;
+/** Nicknames currently heard as radio (for talk events). */
+const radioNicks = new Set();
 
 function send(sock, msg) {
   if (!sock.destroyed) sock.write(JSON.stringify(msg) + "\n");
@@ -170,6 +182,9 @@ async function reset() {
   before = null;
   clients.clear();
   posed = new Set();
+  radioNicks.clear();
+  onRadio = false;
+  await setKeyed(false);
   try {
     await ctx.voice.resetSpatial();
     await ctx.voice.setSpatialEnabled(false);
@@ -206,25 +221,71 @@ async function clientIdOf(nickname) {
   return clientId;
 }
 
+/** Open or close the mic for the bus radio key (best effort across SDK shapes). */
+async function setKeyed(on) {
+  if (on === keyed) return;
+  keyed = on;
+  const v = ctx.voice;
+  const c = ctx.connection;
+  try {
+    if (typeof v.setTalking === "function") await v.setTalking(on);
+    else if (typeof v.setPushToTalk === "function") await v.setPushToTalk(on);
+    else if (typeof v.startVoiceTransmission === "function") {
+      if (on) await v.startVoiceTransmission();
+      else if (typeof v.stopVoiceTransmission === "function") await v.stopVoiceTransmission();
+    } else if (typeof c.setInputDeactivated === "function") await c.setInputDeactivated(!on);
+    else if (typeof c.startVoiceRecording === "function") {
+      // TeamSpeak-style: forces the capture path open while "recording"
+      if (on) await c.startVoiceRecording();
+      else if (typeof c.stopVoiceRecording === "function") await c.stopVoiceRecording();
+    }
+  } catch (e) {
+    ctx.log.warn("radio key", e);
+  }
+}
+
 async function placeSelf(m) {
+  listener = { x: m.x, y: m.y, z: m.z, yaw: m.yaw };
+  onRadio = !!m.onRadio;
+  await setKeyed(!!m.keyed);
   await ctx.voice.setListenerPose({ x: m.x, y: m.y, z: m.z, yawDeg: m.yaw });
 }
 
 async function placePlayers(m) {
+  const hearRadio = onRadio || !!m.onRadio;
   const now = new Set();
+  const nextRadio = new Set();
   for (const p of m.players || []) {
-    const id = await clientIdOf(String(p.nickname));
+    const nick = String(p.nickname);
+    const id = await clientIdOf(nick);
     if (id === null || id === undefined) continue;
     now.add(id);
-    await ctx.voice.setClientPose(id, {
-      x: p.x,
-      y: p.y,
-      z: p.z,
-      voiceRange: p.range,
-      alive: true,
-      volumeOverride: typeof p.volume === "number" ? p.volume : null,
-    });
+    const asRadio = hearRadio && !!p.radio;
+    if (asRadio) nextRadio.add(nick);
+    if (asRadio) {
+      // map-wide: at the listener, fixed loudness, slight radio feel (volumeOverride)
+      await ctx.voice.setClientPose(id, {
+        x: listener.x,
+        y: listener.y,
+        z: listener.z,
+        voiceRange: 50,
+        alive: true,
+        volumeOverride: RADIO_VOLUME,
+        radio: true,
+      });
+    } else {
+      await ctx.voice.setClientPose(id, {
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        voiceRange: p.range,
+        alive: true,
+        volumeOverride: typeof p.volume === "number" ? p.volume : null,
+      });
+    }
   }
+  radioNicks.clear();
+  for (const n of nextRadio) radioNicks.add(n);
   // (a player gone from the session or out of reach: heard as without the plugin no more)
   for (const id of posed) {
     if (!now.has(id)) {
@@ -373,7 +434,9 @@ export default {
     const port = Number(await ctx.storage.get("port")) || DEFAULT_PORT;
     keyFile = String((await ctx.storage.get("keyFile")) || "") || defaultKeyFile();
     unsubscribe.push(
-      ctx.events.onTalkState((ev) => broadcast({ type: "talk", nickname: ev.name, talking: ev.talking })),
+      ctx.events.onTalkState((ev) =>
+        broadcast({ type: "talk", nickname: ev.name, talking: ev.talking, radio: radioNicks.has(ev.name) || (keyed && session && ev.name === session.nickname) }),
+      ),
       ctx.events.onMuteState((ev) => broadcast({ type: "mute", microphoneMuted: ev.microphoneMuted, soundMuted: ev.soundMuted })),
       ctx.events.onConnectionChange((ev) => {
         clients.clear();

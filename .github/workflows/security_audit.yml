@@ -1,0 +1,65 @@
+# The crates of both lock files (the game's Cargo.lock and the launcher's own,
+# launcher/src-tauri/Cargo.lock) against the RustSec advisory database: when a lock file
+# changes, and every Monday, since advisories are published for versions already in use. A
+# crate with a known vulnerability fails the run; unmaintained and yanked crates are only
+# listed. A [patch] of a Cargo.toml that is no longer used fails it too.
+name: Security audit
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.lock
+      - launcher/src-tauri/Cargo.lock
+      - .github/workflows/security_audit.yml
+      - "**/Cargo.toml"
+  pull_request:
+    paths:
+      - Cargo.lock
+      - launcher/src-tauri/Cargo.lock
+      - .github/workflows/security_audit.yml
+      - "**/Cargo.toml"
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Cargo.toml patches gpu-allocator with the project's fork. When an update makes wgpu
+      # ask for another gpu-allocator version, Cargo leaves the patch out with only a warning
+      # and the fork's fix is silently gone; Cargo.lock then lists the patch as unused. The
+      # launcher's own workspace patches glib and Tauri the same way.
+      - name: Patches in use
+        run: |
+          failed=0
+          for lock in Cargo.lock launcher/src-tauri/Cargo.lock; do
+            if grep -q '^\[\[patch.unused\]\]' "$lock"; then
+              grep -A2 '^\[\[patch.unused\]\]' "$lock"
+              echo "::error file=$lock::A [patch.crates-io] entry of the matching Cargo.toml is no longer used (above): move the fork to the version now asked for, or drop the patch."
+              failed=1
+            fi
+          done
+          exit $failed
+
+      - uses: taiki-e/install-action@v2
+        if: ${{ !cancelled() }}
+        with:
+          tool: cargo-audit
+
+      # (the launcher is not a member of the game's workspace, so its lock file is audited
+      # on its own; both run, so one advisory does not hide the other)
+      - name: Audit Cargo.lock
+        if: ${{ !cancelled() }}
+        run: cargo audit --file Cargo.lock
+
+      - name: Audit launcher/src-tauri/Cargo.lock
+        if: ${{ !cancelled() }}
+        run: cargo audit --file launcher/src-tauri/Cargo.lock

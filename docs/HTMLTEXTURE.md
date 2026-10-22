@@ -56,6 +56,40 @@ Note: An `[htmlTexture]` is registered as a `[scriptTexture]`, but it is also re
 This means: If an `htmlTexture` follows `scriptTexture 6`, the `htmlTexture` is automatically `scriptTexture 7`. But it
 is not `htmlTexture 7`.
 
+### LED destination signs
+
+A page drawn on an LED matrix burns like the Krueger and K++ panels in Enhanced when it is
+declared `lit` (below) and its material has a dot mask and a white light map: either the
+`\S:n` mask above, or a plain picture of the dots as `[matl_transmap]` (black between the
+dots), with a `[matl_lightmap]` that is white all over. The lit dots then burn at the
+`LED glow` setting's brightness and bloom, and, like the Krueger's and K++ panels', the
+slot stays one of the bus's own screens: its dots keep the display's glow over the burn.
+A page's sign keeps that brightness at night
+even where it sits inside the cab (behind a coach's windscreen); a script texture's panel
+in the cab (a dashboard's LCD) dims.
+
+### A page as a surface: `lit`
+
+A page is a **display** by default: drawn at its own brightness, which is what a bus's own
+panel is. A page that is a **surface** - a road sign, a poster, a notice board - wants the
+world's light instead, so put `lit` on the line after its path:
+
+```
+[htmltexture]
+512
+160
+sign\route.html
+lit
+```
+
+With it the page is shaded like every other material - the sun, the street's lamps, the fog,
+the eye's own adaptation - so a sign face dims with the night it stands in, and the slot
+showing it stops being the bus's own screen with it (its bright pixels glow as a surface's
+do - an LED page, above, keeps the screen and its dots' glow). The word is the page's own: it reaches every slot that shows the page, wherever that
+slot is - a scenery object's and a vehicle's alike. Without the word nothing changes at all,
+and the word is openOMSI's own: Omsi.exe knows neither `[htmltexture]` nor `lit` and draws
+the slot unlit.
+
 ### Html file
 
 `html\index.html` is the relative path from the bus path. Example: `Data\Vehicles\MAN_NewLionsCity\html\index.html` =
@@ -125,6 +159,7 @@ standardised by OMSI. Read those with `omsi.getVar("their_variable_name")`.
 | `omsi.date.day`, `.month`, `.year`     | Simulation date, as numbers                                                             |
 | `omsi.date.asString`                   | `DD.MM.YYYY`, or `MM/DD/YYYY` when `locale` is `en`                                     |
 | `omsi.locale`                          | Interface language as an ISO 639-1 code (`en`, `de` ...)                                |
+| `omsi.weather`                         | The weather, `null` until it is known: `temperature` (°C), `humidity` (relative, 0..1), `visibility` (m, the weather's fog range), `clouds` (the weather's cloud type, `-1` clear), `precip` (0 none, 1 rain, 2 snow), `precipRate` (0..1) |
 
 These are set before `omsi.update` runs and change with the simulation clock, once per second.
 Use `omsi.locale` to pick your texts, and fall back to English for languages you didn't write.
@@ -203,6 +238,10 @@ omsi.update = function () {
 | `line`        | the line text                                                            |
 | `destination` | the destination text                                                     |
 | `time`        | departure as a timestamp, same scale as `omsi.timestamp`, delay included |
+| `stopsAway`   | stops the bus still calls at up to this one, this one counted (`1`: this is its next stop, `0`: it stands here); `null` while it is not on the road |
+| `load`        | how full it is, 0..1 of its seats and standing places; `null` unless its passengers are simulated |
+| `delaySec`    | how late it runs (s) once it is on the road, else `null`                  |
+| `lastTrip`    | `true` for the last departure of its line at this stop today              |
 
 * The first call for a stop returns `[]`. The game fills the stop a moment later and then calls
   `omsi.update` again, so ask inside `update`.
@@ -310,7 +349,8 @@ buttons or boxes and react to `click`.
 ## Scenery objects
 
 A scenery object (`.sco`) can show pages too: `[htmltexture]` in its model config and
-`[useHtmlTexture]` on the material, the same as in a vehicle. The page is looked up in the
+`[useHtmlTexture]` on the material, the same as in a vehicle - and the `lit` word after the
+page's path works there as it does on a vehicle (above). The page is looked up in the
 model folder, then in the folder of the `.sco`.
 
 A scenery page only gets the basic API: `omsi.setVar`, `omsi.trigger`, `omsi.getVar`,
@@ -356,7 +396,7 @@ Not available: canvas, tables, lists (`ul`/`li`), forms and `input` fields, ifra
 * Layout is plain block flow with wrapped inline text.
 
 Not available: flexbox, grid, floats, `position`, borders, gradients, shadows, `opacity`,
-`overflow`, animations and transitions, custom fonts. Text is drawn in Roboto.
+`overflow`, animations and transitions, custom fonts. Text is drawn in Inter.
 
 Since there is no `overflow`, a box doesn't clip its content. If a text is too long for its
 box, shorten it yourself.

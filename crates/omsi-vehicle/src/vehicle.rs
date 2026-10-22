@@ -101,9 +101,6 @@ pub struct Vehicle {
     pub passenger_cabin: Option<String>,
     pub scripts: ScriptSet,
     pub script_share: bool,
-    /// [ROLLBACK intsep-122] `[int_sounds_separate]`: the sections of an articulated bus keep their
-    /// interior sounds to themselves (a rear section's `.ovh` can carry it too).
-    pub int_sounds_separate: bool,
     pub cameras_driver: Vec<Camera>,
     pub cameras_pax: Vec<Camera>,
     pub cameras_reflexion: Vec<Camera>,
@@ -143,7 +140,7 @@ pub struct Vehicle {
 }
 
 fn read_list(r: &mut omsi_cfg::CfgReader, base: &Path) -> Vec<PathBuf> {
-    let n = r.usize();
+    let n = r.count();
     (0..n).map(|_| r.str().to_string()).filter(|s| !s.trim().is_empty()).map(|s| omsi_cfg::resolve_path(base, &s)).collect()
 }
 
@@ -167,7 +164,7 @@ pub fn parse_attachment(r: &mut omsi_cfg::CfgReader) -> Attachment {
             "attach_trans" => a.ops.push((w, r.f32s::<3>().to_vec())),
             "attach_rot_x" | "attach_rot_y" | "attach_rot_z" => a.ops.push((w, vec![r.f32()])),
             _ => {
-                if omsi_cfg::keyword_of(l).is_some() || r.at_end() {
+                if r.keyword(l).is_some() || r.at_end() {
                     r.seek(save);
                     break;
                 }
@@ -184,7 +181,7 @@ fn parse_axle(r: &mut omsi_cfg::CfgReader) -> Axle {
     // driven, inertia. Read that way, the Golf's wheels are 0.503 m, not the default 1 m
     // that made every AI car's wheels turn at half their speed.
     let first = r.lines().get(r.pos()).map(|l| l.trim().to_string()).unwrap_or_default();
-    if omsi_cfg::keyword_of(&first).is_none() && first.parse::<f32>().is_ok() {
+    if r.keyword(&first).is_none() && first.parse::<f32>().is_ok() {
         let mut vals = Vec::new();
         while vals.len() < 9 && !r.at_end() {
             let save = r.pos();
@@ -226,7 +223,7 @@ fn parse_axle(r: &mut omsi_cfg::CfgReader) -> Axle {
             }
             "achse_inertia_inv" => a.inertia_inv = r.f32(),
             _ => {
-                if omsi_cfg::keyword_of(l).is_some() || r.at_end() {
+                if r.keyword(l).is_some() || r.at_end() {
                     r.seek(save);
                     break;
                 }
@@ -275,7 +272,10 @@ impl Vehicle {
     /// `[rail_body_osc]` (`rail_drive::is_rail` reads the same three; a rail car has all of
     /// a bogie, and Omsi.exe's `[type] 2` marks the same vehicles).
     pub fn is_rail(&self) -> bool {
-        self.boogies.is_some() || !self.contact_shoes.is_empty() || self.rail_body_osc.is_some()
+        matches!(self.kind, VehicleKind::Other(2))
+            || self.boogies.is_some()
+            || !self.contact_shoes.is_empty()
+            || self.rail_body_osc.is_some()
     }
 
     pub fn parse(file: &CfgFile) -> Vehicle {
@@ -336,7 +336,6 @@ impl Vehicle {
                 "script" => v.scripts.scripts.extend(read_list(&mut r, &base)),
                 "constfile" => v.scripts.constfiles.extend(read_list(&mut r, &base)),
                 "scriptshare" => v.script_share = true,
-                "int_sounds_separate" => v.int_sounds_separate = true,
                 "add_camera_driver" => v.cameras_driver.push(read_camera(&mut r, false)),
                 "add_camera_pax" => v.cameras_pax.push(read_camera(&mut r, false)),
                 "add_camera_reflexion" => v.cameras_reflexion.push(read_camera(&mut r, false)),
@@ -409,9 +408,41 @@ impl Vehicle {
 
 /// Content paths name files case-insensitively (a mod writes `[couple_back]` however it
 /// likes, and a case-insensitive file system hands the spelling back unchanged).
-fn same_file(a: &Path, b: &Path) -> bool {
+pub fn same_file(a: &Path, b: &Path) -> bool {
     let (x, y) = (a.canonicalize().unwrap_or_else(|_| a.to_path_buf()), b.canonicalize().unwrap_or_else(|_| b.to_path_buf()));
     x.to_string_lossy().eq_ignore_ascii_case(&y.to_string_lossy())
+}
+
+/// The next vehicle of a consist from one with definition `def` (turned round: `rev`),
+/// towards the back of the train or its front, and whether that one is turned round - as
+/// Omsi.exe builds a consist (0x70a174): towards the back a vehicle goes on with its
+/// `[couple_back]`, or with its `[couple_front]` when it is itself turned round (towards the
+/// front the other way about); the coupled one is turned round when the coupling says so,
+/// against the one it hangs on; a coupling back to its own file that turns nothing round
+/// is not followed. (Following `[couple_back]` whatever the way, the Berlin A3's unit - the
+/// S car and its K car turned round, whose `[couple_back]` names the S car - went on S, K,
+/// S, K, S, none of them turned.)
+pub fn next_coupled(def: &Vehicle, rev: bool, toward_back: bool) -> Option<(PathBuf, bool)> {
+    let (file, flag) = if toward_back != rev { def.couple_back.as_ref() } else { def.couple_front.as_ref() }?;
+    let path = omsi_cfg::resolve_path(def.dir(), file);
+    let same = path.file_name().map(|f| f.to_ascii_lowercase()) == def.path.file_name().map(|f| f.to_ascii_lowercase());
+    if !flag && same {
+        return None;
+    }
+    Some((path, flag ^ rev))
+}
+
+/// How many coupled parts one vehicle may have behind it. A consist that closes on itself
+/// stops on its own (see [`chain_has_part`]); this only guards against a coupling chain that
+/// keeps growing through different files.
+pub const MAX_COUPLED_PARTS: usize = 32;
+
+/// Whether the vehicle file `path` is already one of the parts of the consist `seen` - the
+/// same file, not the same spelling, so a chain that comes round again ends there instead of
+/// growing. The NF6D tram closes on itself: its rear cab car `[couple_back]`s the
+/// articulation its front car starts with, and the whole unit is eleven parts long.
+pub fn chain_has_part(seen: &[PathBuf], path: &Path) -> bool {
+    seen.iter().any(|s| same_file(s, path))
 }
 
 /// Of the vehicle files of one vehicle folder (every content root's copy together), the
@@ -426,7 +457,7 @@ pub fn offered_vehicles(files: &[PathBuf]) -> Vec<(PathBuf, Vehicle)> {
         .filter_map(|f| Vehicle::load(f).ok().map(|v| (f.clone(), v)))
         .collect();
     let coupled: Vec<PathBuf> = loaded.iter().filter_map(|(_, v)| v.couple_back_path()).collect();
-    loaded.into_iter().filter(|(f, v)| v.is_selectable() && !(v.coupling_front.is_some() && coupled.iter().any(|c| same_file(c, f)))).collect()
+    loaded.into_iter().filter(|(f, v)| v.is_selectable() && !(!v.is_rail() && v.coupling_front.is_some() && coupled.iter().any(|c| same_file(c, f)))).collect()
 }
 
 /// The vehicles that couple `rear` behind them (`[couple_back]`), looked for in its folder
@@ -518,17 +549,17 @@ impl Vehicle {
     /// The fleet numbers of the `[number]` list with the plate `[registration_list]`'s file
     /// gives each - line by line beside it, empty lines counted (0x614f90) - and no plate
     /// where that file has none.
-    pub fn numbers_with_plates(&self) -> Vec<(String, String)> {
-        let Some(list) = self.number_file.as_ref() else { return Vec::new() };
-        // (read once per bus: the AI asks it for every bus it puts on the road)
-        static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, Vec<(String, String)>>>> = std::sync::OnceLock::new();
-        let key = self.path.clone();
-        if let Some(v) = CACHE.get_or_init(Default::default).lock().ok().and_then(|c| c.get(&key).cloned()) {
+    pub fn numbers_with_plates(&self) -> std::sync::Arc<[(String, String)]> {
+        let Some(list) = self.number_file.as_ref() else { return std::sync::Arc::new([]) };
+        // (read once per bus: the AI asks it for every bus it puts on the road; shared, so a
+        // look-up copies no list - one plate asked for copied all of them)
+        static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::sync::Arc<[(String, String)]>>>> = std::sync::OnceLock::new();
+        if let Some(v) = CACHE.get_or_init(Default::default).lock().ok().and_then(|c| c.get(&self.path).cloned()) {
             return v;
         }
-        let out = self.read_numbers_with_plates(list);
+        let out: std::sync::Arc<[(String, String)]> = self.read_numbers_with_plates(list).into();
         if let Ok(mut c) = CACHE.get_or_init(Default::default).lock() {
-            c.insert(key, out.clone());
+            c.insert(self.path.clone(), out.clone());
         }
         out
     }
@@ -560,19 +591,20 @@ impl Vehicle {
         self.plate_from(number, self.registration_list.is_some())
     }
 
-    /// The plate the vehicle dialog gives the player's bus for fleet number `number`
-    /// (Tform_selectVeh.Edit1Change, which Button1Click writes over the AI's): the list
-    /// file's plate only in the list mode, the last plate keyword's - a repaint's
-    /// `[registration_list]` followed by the template's `[registration_automatic]` gives
-    /// the player prefix and number, its AI copies the list's plate.
+    /// The plate the player's bus gets for fleet number `number`: the `[registration_list]`
+    /// file's plate when it has one for that number, whatever keyword came last, as the AI's
+    /// (#133, #1584, #1591). Taken from the list only in the list mode - a repaint's
+    /// `[registration_list]` followed by the template's `[registration_automatic]` - the
+    /// player's bus showed the German prefix and its fleet number where OMSI 2 shows the
+    /// plate, and a Hong Kong number `ATENU1035@@UC 6645@@S` came out as `ATENU1035`.
     pub fn chosen_plate_of_number(&self, number: &str) -> String {
-        self.plate_from(number, self.registration_mode == 2)
+        self.plate_from(number, self.registration_list.is_some())
     }
 
     fn plate_from(&self, number: &str, list: bool) -> String {
         if list {
-            if let Some((_, p)) = self.numbers_with_plates().into_iter().find(|(n, p)| n == number.trim() && !p.is_empty()) {
-                return p;
+            if let Some((_, p)) = self.numbers_with_plates().iter().find(|(n, p)| n == number.trim() && !p.is_empty()) {
+                return p.clone();
             }
         }
         let (pre, post) = (&self.registration_affix.0, &self.registration_affix.1);
@@ -682,8 +714,44 @@ mod tests {
         assert_eq!(v.registration_mode, 3);
         assert_eq!(v.plate_of_number("E1"), "AB12 CDE");
         assert_eq!(v.plate_of_number("E2"), "B-V E2");
-        // (the player's bus from the dialog: the automatic mode's plate, Edit1Change)
-        assert_eq!(v.chosen_plate_of_number("E1"), "B-V E1");
+        // the player's bus too (#1584): the list's plate, prefix + number where it has none
+        assert_eq!(v.chosen_plate_of_number("E1"), "AB12 CDE");
+        assert_eq!(v.chosen_plate_of_number("E2"), "B-V E2");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rail_vehicle_is_recognized_by_type_or_rail_features() {
+        let v_type2 = Vehicle::parse(&CfgFile::from_str("train.ovh", "[type]\n2\n"));
+        assert!(v_type2.is_rail());
+
+        let v_bogie = Vehicle::parse(&CfgFile::from_str("tram.ovh", "[boogies]\n5.0\n0\n1\n"));
+        assert!(v_bogie.is_rail());
+
+        let v_bus = Vehicle::parse(&CfgFile::from_str("bus.bus", "[friendlyname]\nMAN\nSD200\nStandard\n"));
+        assert!(!v_bus.is_rail());
+    }
+
+    #[test]
+    fn ai_vehicle_with_indented_friendlyname_is_not_selectable() {
+        let text = "\t[friendlyname]\r\nSolaris\r\nUrbino\r\nWhite\r\n\t[type]\r\n0\r\n";
+        let v = Vehicle::parse(&CfgFile::from_str("test.ovh", text));
+        assert!(!v.is_selectable());
+    }
+
+    #[test]
+    fn rail_vehicles_with_couplings_are_offered() {
+        let dir = std::env::temp_dir().join(format!("omsi-rail-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        // Lead rail car with front and rear couplings
+        std::fs::write(dir.join("Tram_1.ovh"), "[friendlyname]\nTatra\nKT4D\nDefault\n[type]\n2\n[coupling_front]\n0\n5\n0.3\n[coupling_back]\n0\n-5\n0.3\n").unwrap();
+        // Consist vehicle coupling Tram_1
+        std::fs::write(dir.join("Tram_Consist.ovh"), "[couple_back]\nTram_1.ovh\nfalse\n").unwrap();
+        let files = vec![dir.join("Tram_1.ovh"), dir.join("Tram_Consist.ovh")];
+        let offered = offered_vehicles(&files);
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[0].0.file_name().unwrap(), "Tram_1.ovh");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

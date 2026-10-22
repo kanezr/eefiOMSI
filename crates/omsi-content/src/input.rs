@@ -125,46 +125,16 @@ impl KeyboardCfg {
         // presses one twice and passes through a view they did not want). On the list unbound,
         // as the indicator toggles are: whoever wants it gives it a key, and nobody else loses
         // one to it.
-        // [ROLLBACK guitoggle-65] hides and shows the interface layer (map, notes, timetable,
-        // tags, ...): Ctrl+Shift+H (H = scan code 35) unless the player moved or cleared it
-        // [ROLLBACK walkkeys-65] the keys of the walker (on foot), rebindable like the rest;
-        // Shift (run) stays Shift
-        for (action, scan_code) in [("walk_forward", 17), ("walk_back", 31), ("walk_left", 30), ("walk_right", 32), ("walk_use", 34), ("walk_jump", 57), ("walk_kneel", 46), ("walk_flashlight", 33)] {
-            if !self.game.iter().any(|b| b.action.eq_ignore_ascii_case(action)) {
-                self.game.push(KeyBinding { action: action.into(), scan_code, modifier: 0 });
-            }
-        }
-        if !self.game.iter().any(|b| b.action.eq_ignore_ascii_case("view_toggle_gui")) {
-            self.game.push(KeyBinding { action: "view_toggle_gui".into(), scan_code: 35, modifier: KEY_SHIFT | KEY_CTRL });
-        }
         if !self.game.iter().any(|b| b.action.eq_ignore_ascii_case("view_toggle_interior")) {
             self.game.push(KeyBinding { action: "view_toggle_interior".into(), scan_code: 0, modifier: 0 });
         }
-        // [ROLLBACK zoomkeys-122] zooming the view with the keyboard: on the list, unassigned
-        for action in ["view_zoom_in", "view_zoom_out"] {
-            if !self
-                .game
-                .iter()
-                .any(|b| b.action.eq_ignore_ascii_case(action))
-            {
-                self.game.push(KeyBinding {
-                    action: action.into(),
-                    scan_code: 0,
-                    modifier: 0,
-                });
-            }
+        if !self.game.iter().any(|b| b.action.eq_ignore_ascii_case("pax_door_request")) {
+            self.game.push(KeyBinding { action: "pax_door_request".into(), scan_code: 31, modifier: KEY_CTRL | KEY_ALT });
         }
-        // [ROLLBACK walkmenus-125] getting up from the driver's seat: Ctrl+Shift+G unless moved
-        if !self
-            .game
-            .iter()
-            .any(|b| b.action.eq_ignore_ascii_case("walk_getup"))
-        {
-            self.game.push(KeyBinding {
-                action: "walk_getup".into(),
-                scan_code: 34,
-                modifier: KEY_SHIFT | KEY_CTRL,
-            });
+        // map-wide bus radio in multiplayer (hold): X when free, else unbound (#1230)
+        if !self.game.iter().any(|b| b.action.eq_ignore_ascii_case("voice_radio")) {
+            let x_free = !taken(&self, 45);
+            self.game.push(KeyBinding { action: "voice_radio".into(), scan_code: if x_free { 45 } else { 0 }, modifier: 0 });
         }
         self
     }
@@ -238,7 +208,7 @@ pub fn load_game_controllers(path: &Path) -> Result<Vec<GameController>, omsi_cf
                 }
             }
             "buttons" => {
-                let n = r.usize();
+                let n = r.count();
                 let mut b = Vec::with_capacity(n);
                 for _ in 0..n {
                     let a = r.str().to_string();
@@ -324,6 +294,34 @@ mod tests {
         assert_eq!(key(&cfg, "chat_open"), vec![(53, 0)]);
         let moved = KeyboardCfg { game: vec![KeyBinding { action: "chat_open".into(), scan_code: 20, modifier: KEY_CTRL }], ..Default::default() }.with_game_defaults();
         assert_eq!(key(&moved, "chat_open"), vec![(20, KEY_CTRL)]);
+    }
+
+    #[test]
+    fn passenger_request_key_has_ctrl_alt_s_and_preserves_custom_or_cleared_bindings() {
+        let action = "pax_door_request";
+        let cfg = KeyboardCfg::default().with_game_defaults().with_game_defaults();
+        let bindings: Vec<_> = cfg.game.iter().filter(|b| b.action == action).collect();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!((bindings[0].scan_code, bindings[0].modifier), (31, KEY_CTRL | KEY_ALT));
+        for scan_code in [0, 44] {
+            let custom = KeyBinding { action: action.into(), scan_code, modifier: KEY_SHIFT };
+            let cfg = KeyboardCfg { game: vec![custom.clone()], ..Default::default() }.with_game_defaults();
+            assert_eq!(cfg.game.iter().filter(|b| b.action == action).collect::<Vec<_>>(), vec![&custom]);
+        }
+    }
+
+    #[test]
+    fn the_bus_radio_key_defaults_to_x_when_free() {
+        let key = |c: &KeyboardCfg, a: &str| c.game.iter().filter(|b| b.action == a).map(|b| (b.scan_code, b.modifier)).collect::<Vec<_>>();
+        let cfg = KeyboardCfg::default().with_game_defaults().with_game_defaults();
+        assert_eq!(key(&cfg, "voice_radio"), vec![(45, 0)]);
+        let custom = KeyBinding { action: "voice_radio".into(), scan_code: 49, modifier: 0 };
+        let cfg = KeyboardCfg { game: vec![custom.clone()], ..Default::default() }.with_game_defaults();
+        assert_eq!(key(&cfg, "voice_radio"), vec![(49, 0)]);
+        // X already taken: unbound rather than stealing another key
+        let taken = KeyBinding { action: "horn".into(), scan_code: 45, modifier: 0 };
+        let cfg = KeyboardCfg { vehicles: vec![taken], ..Default::default() }.with_game_defaults();
+        assert_eq!(key(&cfg, "voice_radio"), vec![(0, 0)]);
     }
 
     #[test]

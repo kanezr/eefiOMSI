@@ -3,6 +3,14 @@
 use omsi_cfg::CfgFile;
 use std::path::Path;
 
+/// The day as the in-use rules ask about it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DayKind {
+    pub workday: bool,
+    pub holiday: bool,
+    pub school_holiday: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct HolidayRange {
     /// YYYYMMDD

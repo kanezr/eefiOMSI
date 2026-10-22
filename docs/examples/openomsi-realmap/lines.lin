@@ -1,0 +1,17 @@
+# lines of the synthetic example (tab separated): L number group name [modal from to], R km stops minutes circular days model itinerary, P way, S stops
+ORIGEM	0	0
+L	E1	FEEDER	Example Street line
+R	0.4	2	3	0	daily	bus	Example stop - Example station
+P	440 760 494 730 560 700
+S	440 760 560 700
+R	0.4	2	3	0	daily	bus	Example station - Example stop
+P	560 700 494 730 440 760
+S	560 700 440 760
+L	E2	BRT	Express to the lake
+R	0.5	2	2	0	daily	bus	Example station - Lakeside
+P	560 700 494 730 400 800 330 880
+S	560 700 330 880
+L	T1	FEEDER	Example tram	tram
+R	0.6	2	3	0	daily	tram	North - South
+P	600 640 560 700 530 780 500 860
+S	600 640 500 860

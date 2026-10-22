@@ -36,7 +36,7 @@ fn run(buf: &StreamBuf, url: &str) {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(8))
         .timeout_read(Duration::from_secs(15))
-        .user_agent(concat!("openOMSI/", env!("CARGO_PKG_VERSION")))
+        .user_agent(&format!("openOMSI/{}", option_env!("OPENOMSI_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))))
         .build();
     let mut wait = 2u64;
     while !buf.is_closed() {
@@ -97,13 +97,14 @@ fn play(agent: &ureq::Agent, buf: &StreamBuf, url: &str) -> anyhow::Result<()> {
     let ctype = resp.content_type().to_ascii_lowercase();
     let metaint = resp.header("icy-metaint").and_then(|v| v.trim().parse::<usize>().ok());
     let name = resp.header("icy-name").map(|s| s.trim().to_string()).unwrap_or_default();
-    buf.set_info(&name, "");
     let reader: Box<dyn Read + Send + Sync> = Box::new(resp.into_reader());
     let title = Arc::new(parking_lot::Mutex::new(String::new()));
     let reader: Box<dyn Read + Send + Sync> = match metaint {
         Some(n) if n > 0 => Box::new(IcyReader { inner: reader, every: n, left: n, title: title.clone() }),
         _ => reader,
     };
+    // (a new connection: what the last one said of the station counts no longer)
+    buf.set_meta(&name, "");
     let mss = MediaSourceStream::new(Box::new(ReadOnlySource::new(reader)), Default::default());
     let mut hint = Hint::new();
     if ctype.contains("mpeg") || ctype.contains("mp3") {
@@ -162,9 +163,9 @@ fn play(agent: &ureq::Agent, buf: &StreamBuf, url: &str) -> anyhow::Result<()> {
             spec.rate,
             data.chunks_exact(ch).map(|f| if ch >= 2 { [f[0], f[1]] } else { [f[0], f[0]] }),
         );
-        buf.set_info(&name, &title.lock());
         let now = {
             let t = title.lock();
+            buf.set_meta(&name, &t);
             if t.is_empty() { name.clone() } else { t.clone() }
         };
         let status = if buf.is_playing() { now } else { "buffering …".to_string() };

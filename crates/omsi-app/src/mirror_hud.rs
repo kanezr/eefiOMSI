@@ -113,14 +113,27 @@ impl MirrorHud {
         self.enabled && !self.panels.is_empty()
     }
 
+    /// The mirrors the panels show (each once), into `out`.
+    pub fn cams_into(&self, out: &mut Vec<usize>) {
+        out.clear();
+        for p in &self.panels {
+            if !out.contains(&p.cam) {
+                out.push(p.cam);
+            }
+        }
+    }
+
     /// The glass shapes the world has found in the bus's model.
-    pub fn set_aspects(&mut self, a: Vec<f32>) {
-        self.aspects = a;
+    /// (copied into the panels' own lists, which keep their room: this comes every frame)
+    pub fn set_aspects(&mut self, a: &[f32]) {
+        self.aspects.clear();
+        self.aspects.extend_from_slice(a);
     }
 
     /// The glasses the world has found in the bus's model.
-    pub fn set_glass(&mut self, g: Vec<Option<MirrorGlass>>) {
-        self.glass = g;
+    pub fn set_glass(&mut self, g: &[Option<MirrorGlass>]) {
+        self.glass.clear();
+        self.glass.extend_from_slice(g);
     }
 
     /// Width / height a mirror's panel starts with, and whether it sits on the right.
@@ -180,12 +193,13 @@ impl MirrorHud {
             let eye = rot.transform_vector3((crate::camera_util::driver_eye(p) - p.vehicle.position).as_vec3());
             self.turns = self.glass.iter().map(|g| g.map(|g| Turn::of(eye, g.centre, g.du, g.dv)).unwrap_or_default()).collect();
         }
-        let path = p.vehicle.ty.def.path.to_string_lossy().to_string();
-        let key = path.to_ascii_lowercase();
-        if self.key == key {
+        let path = p.vehicle.ty.def.path.to_string_lossy();
+        // (compared without making the key anew every frame)
+        if self.key.len() == path.len() && self.key.bytes().zip(path.bytes()).all(|(k, c)| k == c.to_ascii_lowercase()) {
             return;
         }
-        self.key = key;
+        let path = path.into_owned();
+        self.key = path.to_ascii_lowercase();
         self.drag = None;
         self.edit = false;
         match load(&path) {
@@ -447,8 +461,9 @@ impl MirrorHud {
         }
     }
 
-    /// Add the panels' pictures to the frame's overlays (after the HUD's and the
-    /// interface's, so that their indices stay put). `w` and `h` are the window's size.
+    /// Add the panels' pictures to the frame's overlays (after the navigator's and the
+    /// plugins' panels, before the notes and the menus, which record their own indices as
+    /// they are drawn). `w` and `h` are the window's size.
     pub fn push(&self, scene: &mut Scene, world: &World, w: f32, h: f32, cursor: (f32, f32)) {
         if !self.active() {
             return;
@@ -630,6 +645,19 @@ mod tests {
         ]);
         assert!(m.press(true, (150.0, 150.0), (1000.0, 1000.0)));
         assert_eq!(m.panels.last().map(|q| q.cam), Some(0));
+    }
+
+    /// The mirrors drawn for the panels every frame: each shown one once, none of the others.
+    #[test]
+    fn the_panels_name_each_of_their_mirrors_once() {
+        let m = editing(vec![
+            Panel { cam: 2, x: 0.1, y: 0.1, h: 0.3, aspect: 1.0 },
+            Panel { cam: 0, x: 0.5, y: 0.5, h: 0.3, aspect: 1.0 },
+            Panel { cam: 2, x: 0.7, y: 0.1, h: 0.2, aspect: 1.0 },
+        ]);
+        let mut cams = vec![9];
+        m.cams_into(&mut cams);
+        assert_eq!(cams, vec![2, 0]);
     }
 
     #[test]

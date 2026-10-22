@@ -1,0 +1,427 @@
+# Builds openOMSI for Windows and Linux (x64, ARM64), macOS (Apple silicon, Intel) and Android
+# (plus the dedicated server for Linux and Windows) when a maintainer runs it from main
+# (Actions -> Release -> Run workflow) and publishes them as the beta (pre-release)
+# v<MAJOR.MINOR.PATCH>; promote.yml makes a tested beta the stable release. A push to main
+# builds every platform and publishes nothing. See docs/VERSIONING.md.
+# Pull requests build Windows x64, macOS (Apple silicon), Linux x64 and Android, without publishing;
+# the label ci:all-platforms builds all seven (from the next push or run).
+name: Release
+
+on:
+  pull_request:
+    paths-ignore: ["docs/**", "site/**", "*.md"]
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "site/**", "*.md"]
+  workflow_dispatch:
+    # (a beta of one platform alone, to test a fix only that platform needs; a published
+    # release keeps its files, so the others never join it, and it cannot be promoted)
+    inputs:
+      only:
+        description: Platform to build and release alone
+        type: choice
+        default: all
+        options: [all, windows, macos, linux, android]
+
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# The builds (and the actions they use) only read the repository; `release` alone writes,
+# with its own permission below.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # a pull request's test build says which pull request it is: 0.1.1313-pr1192 (the
+      # launcher shows it, and the updater leaves such a build alone)
+      - id: v
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: echo "version=$(sh scripts/version.sh)${PR:+-pr$PR}" >> "$GITHUB_OUTPUT"
+      - env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: echo "### openOMSI $VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    needs: version
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'windows' }}
+    timeout-minutes: 90
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # ARM64 (Snapdragon laptops): built on the x64 runner with its ARM64 tools
+        arch: ${{ fromJSON(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:all-platforms') && '["x64"]' || '["x64", "arm64"]') }}
+    env:
+      OPENOMSI_VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'x86_64-pc-windows-msvc' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.TARGET }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            . -> target
+            launcher/src-tauri -> target
+      - name: Build
+        shell: cmd
+        run: scripts\build-windows.cmd %TARGET%
+      # Microsoft's shader compiler for DirectX 12 (dxcompiler.dll, dxil.dll beside the
+      # program): without it wgpu falls back to the old FXC, which is slow and refuses
+      # some of the game's shaders. DirectX 12 is the way round a Vulkan driver that fails.
+      - name: DirectX shader compiler
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download -R microsoft/DirectXShaderCompiler --pattern "dxc_*.zip" -D dxc
+          $zip = Get-ChildItem dxc/*.zip | Where-Object { $_.Name -notmatch "linux|pdb" } | Select-Object -First 1
+          Expand-Archive $zip.FullName -DestinationPath dxc/x
+          $arch = if ("${{ matrix.arch }}" -eq "arm64") { "arm64" } else { "x64" }
+          Copy-Item "dxc/x/bin/$arch/dxcompiler.dll", "dxc/x/bin/$arch/dxil.dll" dist/windows/
+          Get-ChildItem dist/windows
+      # Google's ANGLE (OpenGL ES over Direct3D 11) for the "ANGLE (DirectX 11)" graphics API:
+      # libEGL.dll and libGLESv2.dll built from ANGLE's own source by
+      # openOMSI-org/angle-openomsi, taken by its release tag and checked against the
+      # SHA-256 recorded here (and the DLLs against the release's own SHA256SUMS). x64 only:
+      # there is no ARM64 build, and the game skips the option without the DLLs.
+      - name: ANGLE (DirectX 11)
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANGLE_TAG: angle-8091-36b74e4dd4
+          ANGLE_SHA256: 1c0086155a17445110dd97400018ca6e72ea245ef178989b457720ee1fba3af5
+        run: |
+          gh release download $env:ANGLE_TAG -R openOMSI-org/angle-openomsi --pattern "*-windows-x64.zip" -D angle
+          $zip = Get-ChildItem angle/*.zip | Select-Object -First 1
+          $have = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLower()
+          if ($have -ne $env:ANGLE_SHA256) { throw "ANGLE zip: SHA-256 $have, expected $env:ANGLE_SHA256" }
+          Expand-Archive $zip.FullName -DestinationPath angle/x
+          $dir = Get-ChildItem angle/x -Directory | Select-Object -First 1
+          foreach ($line in Get-Content (Join-Path $dir.FullName "SHA256SUMS")) {
+            $want, $name = $line -split '\s+\*?', 2
+            $got = (Get-FileHash (Join-Path $dir.FullName $name) -Algorithm SHA256).Hash.ToLower()
+            if ($got -ne $want.ToLower()) { throw "ANGLE ${name}: SHA-256 $got, expected $want" }
+          }
+          Copy-Item (Join-Path $dir.FullName "libEGL.dll"), (Join-Path $dir.FullName "libGLESv2.dll"), (Join-Path $dir.FullName "LICENSE-ANGLE.txt") dist/windows/
+          Get-ChildItem dist/windows
+      - name: ANGLE DirectX 11 startup regression (WARP)
+        if: matrix.arch == 'x64' && github.event_name == 'pull_request'
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          ANGLE_TEST_LIBRARY_DIRECTORY: ${{ github.workspace }}/dist/windows
+        run: |
+          cargo test --locked --release --target x86_64-pc-windows-msvc -p omsi-render --test angle_startup -- --ignored --nocapture
+      # The Visual C++ runtime beside the program (Microsoft allows it to be shipped
+      # app-locally): without it a PC lacking the Redistributable refused to start the game
+      # ("VCRUNTIME140_1.dll was not found"). It cannot be linked in instead - the OpenXR
+      # loader is built against the DLL runtime.
+      - name: Visual C++ runtime
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $crt = Get-ChildItem "$vs\VC\Redist\MSVC\*\${{ matrix.arch }}\Microsoft.VC*.CRT" -Directory -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
+          $dir = if ($crt) { $crt.FullName } elseif ("${{ matrix.arch }}" -eq "x64") { "$env:SystemRoot\System32" } else { throw "no ARM64 Visual C++ runtime in $vs" }
+          foreach ($dll in "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll") {
+            Copy-Item (Join-Path $dir $dll) dist/windows/
+          }
+          Get-ChildItem dist/windows
+      - name: Package
+        shell: pwsh
+        run: |
+          $name = "openOMSI-$env:OPENOMSI_VERSION-windows-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item README.md, LICENSE dist/windows/
+          Compress-Archive -Path dist/windows/* -DestinationPath "out/$name.zip"
+          # the dedicated server for Windows (Server 2016 and later): the same program
+          # started with --server, start.cmd, and run-server.cmd that asks for the folder,
+          # the settings and the map
+          New-Item -ItemType Directory -Force dist/server | Out-Null
+          Copy-Item dist/windows/openomsi.exe, dist/windows/vcruntime140.dll, dist/windows/vcruntime140_1.dll, dist/windows/msvcp140.dll, scripts/server/start.cmd, scripts/server/run-server.cmd, scripts/server/run-server.ps1, LICENSE dist/server/
+          # (Steam's library: the x64 program does not start without it beside it)
+          if (Test-Path dist/windows/steam_api64.dll) { Copy-Item dist/windows/steam_api64.dll dist/server/ }
+          Copy-Item docs/SERVER.md dist/server/README.md
+          New-Item -ItemType File -Force dist/server/.openomsi-content | Out-Null
+          Compress-Archive -Path dist/server/* -DestinationPath "out/openOMSI-$env:OPENOMSI_VERSION-server-windows-${{ matrix.arch }}.zip"
+      - name: Installer
+        shell: bash
+        run: |
+          export PATH="/c/Program Files (x86)/NSIS:$PATH"
+          command -v makensis >/dev/null || choco install nsis -y --no-progress
+          sh scripts/windows/make-installer.sh dist/windows "out/openOMSI-$OPENOMSI_VERSION-windows-${{ matrix.arch }}-setup.exe"
+      - name: Installer install and uninstall
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        run: |
+          $dir = "$env:RUNNER_TEMP\openOMSI"
+          $lnk = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\openOMSI.lnk"
+          $key = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\openOMSI"
+          Start-Process -Wait "out/openOMSI-$env:OPENOMSI_VERSION-windows-x64-setup.exe" -ArgumentList "/S", "/D=$dir"
+          foreach ($p in "$dir\openomsi.exe", "$dir\openomsi-launcher-app.exe", "$dir\uninstall.exe", $lnk, $key) {
+            if (-not (Test-Path $p)) { throw "the installer did not make $p" }
+          }
+          New-Item -ItemType Directory -Force "$dir\Mods\mine" | Out-Null
+          Set-Content "$dir\Mods\mine\keep.txt" "a player's mod"
+          Set-Content "$dir\later.dll" "a file an update brought"
+          Set-Content "$dir\openomsi.exe.old-update" "the version before"
+          Set-Content "$dir\.openomsi-files" "later.dll`nopenomsi.exe`n..`nMods`n"
+          Start-Process -Wait "$dir\uninstall.exe" -ArgumentList "/S", "_?=$dir"
+          foreach ($p in "$dir\openomsi.exe", "$dir\openomsi-launcher-app.exe", "$dir\later.dll", "$dir\openomsi.exe.old-update", "$dir\.openomsi-files", $lnk, $key) {
+            if (Test-Path $p) { throw "the uninstaller left $p" }
+          }
+          if (-not (Test-Path "$dir\Mods\mine\keep.txt")) { throw "the uninstaller deleted the player's mods" }
+      - uses: actions/upload-artifact@v7
+        with:
+          # (a release keeps its files; a pull request's test builds are fetched within days)
+          retention-days: 14
+          name: windows-${{ matrix.arch }}
+          path: |
+            out/*.zip
+            out/*.exe
+
+  windows-tests:
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'windows' }}
+    timeout-minutes: 90
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Workspace regression tests
+        env:
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+        run: cargo test --locked --workspace --no-fail-fast
+
+  macos:
+    needs: version
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'macos' }}
+    timeout-minutes: 90
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Intel Macs: built on the Apple silicon runner for x86_64
+        arch: ${{ fromJSON(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:all-platforms') && '["arm64"]' || '["arm64", "x64"]') }}
+    env:
+      OPENOMSI_VERSION: ${{ needs.version.outputs.version }}
+      OPENOMSI_TARGET: ${{ matrix.arch == 'x64' && 'x86_64-apple-darwin' || 'aarch64-apple-darwin' }}
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.OPENOMSI_TARGET }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.OPENOMSI_TARGET }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            . -> target
+            launcher/src-tauri -> target
+      - name: Build
+        run: scripts/build-macos.sh
+      - name: Package
+        run: |
+          mkdir -p out
+          cp README.md LICENSE dist/macos/
+          (cd dist/macos && ditto -c -k --sequesterRsrc . "../../out/openOMSI-$OPENOMSI_VERSION-macos-${{ matrix.arch }}.zip")
+          sh scripts/macos/make-dmg.sh dist/macos/openOMSI.app "out/openOMSI-$OPENOMSI_VERSION-macos-${{ matrix.arch }}.dmg"
+      - uses: actions/upload-artifact@v7
+        with:
+          # (a release keeps its files; a pull request's test builds are fetched within days)
+          retention-days: 14
+          name: macos-${{ matrix.arch }}
+          path: |
+            out/*.zip
+            out/*.dmg
+
+  linux:
+    needs: version
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'linux' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:all-platforms') && '["x64"]' || '["x64", "arm64"]') }}
+    timeout-minutes: 90
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
+    env:
+      OPENOMSI_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      # The x64 job builds the whole workspace's tests and then the release on one runner,
+      # more than its free disk holds: full, the runner stopped answering mid-build ("lost
+      # communication with the server"). The preinstalled SDKs nothing here uses make room.
+      - name: Free disk space
+        if: matrix.arch == 'x64'
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          df -h /
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            . -> target
+            launcher/src-tauri -> target
+      - name: System libraries
+        run: |
+          for i in 1 2 3; do
+            sudo apt-get update && sudo apt-get install -y build-essential pkg-config libasound2-dev \
+              libudev-dev libgtk-3-dev libxkbcommon-dev libwayland-dev libssl-dev libwebkit2gtk-4.1-dev zip clang lld && break
+            sleep 20
+          done
+      - name: Workspace regression tests
+        if: matrix.arch == 'x64'
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+        run: |
+          cargo test --locked --workspace --no-fail-fast
+          # (the tests' debug build is not needed for the release one: its room is)
+          rm -rf target/debug
+          df -h /
+      - name: Build the game
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
+        run: scripts/build-linux.sh
+      - name: Build the server
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
+        run: scripts/build-server.sh
+      - name: Validate shaders
+        if: matrix.arch == 'x64'
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=lld"
+        run: cargo test --locked --release -p omsi-render shaders_validate_and_match_the_uniforms
+      - name: Package
+        run: |
+          mkdir -p out
+          cp README.md LICENSE dist/linux/
+          cp LICENSE dist/server/
+          (cd dist/linux && zip -qr "../../out/openOMSI-$OPENOMSI_VERSION-linux-${{ matrix.arch }}.zip" .)
+          (cd dist/server && zip -qr "../../out/openOMSI-$OPENOMSI_VERSION-server-linux-${{ matrix.arch }}.zip" .)
+      - uses: actions/upload-artifact@v7
+        with:
+          # (a release keeps its files; a pull request's test builds are fetched within days)
+          retention-days: 14
+          name: linux-${{ matrix.arch }}
+          path: out/*.zip
+
+  android:
+    needs: version
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'android' }}
+    timeout-minutes: 90
+    runs-on: ubuntu-latest
+    env:
+      OPENOMSI_VERSION: ${{ needs.version.outputs.version }}
+      # the signing key (base64 of a keystore, alias openomsi, password android); without
+      # it every build is signed with a new key and does not install over the last one
+      ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+      # a pull request's APK is an app of its own beside the release (scripts/build-android.sh)
+      OPENOMSI_PR: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: zulu
+          java-version: '17'
+      - name: Android SDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses >/dev/null || true
+          "$sdkmanager" "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Build
+        run: scripts/build-android.sh
+      - name: Package
+        run: |
+          mkdir -p out
+          cp "dist/android/openOMSI-$OPENOMSI_VERSION.apk" "out/openOMSI-$OPENOMSI_VERSION-android-arm64.apk"
+          # (and under a name of its own: releases/latest/download/openOMSI-android.apk is
+          # always the newest stable APK - for a phone whose installed build cannot update itself)
+          cp "dist/android/openOMSI-$OPENOMSI_VERSION.apk" "out/openOMSI-android.apk"
+      - uses: actions/upload-artifact@v7
+        with:
+          # (a release keeps its files; a pull request's test builds are fetched within days)
+          retention-days: 14
+          name: android
+          path: out/*.apk
+
+  release:
+    # (the platforms not built again are skipped, not failed)
+    if: ${{ !cancelled() && !failure() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    needs: [version, windows, windows-tests, macos, linux, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish v${{ needs.version.outputs.version }} (beta)
+        run: |
+          ls -l out
+          if [ "$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2>/dev/null)" = true ]; then
+            gh release delete "v$VERSION" --yes
+          fi
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::v$VERSION is already published and stays as it is: a fix is released as a new version"
+            exit 1
+          fi
+          prev=$(git tag -l "v${VERSION%.*}.*" --sort=-v:refname | grep -vx "v$VERSION" | head -1)
+          if [ -n "$prev" ] && ! git merge-base --is-ancestor "$prev" "$GITHUB_SHA"; then
+            echo "::error::$GITHUB_SHA is older than $prev: only a newer commit of main is released"
+            exit 1
+          fi
+          if ! git tag "v$VERSION" "$GITHUB_SHA" 2>/dev/null && [ "$(git rev-parse "v$VERSION^{commit}")" != "$GITHUB_SHA" ]; then
+            echo "::error::the tag v$VERSION already names another commit"
+            exit 1
+          fi
+          git push origin "v$VERSION"
+          sh scripts/release-notes.sh "$VERSION" > notes.md
+          cd out
+          files=$(ls *.zip *.apk *.dmg *.exe 2>/dev/null || true)
+          sha256sum $files > SHA256SUMS
+          gh release create "v$VERSION" $files SHA256SUMS \
+            --verify-tag \
+            --prerelease \
+            --title "openOMSI $VERSION" \
+            --notes-file ../notes.md

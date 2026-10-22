@@ -65,14 +65,17 @@ pub struct Season {
 }
 
 impl Season {
-    /// Texture subfolder of a season kind: 1 spring, 2 autumn, 3 winter, 4 winter with snow,
-    /// 5 dry summer (`SummerDry`, the editor's "Summer (dry)": Omsi.exe 0x7f93a6).
+    /// Texture subfolder of a season kind: 1 spring, 2 autumn, 3 and 4 winter, 5 dry summer
+    /// (`SummerDry`, the editor's "Summer (dry)": Omsi.exe 0x7f93a6). Kind 4, "winter with
+    /// snow", takes the `Winter` pictures as 3 does: Omsi.exe gives a texture its
+    /// `WinterSnowMap` only while the weather has snow (0x7f910c: seasons 3 and 4 alike take
+    /// `WinterMap`, else `FallMap`) - a map whose winter is kind 4 showed snowy roads under a
+    /// clear sky (#2131).
     pub fn folder(kind: i32) -> Option<&'static str> {
         match kind {
             1 => Some("spring"),
             2 => Some("fall"),
-            3 => Some("Winter"),
-            4 => Some("WinterSnow"),
+            3 | 4 => Some("Winter"),
             5 => Some("SummerDry"),
             _ => None,
         }
@@ -222,8 +225,11 @@ impl GlobalCfg {
                     g.traffic_density_passenger.push((t, d));
                 }
                 "entrypoints" => {
-                    let n = r.usize();
+                    let n = r.count();
                     for _ in 0..n {
+                        if r.pos() >= r.lines().len() {
+                            break;
+                        }
                         let index = r.i32();
                         let object_id = r.i64();
                         let unknown = r.i32();
@@ -255,11 +261,96 @@ impl GlobalCfg {
         }
         g
     }
+
+    /// The entry points the tiles hold that `[entrypoints]` does not list, added after the
+    /// listed ones; how many. The callers ask for them only when global.cfg lists none: on
+    /// a map that lists its own, reading every tile and object again before the load cost a
+    /// second or more and found nothing on any map tried. Omsi.exe loads every tile when
+    /// it opens a map and then goes through their objects (RefreshSpecialObjects, 0x77efec): an object whose type is an
+    /// `[entrypoint]` updates the entry of its tile and IDCode, and one not listed is
+    /// appended, tile by tile in `[map]` order and object by object in the tile's - its
+    /// place, its heading and its first label as the name. A map from OMSI 1 (Great
+    /// Grundorf 2: 49 entry objects, no `[entrypoints]` at all) has its entry points only
+    /// this way.
+    pub fn add_object_entry_points(&mut self) -> usize {
+        let dir = self.dir().to_path_buf();
+        // which object files are entry points (false: not one, or not found)
+        let mut kinds: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        let mut is_entry = |file: &str| -> bool {
+            *kinds.entry(file.to_ascii_lowercase()).or_insert_with(|| {
+                omsi_cfg::find_in_roots(file)
+                    .and_then(|(_, p)| CfgFile::read(&p).ok())
+                    .is_some_and(|f| f.lines.iter().any(|l| l.trim().eq_ignore_ascii_case("[entrypoint]")))
+            })
+        };
+        let mut next = self.entry_points.iter().map(|e| e.index).max().map_or(0, |i| i + 1);
+        let mut added = 0;
+        for t in self.tiles.clone() {
+            let Ok(file) = CfgFile::read(omsi_cfg::resolve_path(&dir, &t.file)) else { continue };
+            // (the whole tile is parsed only when it has an object of an entry point's type)
+            let mut lines = file.lines.iter();
+            let mut any = false;
+            while let Some(l) = lines.next() {
+                if l.trim().eq_ignore_ascii_case("[object]") {
+                    // the path is the first or (from tile version 9 on) the second line
+                    let mut next_two = lines.clone().take(2).map(|s| s.trim());
+                    if next_two.any(|p| p.to_ascii_lowercase().ends_with(".sco") && is_entry(p)) {
+                        any = true;
+                        break;
+                    }
+                }
+            }
+            if !any {
+                continue;
+            }
+            let mut tile = crate::Tile::parse(&file);
+            // (on a `[worldcoordinates]` map onto the grid, as `read_tile` does: the grid
+            // is the map's own from here on)
+            if self.world_coordinates {
+                crate::configure_grid(self);
+                if let Some((_, ty)) = crate::tile_index_of(&t.file) {
+                    tile.fit_to_world_grid(ty);
+                }
+            }
+            for o in &tile.objects {
+                if !is_entry(&o.file) {
+                    continue;
+                }
+                if self.entry_points.iter().any(|e| e.group == t.index as i32 && e.object_id == o.id) {
+                    continue;
+                }
+                let half = o.rot[0].to_radians() * 0.5;
+                self.entry_points.push(EntryPoint {
+                    index: next,
+                    object_id: o.id,
+                    unknown: 0,
+                    // (an object's height is over the terrain there, the list's its own:
+                    // none - the object's place is taken, as for a record without one)
+                    pos: [o.pos[0], o.pos[1], f64::NAN],
+                    quat: [0.0, half.sin(), 0.0, half.cos()],
+                    group: t.index as i32,
+                    name: o.extra.first().cloned().unwrap_or_default(),
+                });
+                next += 1;
+                added += 1;
+            }
+        }
+        added
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both winter kinds take the winter pictures; the snowy ones come with the weather (#2131).
+    #[test]
+    fn winter_kinds_take_the_winter_folder() {
+        assert_eq!(Season::folder(3), Some("Winter"));
+        assert_eq!(Season::folder(4), Some("Winter"));
+        assert_eq!(Season::folder(5), Some("SummerDry"));
+        assert_eq!(Season::folder(0), None);
+    }
 
     /// A tile listed twice counts in the numbering the map's files use (an entry point on
     /// the tile after the repeat names index 2, which is tile (5, 5)).
@@ -271,5 +362,55 @@ mod tests {
         assert_eq!(g.raw_tiles, vec![(0, 0), (0, 0), (5, 5)]);
         assert_eq!(g.tiles[1].index, 2);
         assert_eq!(g.raw_tiles.get(2), Some(&(5, 5)));
+    }
+
+    #[test]
+    fn an_entry_point_count_larger_than_the_file_reads_what_is_there() {
+        let text = "[entrypoints]\n1000000000000\n0\n7\n0\n1\n2\n3\n0\n0\n0\n1\n0\nDepot\n";
+        let g = GlobalCfg::parse(&omsi_cfg::CfgFile::from_str("global.cfg", text));
+        assert_eq!(g.entry_points.len(), 1);
+        assert_eq!(g.entry_points[0].name, "Depot");
+        let g = GlobalCfg::parse(&omsi_cfg::CfgFile::from_str("global.cfg", "[entrypoints]\n1000000000000\n"));
+        assert!(g.entry_points.is_empty());
+    }
+
+    /// A map from OMSI 1 (Great Grundorf 2) has no `[entrypoints]`: its entry points are the
+    /// `[entrypoint]` objects of its tiles, in `[map]` order, each named by its first label.
+    /// One the list has already (same tile, same IDCode) is not added twice.
+    #[test]
+    fn entry_points_come_from_the_tiles_entry_objects() {
+        let root = std::env::temp_dir().join(format!("omsi-entry-objects-{}", std::process::id()));
+        let map = root.join("maps").join("Old");
+        std::fs::create_dir_all(&map).unwrap();
+        std::fs::create_dir_all(root.join("Sceneryobjects").join("Generic")).unwrap();
+        std::fs::write(root.join("Sceneryobjects/Generic/entrypoint_bus.sco"), "[entrypoint]\n[onlyeditor]\n").unwrap();
+        std::fs::write(root.join("Sceneryobjects/Generic/tree.sco"), "[mesh]\ntree.o3d\n").unwrap();
+        std::fs::write(map.join("tile_0_0.map"), "[version]\n10\n\n\
+[object]\n0\nSceneryobjects\\Generic\\tree.sco\n5\n1\n2\n0\n0\n0\n\n\
+[object]\n0\nSceneryobjects\\Generic\\entrypoint_bus.sco\n7\n6.5\n225.5\n0.2\n90\n1\nAirport Maintenance Area\n").unwrap();
+        std::fs::write(map.join("tile_1_0.map"), "[version]\n10\n\n\
+[object]\n0\nSceneryobjects\\Generic\\entrypoint_bus.sco\n9\n10\n20\n0\n0\n1\nBauernhof\n").unwrap();
+        std::fs::write(map.join("global.cfg"), "[map]\n0\n0\ntile_0_0.map\n\n[map]\n1\n0\ntile_1_0.map\n").unwrap();
+        omsi_cfg::add_content_root(root.clone());
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                omsi_cfg::remove_content_root(&self.0);
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(root.clone());
+        let mut g = GlobalCfg::load(&map.join("global.cfg")).unwrap();
+        assert_eq!(g.add_object_entry_points(), 2);
+        let names: Vec<_> = g.entry_points.iter().map(|e| (e.name.as_str(), e.group, e.object_id)).collect();
+        assert_eq!(names, vec![("Airport Maintenance Area", 0, 7), ("Bauernhof", 1, 9)]);
+        let e = &g.entry_points[0];
+        // (the object's height is over the terrain: none for the list)
+        assert_eq!((e.pos[0], e.pos[1]), (6.5, 225.5));
+        assert!(e.pos[2].is_nan());
+        // (the quaternion of a 90 degree heading, as `[entrypoints]` writes it)
+        let heading = (2.0 * e.quat[1].atan2(e.quat[3])).to_degrees();
+        assert!((heading - 90.0).abs() < 1e-9);
+        assert_eq!(g.add_object_entry_points(), 0, "listed already");
     }
 }

@@ -1,6 +1,7 @@
-//! Minimal DirectX `.x` (text) mesh reader: enough for the OMSI helper meshes and the few
-//! scenery objects that still ship `.x` files (frames, Mesh, MeshNormals, MeshTextureCoords,
-//! MeshMaterialList, Material, TextureFilename). Binary `.x` is not used by OMSI content.
+//! Minimal DirectX `.x` mesh reader: enough for the OMSI helper meshes and the scenery
+//! objects that still ship `.x` files (frames, Mesh, MeshNormals, MeshTextureCoords, DeclData,
+//! MeshMaterialList, Material, TextureFilename). A binary file (`xof 0302bin`, 26 PAD-Labs
+//! houses of a Steam install) is first written out as the text it stands for.
 
 use super::{Material, Mesh, O3dError, Triangle, Vertex};
 use glam::{Mat3, Mat4, Vec2, Vec3};
@@ -11,11 +12,17 @@ struct Tok<'a> {
     p: usize,
 }
 
+const MAX_FRAME_DEPTH: usize = 128;
+
+fn is_space(b: u8) -> bool {
+    b.is_ascii() && (b as char).is_whitespace()
+}
+
 impl<'a> Tok<'a> {
     fn skip_ws(&mut self) {
         let b = self.s.as_bytes();
         loop {
-            while self.p < b.len() && (b[self.p] as char).is_whitespace() {
+            while self.p < b.len() && is_space(b[self.p]) {
                 self.p += 1;
             }
             if self.p + 1 < b.len() && b[self.p] == b'/' && b[self.p + 1] == b'/' {
@@ -53,7 +60,7 @@ impl<'a> Tok<'a> {
             self.p += 1;
             return Some(&self.s[start..self.p]);
         }
-        while self.p < b.len() && !(b[self.p] as char).is_whitespace() && !b"{};,<>\"".contains(&b[self.p]) {
+        while self.p < b.len() && !is_space(b[self.p]) && !b"{};,<>\"".contains(&b[self.p]) {
             self.p += 1;
         }
         Some(&self.s[start..self.p])
@@ -81,6 +88,17 @@ impl<'a> Tok<'a> {
     }
     fn int(&mut self) -> Result<usize, O3dError> {
         Ok(self.number()? as usize)
+    }
+    /// A whole 32-bit word, read exactly: `DeclData` keeps its floats as their bit patterns,
+    /// which an `f32` cannot hold to the last bit.
+    fn dword(&mut self) -> Result<u32, O3dError> {
+        loop {
+            let t = self.next().ok_or_else(|| O3dError::XFile("eof in dword".into()))?;
+            if t == "," || t == ";" {
+                continue;
+            }
+            return t.parse::<u32>().map_err(|_| O3dError::XFile(format!("bad dword {t}")));
+        }
     }
     /// Skip a `{ ... }` block (after the '{' has been consumed).
     fn skip_block(&mut self) -> Result<(), O3dError> {
@@ -112,9 +130,16 @@ pub fn parse_x(bytes: &[u8]) -> Result<Mesh, O3dError> {
     if bytes.len() < 16 || !bytes[..16].is_ascii() || !bytes.starts_with(b"xof ") {
         return Err(O3dError::XFile("missing xof header".into()));
     }
-    if &bytes[8..12] != b"txt " {
-        return Err(O3dError::XFile("binary .x not supported".into()));
-    }
+    let unpacked;
+    let bytes = match &bytes[8..12] {
+        b"txt " => bytes,
+        b"bin " => {
+            unpacked = binary_as_text(bytes)?;
+            &unpacked[..]
+        }
+        // (`tzip`/`bzip`: MSZIP-packed, which no OMSI content uses)
+        other => return Err(O3dError::XFile(format!(".x format {:?} not supported", String::from_utf8_lossy(other)))),
+    };
     let (text, _) = encoding_rs::WINDOWS_1252.decode_without_bom_handling(bytes);
     let text = text.into_owned();
     let mut t = Tok { s: &text, p: 16 };
@@ -138,6 +163,195 @@ pub fn parse_x(bytes: &[u8]) -> Result<Mesh, O3dError> {
     Ok(ctx.mesh)
 }
 
+/// A binary `.x` file written out as the text it stands for, so that one reader serves both.
+/// The binary form is a stream of little-endian 16-bit tokens: names, strings, integers and
+/// GUIDs carry their data, and the integer and float lists hold whole runs of values (a
+/// mesh's vertices are one float list). The header's last four characters give the float
+/// size, `0032` or `0064`.
+fn binary_as_text(bytes: &[u8]) -> Result<Vec<u8>, O3dError> {
+    struct Bin<'a> {
+        b: &'a [u8],
+        p: usize,
+    }
+    impl Bin<'_> {
+        fn take(&mut self, n: usize) -> Result<&[u8], O3dError> {
+            let end = self.p.checked_add(n).filter(|&e| e <= self.b.len());
+            let end = end.ok_or_else(|| O3dError::XFile(format!("binary .x cut short at byte {}", self.p)))?;
+            let s = &self.b[self.p..end];
+            self.p = end;
+            Ok(s)
+        }
+        fn word(&mut self) -> Result<u16, O3dError> {
+            let s = self.take(2)?;
+            Ok(u16::from_le_bytes([s[0], s[1]]))
+        }
+        fn dword(&mut self) -> Result<u32, O3dError> {
+            let s = self.take(4)?;
+            Ok(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+        }
+        /// A count from the file, no larger than what is left to read in `unit`-byte pieces.
+        fn count(&mut self, unit: usize) -> Result<usize, O3dError> {
+            let n = self.dword()? as usize;
+            if n.saturating_mul(unit) > self.b.len() - self.p {
+                return Err(O3dError::XFile(format!("binary .x: {n} values do not fit the file")));
+            }
+            Ok(n)
+        }
+    }
+    use std::io::Write;
+    let doubles = &bytes[12..16] == b"0064";
+    let mut r = Bin { b: bytes, p: 16 };
+    let mut out = Vec::with_capacity(bytes.len() * 3);
+    out.extend_from_slice(b"xof 0303txt 0032\n");
+    while r.p < r.b.len() {
+        let at = r.p;
+        match r.word()? {
+            // name: written as a word the text reader keeps whole
+            1 => {
+                let n = r.count(1)?;
+                for &c in r.take(n)? {
+                    let keep = c.is_ascii_graphic() && !b"{};,<>\"#/".contains(&c);
+                    out.push(if keep { c } else { b'_' });
+                }
+                out.push(b' ');
+            }
+            // string, then the token that closes it (`;` or `,`)
+            2 => {
+                let n = r.count(1)?;
+                let text: Vec<u8> = r.take(n)?.iter().copied().filter(|&c| c != b'"' && c != 0).collect();
+                let close = r.word()?;
+                out.push(b'"');
+                out.extend_from_slice(&text);
+                out.push(b'"');
+                out.extend_from_slice(if close == 19 { b",\n" } else { b";\n" });
+            }
+            3 => {
+                let v = r.dword()?;
+                let _ = writeln!(out, "{v};");
+            }
+            // GUID (only templates carry one, and the reader skips them)
+            5 => {
+                r.take(16)?;
+                out.extend_from_slice(b"<guid>\n");
+            }
+            6 => {
+                let n = r.count(4)?;
+                for _ in 0..n {
+                    let v = r.dword()?;
+                    let _ = write!(out, "{v},");
+                }
+                out.extend_from_slice(b";\n");
+            }
+            7 => {
+                let size = if doubles { 8 } else { 4 };
+                let n = r.count(size)?;
+                for _ in 0..n {
+                    let s = r.take(size)?;
+                    // (a broken value must still read as a number)
+                    let _ = if doubles {
+                        let v = f64::from_le_bytes(s.try_into().expect("8 bytes"));
+                        write!(out, "{},", if v.is_finite() { v } else { 0.0 })
+                    } else {
+                        let v = f32::from_le_bytes(s.try_into().expect("4 bytes"));
+                        write!(out, "{},", if v.is_finite() { v } else { 0.0 })
+                    };
+                }
+                out.extend_from_slice(b";\n");
+            }
+            10 => out.extend_from_slice(b"{\n"),
+            11 => out.extend_from_slice(b"}\n"),
+            12 => out.push(b'('),
+            13 => out.push(b')'),
+            14 => out.push(b'['),
+            15 => out.push(b']'),
+            16 => out.push(b'<'),
+            17 => out.push(b'>'),
+            18 => out.push(b'.'),
+            19 => out.extend_from_slice(b",\n"),
+            20 => out.extend_from_slice(b";\n"),
+            31 => out.extend_from_slice(b"template "),
+            // WORD, DWORD, FLOAT, ... ARRAY: the member types of a template
+            40..=52 => out.extend_from_slice(b"type "),
+            token => return Err(O3dError::XFile(format!("binary .x: unknown token {token} at byte {at}"))),
+        }
+    }
+    Ok(out)
+}
+
+/// The size in 32-bit words of a `D3DDECLTYPE` (FLOAT1 .. FLOAT16_4), None for an unknown one.
+fn decl_type_words(ty: u32) -> Option<usize> {
+    match ty {
+        0 | 4 | 5 | 6 | 8 | 9 | 11 | 13 | 14 | 15 => Some(1),
+        1 | 7 | 10 | 12 | 16 => Some(2),
+        2 => Some(3),
+        3 => Some(4),
+        _ => None,
+    }
+}
+
+/// A half float (`D3DDECLTYPE_FLOAT16_2`) as an `f32`.
+fn half_to_f32(h: u16) -> f32 {
+    let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exp = ((h >> 10) & 0x1f) as i32;
+    let frac = (h & 0x3ff) as f32;
+    match exp {
+        0 => sign * frac * 2f32.powi(-24),
+        31 => 0.0,
+        _ => sign * (1.0 + frac / 1024.0) * 2f32.powi(exp - 15),
+    }
+}
+
+/// What a `DeclData` block gives a mesh: the vertex data of DirectX 9's vertex declarations,
+/// one record per vertex. Exporters that write it (684 `.x` files of a Steam install, among
+/// them the PAD-Labs houses and the trees on Köln) keep the texture coordinates only there.
+#[derive(Default)]
+struct DeclData {
+    uvs: Option<Vec<Vec2>>,
+    normals: Option<Vec<Vec3>>,
+}
+
+/// `DeclData { nElements; Type, Method, Usage, UsageIndex per element; nDWords; data }`, the
+/// opening brace consumed. Only the first texture coordinates (FLOAT2 or FLOAT16_2) and the
+/// first normal (FLOAT3) are taken; a declaration whose sizes do not add up gives nothing.
+fn parse_decl_data(t: &mut Tok, nv: usize) -> Result<DeclData, O3dError> {
+    const USAGE_NORMAL: u32 = 3;
+    const USAGE_TEXCOORD: u32 = 5;
+    let n = t.dword()? as usize;
+    let mut stride = Some(0usize);
+    let (mut uv, mut normal) = (None, None);
+    for _ in 0..n {
+        let (ty, _method, usage, index) = (t.dword()?, t.dword()?, t.dword()?, t.dword()?);
+        let offset = stride.unwrap_or(0);
+        if usage == USAGE_TEXCOORD && index == 0 && (ty == 1 || ty == 15) && uv.is_none() {
+            uv = Some((offset, ty));
+        }
+        if usage == USAGE_NORMAL && index == 0 && ty == 2 && normal.is_none() {
+            normal = Some(offset);
+        }
+        stride = stride.zip(decl_type_words(ty)).map(|(s, w)| s + w);
+    }
+    let words = t.dword()? as usize;
+    let mut data = Vec::with_capacity(words.min(t.s.len().saturating_sub(t.p)));
+    for _ in 0..words {
+        data.push(t.dword()?);
+    }
+    skip_to_close(t)?;
+    let Some(stride) = stride.filter(|&s| s > 0 && s * nv == data.len()) else {
+        return Ok(DeclData::default());
+    };
+    let float = |w: u32| f32::from_bits(w);
+    let uvs = uv.map(|(at, ty)| {
+        data.chunks_exact(stride)
+            .map(|v| match ty {
+                1 => Vec2::new(float(v[at]), float(v[at + 1])),
+                _ => Vec2::new(half_to_f32(v[at] as u16), half_to_f32((v[at] >> 16) as u16)),
+            })
+            .collect()
+    });
+    let normals = normal.map(|at| data.chunks_exact(stride).map(|v| Vec3::new(float(v[at]), float(v[at + 1]), float(v[at + 2]))).collect());
+    Ok(DeclData { uvs, normals })
+}
+
 fn parse_objects(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
     while let Some(tok) = t.next() {
         match tok {
@@ -154,7 +368,7 @@ fn parse_objects(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError
                     t.next();
                 }
                 t.expect("{")?;
-                parse_frame(t, ctx, xform)?;
+                parse_frame(t, ctx, xform, 1)?;
             }
             "Mesh" => {
                 if t.peek() != Some("{") {
@@ -191,7 +405,10 @@ fn parse_objects(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError
     Ok(())
 }
 
-fn parse_frame(t: &mut Tok, ctx: &mut Ctx, parent: Mat4) -> Result<(), O3dError> {
+fn parse_frame(t: &mut Tok, ctx: &mut Ctx, parent: Mat4, depth: usize) -> Result<(), O3dError> {
+    if depth > MAX_FRAME_DEPTH {
+        return Err(O3dError::XFile(format!("frames nested more than {MAX_FRAME_DEPTH} deep")));
+    }
     let mut xform = parent;
     loop {
         let tok = t.next().ok_or_else(|| O3dError::XFile("eof in frame".into()))?;
@@ -230,7 +447,7 @@ fn parse_frame(t: &mut Tok, ctx: &mut Ctx, parent: Mat4) -> Result<(), O3dError>
                     t.next();
                 }
                 t.expect("{")?;
-                parse_frame(t, ctx, xform)?;
+                parse_frame(t, ctx, xform, depth + 1)?;
             }
             "Mesh" => {
                 if t.peek() != Some("{") {
@@ -284,11 +501,21 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
     let mut face_mats: Vec<u16> = vec![0; nf];
     let mut mats: Vec<Material> = Vec::new();
     let mut material_refs: Vec<(usize, String)> = Vec::new();
+    let (mut has_normals, mut has_uvs) = (false, false);
+    let mut decl = DeclData::default();
     loop {
         let tok = t.next().ok_or_else(|| O3dError::XFile("eof in mesh".into()))?;
         match tok {
             "}" => break,
+            "DeclData" => {
+                if t.peek() != Some("{") {
+                    t.next();
+                }
+                t.expect("{")?;
+                decl = parse_decl_data(t, nv)?;
+            }
             "MeshNormals" => {
+                has_normals = true;
                 if t.peek() != Some("{") {
                     t.next();
                 }
@@ -317,6 +544,7 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
                 skip_to_close(t)?;
             }
             "MeshTextureCoords" => {
+                has_uvs = true;
                 if t.peek() != Some("{") {
                     t.next();
                 }
@@ -383,6 +611,15 @@ fn parse_mesh(t: &mut Tok, ctx: &mut Ctx, xform: Mat4) -> Result<(), O3dError> {
                 }
             }
         }
+    }
+    // (`MeshTextureCoords` and `MeshNormals` win where a file has both)
+    if let (Some(d), false) = (decl.uvs, has_uvs) {
+        uvs = d;
+    }
+    if let (Some(d), false) = (decl.normals, has_normals) {
+        let linear = Mat3::from_mat4(xform);
+        let normal_matrix = if linear.determinant().abs() > 1e-12 { linear.inverse().transpose() } else { linear };
+        normals = d.into_iter().map(|n| (normal_matrix * n).normalize_or_zero()).collect();
     }
     if mats.is_empty() {
         mats.push(Material::default());
@@ -473,7 +710,7 @@ mod tests {
     #[ignore = "requires installed traffic-light assets; set OMSI_ROOT or OMSI_TEST_CONTENT"]
     fn installed_traffic_light_material_references() {
         let Some(root) =
-            std::env::var_os("OMSI_ROOT").or_else(|| std::env::var_os("OMSI_TEST_CONTENT"))
+            omsi_cfg::flags::OMSI_ROOT.live_os().or_else(|| omsi_cfg::flags::OMSI_TEST_CONTENT.live_os())
         else {
             eprintln!("skipped: set OMSI_ROOT or OMSI_TEST_CONTENT to the installed content root");
             return;
@@ -501,6 +738,112 @@ mod tests {
             .triangles
             .iter()
             .all(|triangle| (triangle.material as usize) < mesh.materials.len()));
+    }
+
+    /// An exporter that keeps the texture coordinates only in `DeclData` (the PAD-Labs houses):
+    /// a normal (FLOAT3) and the first texture coordinates (FLOAT2) per vertex, the floats as
+    /// their bit patterns. Read as UV 0,0 before, the houses were one flat colour.
+    #[test]
+    fn decl_data_gives_texture_coordinates_and_normals() {
+        let uv = [(0.25f32, 0.5f32), (1.0, 0.0), (0.0, 1.0)];
+        let mut data = Vec::new();
+        for (u, v) in uv {
+            for w in [0.0f32, 0.0, 1.0, u, v] {
+                data.push(w.to_bits().to_string());
+            }
+        }
+        let file = |words: &[String]| {
+            format!(
+                "xof 0303txt 0032\nMesh {{\n 3;\n 0;0;0;,\n 1;0;0;,\n 0;1;0;;\n 1;\n 3;0,1,2;;\n DeclData {{\n  2;\n  2;0;3;0;,\n  1;0;5;0;;\n  {};\n  {};\n }}\n}}\n",
+                words.len(),
+                words.join(",")
+            )
+        };
+        let x = file(&data);
+        let m = parse_x(x.as_bytes()).unwrap();
+        let got: Vec<Vec2> = m.vertices.iter().map(|v| v.uv).collect();
+        assert_eq!(got, [Vec2::new(0.25, 0.5), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)]);
+        assert!(m.vertices.iter().all(|v| (v.normal - Vec3::Z).length() < 1e-6));
+        // MeshTextureCoords, where a file has both, is what counts
+        let both = x.replace(" DeclData", " MeshTextureCoords {\n 3;\n 0.5;0.5;,\n 0.5;0.5;,\n 0.5;0.5;;\n }\n DeclData");
+        let m = parse_x(both.as_bytes()).unwrap();
+        assert!(m.vertices.iter().all(|v| v.uv == Vec2::splat(0.5)));
+        // a declaration whose sizes do not add up to the data gives nothing
+        let m = parse_x(file(&data[..14]).as_bytes()).unwrap();
+        assert!(m.vertices.iter().all(|v| v.uv == Vec2::ZERO));
+    }
+
+    /// A binary file (`xof 0302bin 0032`) reads as the text it stands for: a triangle with
+    /// texture coordinates and a textured material, built token by token.
+    #[test]
+    fn binary_files_are_read() {
+        fn word(out: &mut Vec<u8>, w: u16) {
+            out.extend_from_slice(&w.to_le_bytes());
+        }
+        fn name(out: &mut Vec<u8>, s: &str) {
+            word(out, 1);
+            out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            out.extend_from_slice(s.as_bytes());
+        }
+        fn ints(out: &mut Vec<u8>, v: &[u32]) {
+            word(out, 6);
+            out.extend_from_slice(&(v.len() as u32).to_le_bytes());
+            v.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes()));
+        }
+        fn floats(out: &mut Vec<u8>, v: &[f32]) {
+            word(out, 7);
+            out.extend_from_slice(&(v.len() as u32).to_le_bytes());
+            v.iter().for_each(|x| out.extend_from_slice(&x.to_le_bytes()));
+        }
+        let (open, close) = (10, 11);
+        let mut b = b"xof 0302bin 0032".to_vec();
+        // a template, as exporters write them first
+        word(&mut b, 31);
+        name(&mut b, "Header");
+        word(&mut b, open);
+        word(&mut b, 5);
+        b.extend_from_slice(&[0x11; 16]);
+        word(&mut b, 40);
+        name(&mut b, "major");
+        word(&mut b, 20);
+        word(&mut b, close);
+        name(&mut b, "Mesh");
+        name(&mut b, "house");
+        word(&mut b, open);
+        ints(&mut b, &[3]);
+        floats(&mut b, &[0.0, 0.0, 0.0, 2.5, 0.0, 0.0, 0.0, 1.5, 0.0]);
+        ints(&mut b, &[1, 3, 0, 1, 2]);
+        name(&mut b, "MeshTextureCoords");
+        word(&mut b, open);
+        ints(&mut b, &[3]);
+        floats(&mut b, &[0.0, 0.0, 1.0, 0.0, 0.0, 0.75]);
+        word(&mut b, close);
+        name(&mut b, "MeshMaterialList");
+        word(&mut b, open);
+        ints(&mut b, &[1, 1, 0]);
+        name(&mut b, "Material");
+        word(&mut b, open);
+        floats(&mut b, &[1.0, 0.5, 0.25, 1.0, 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        name(&mut b, "TextureFilename");
+        word(&mut b, open);
+        word(&mut b, 2);
+        b.extend_from_slice(&8u32.to_le_bytes());
+        b.extend_from_slice(b"wall.bmp");
+        word(&mut b, 20);
+        word(&mut b, close);
+        word(&mut b, close);
+        word(&mut b, close);
+        word(&mut b, close);
+        let m = parse_x(&b).unwrap();
+        let p: Vec<Vec3> = m.vertices.iter().map(|v| v.position).collect();
+        assert_eq!(p, [Vec3::ZERO, Vec3::new(2.5, 0.0, 0.0), Vec3::new(0.0, 1.5, 0.0)]);
+        assert_eq!(m.vertices[2].uv, Vec2::new(0.0, 0.75));
+        assert_eq!(m.triangles.len(), 1);
+        assert_eq!(m.materials.len(), 1);
+        assert_eq!(m.materials[0].texture, "wall.bmp");
+        assert_eq!(m.materials[0].diffuse, [1.0, 0.5, 0.25, 1.0]);
+        // cut short: an error, not a panic
+        assert!(parse_x(&b[..b.len() - 9]).is_err());
     }
 
     fn material_test_mesh(entries: &str) -> String {
@@ -636,6 +979,26 @@ Frame Root {\n FrameTransformMatrix {\n 1.0, 0.0, 0.0, 0.0,\n 0.0,-0.0, 1.0, 0.0
         }
         // the +x normal turns to Blender +y, D3D +z
         assert!((m.vertices[0].normal - Vec3::Z).length() < 1e-5, "{:?}", m.vertices[0].normal);
+    }
+
+    #[test]
+    fn names_with_accented_letters_load() {
+        let x = b"xof 0303txt 0032\nFrame \x8Aasi\xA0\x85 {\n Material \x8Aed\xE1 { 1;1;1;1;; 1; 0;0;0;; 0;0;0;; }\n Mesh {\n 3;\n 0;0;0;,\n 1;0;0;,\n 0;1;0;;\n 1;\n 3;0,1,2;;\n }\n}\n";
+        assert_eq!(parse_x(x).unwrap().triangles.len(), 1);
+    }
+
+    #[test]
+    fn frames_nested_too_deep_are_an_error() {
+        let deep = |n: usize| {
+            let mut x = String::from("xof 0303txt 0032\n");
+            x.push_str(&"Frame{".repeat(n));
+            x.push_str("Mesh{3;0;0;0;,1;0;0;,0;1;0;;1;3;0,1,2;;}");
+            x.push_str(&"}".repeat(n));
+            x
+        };
+        assert_eq!(parse_x(deep(MAX_FRAME_DEPTH).as_bytes()).unwrap().triangles.len(), 1);
+        assert!(parse_x(deep(MAX_FRAME_DEPTH + 1).as_bytes()).is_err());
+        assert!(parse_x(deep(200_000).as_bytes()).is_err());
     }
 
     /// A Blender export: the root frame swaps y and z, the child frame turns, scales and

@@ -1,5 +1,9 @@
 # Modding beyond OMSI 2
 
+For map-selected Tomorrow.io weather, add an `openomsi_weather.cfg` beside
+`global.cfg`. See [weather areas](WEATHER_REGIONS.md) for the format, player setup
+and the [community config editor](https://openomsi.mxnticek.eu/weather/).
+
 openOMSI reads OMSI 2 content as it is: a bus, a map or an object made for OMSI 2 works
 without changes. It also lifts limits OMSI 2 put on modders. Everything on this page is an
 addition. A file that uses it still loads in OMSI 2, which ignores what it does not know.
@@ -34,13 +38,25 @@ OMSI 2 reads the first four and skips the rest. A model may declare any number o
 
 ## Textures of any resolution
 
-- Textures up to 16384 × 16384 pixels load: DDS (DXT1/3/5, uncompressed), TGA, BMP, PNG and
-  JPG. Where the graphics card cannot take that size, the texture is halved until it fits.
+- Textures up to 16384 × 16384 pixels load. Where the graphics card cannot take that size,
+  the texture is halved until it fits.
+- Every picture format of today's tools is read, by its content whatever its name says:
+  - DDS with the DX10 header (BC4, BC5, BC6H, BC7 as texconv, Substance and the engines
+    write them; R10G10B10A2, R11G11B10 float, R9G9B9E5, 16- and 32-bit float and 16-bit
+    channels, B5G6R5 / B5G5R5A1 / B4G4R4A4, R8G8, R8, A8; DX10 cube maps), ATI1 / ATI2 /
+    BC4U / BC5U (the z of a two-channel normal map is made from x and y), RXGB, Direct3D's
+    float formats, and OMSI's DXT1-5 and uncompressed DDS;
+  - KTX 1 and KTX 2 (not supercompressed) with RGBA8, BC1-BC7, ETC1, ETC2 / EAC and ASTC;
+  - PNG (also 16 bits per channel), JPEG (also progressive and CMYK), BMP, TGA, WebP, GIF,
+    TIFF, QOI, OpenEXR, Radiance HDR, ICO, PNM and farbfeld.
+- A texture named in a model (`bus.bmp`) is found as `bus.dds` first, then under its own
+  name, then as `.bmp`, `.tga`, `.jpg`, `.png`, `.jpeg`, `.webp`, `.tif`, `.tiff`, `.gif`,
+  `.ktx2`, `.ktx`, `.qoi`, `.hdr`, `.exr` and `.pnm`.
 - There is no 2 GB address-space limit: openOMSI is a 64-bit program.
 - A texture keeps its full resolution within 150 m of the camera, so a bus's own 4K
-  textures always stay sharp. Far scenery gives up detail only when the texture memory
-  (`texture_memory` in the settings, or `OMSI_TEXTURE_MEMORY`, in MB) runs out, as OMSI's
-  `[texmemlimit]` does.
+  textures always stay sharp. Far scenery gives up detail only when the texture budget
+  (`OMSI_TEXTURE_MEMORY`, in MB) or the video memory (`video_memory` in the settings, all
+  the game holds on the card) runs out, as with OMSI's `[texmemlimit]`.
 - `[scripttexture]`, `[htmltexture]` and `[texttexture]` / `[texttexture_enh]` can be any size the card
   takes.
 
@@ -82,94 +98,44 @@ Normal, roughness, metalness and occlusion maps beside a texture, up to 4096 × 
   With the flag 0 (or left out) the lamp is where it says and a twin of it stands on the
   other side of the vehicle, mirrored across its axis (x and the x of the direction turned
   round): put the position on one headlamp. With 1 there is just the one lamp, for a
-  light over a door or a cornering lamp. In the enhanced picture at night, the player's lamps
-  that shine along the road cast the shadows of what stands in front of them (one shadow map
-  for all of them). A range under 10 m is a short reach as declared and a weaker light, the
-  square of the range over ten (a range of 1 is a faint glow); the colour (0-255) dims a lamp as
-  well. A pair is as bright as a `[spotlight]` of the same
+  light over a door or a cornering lamp. A pair is as bright as a `[spotlight]` of the same
   colour, shared between its two lamps. The position is used as written: unlike a
   `[spotlight]`'s, it is not moved onto the vehicle's front. A rear section's model may have
   its own; their variables are the bus's.
-- `[spotlight_cookie]` (enhanced picture) is a lamp whose light by direction **and colour** is a
-  picture, a beam cookie, instead of a cone: the cut-off of a low beam, the hot spot under it,
-  the spread, the tint of its fringes. The picture carries the colour, so there are no colour
-  numbers and no cone angles. The lines, in order (each from the position to the picture's name
-  is read as a number or a name on a line of its own):
+
+- `[spotlight_cookie]` in the `model.cfg` is a lamp whose beam is a picture: what it would
+  show on a wall in front of it, its brightness and colour every way the lamp shines. One
+  value a line: position (x, y, z), direction (x, y, z), red, green, blue, range, the angle the
+  picture covers across and the one up and down (degrees), the picture, the switching variable;
+  then, if you want them, the fade time in seconds, a variable that turns the lamp to the
+  right (degrees) and one that turns it up (degrees):
 
   ```
   [spotlight_cookie]
-  0.95            position x
-  5.95            position y
-  0.652           position z
-  0               direction x
-  1               direction y
-  0               direction z
-  200             range (m, up to 300)
-  lights_fern     the variable that switches it (0 off, 1 full; a number is a constant)
-  0               flag: 0 or none: a twin lamp across the vehicle's axis, 1: the one lamp
-  low_beam.png    the picture, in the vehicle's texture folder (searched like a [light_enh_2]'s bitmap)
-  0.3             time constant (s): 63 % of the way on in that time when switched on, down to 27 %
-                  when switched off, as a [light_enh_2]'s timeconst; 0 or none: at once
-  lamp_pitch      variable: the beam's vertical offset in degrees (+ up); optional, may be empty
-  lamp_yaw        variable: the beam's horizontal offset in degrees (+ right); optional, may be empty
+  0.9
+  5.85
+  0.75
+  0
+  1
+  -0.04
+  255
+  250
+  235
+  80
+  70
+  30
+  lowbeam_right.png
+  lights_main
+  0.15
+  cornering_yaw
   ```
 
-  Everything after the variable may be left out, and a keyword ends the block. A number in place
-  of an offset variable is a constant offset. The flag works as in `[spotlight_2]`, but the
-  picture is **not** mirrored: both lamps shine with the beam the same way round, so an
-  asymmetric low beam (the cut-off higher on the right) is asymmetric the same way on both
-  sides, and an offset turns both lamps the same way (a twin's position and direction are
-  mirrored, the offsets are not). **The two modules can be had apart**: declare each as a
-  `[spotlight_cookie]` of its own with the flag 1 - each has its own switching variable,
-  offsets, picture and time constant, so a script can steer cornering modules, a left and a
-  right one, by itself. The picture's frame follows the lamp's direction (with the offsets)
-  and the vehicle's up.
-
-  The picture is 1280 x 1024, 0.09375 degrees a pixel (-60 to +60 degrees across, +36 to -60
-  degrees down, 0 at row 384), sRGB-coded gray or RGB, 8 or 16 bits (any other size is scaled),
-  with white the beam's peak; a gray picture shines white. Beyond the picture there is no
-  light, and its four edges fade out (12 degrees at the sides and the bottom, 8 at the top, the
-  `COOKIE_FADE_*` constants of `enhanced.wgsl`) whatever it holds. The lamp's `range` is how far
-  it reaches (up to 300 m): see `beam_cookies/FORMAT.md`. Up to eight pictures at a time; a
-  lamp whose picture is missing, or on a device with no room for cookies, shines as a plain
-  warm-white spot. The shadow of the player's lamps works with it as before.
-  `OMSI_NO_COOKIES=1` leaves cookies out.
-
-## LED glow: set by hand, per material
-
-In the enhanced picture a material can glow like the dots of an LED destination panel: its lit
-parts burn above their colour and the glow draws a halo around them. Nothing is guessed from the
-material any more - a `\S:n` script mask does not make a panel glow by itself. Give the material the
-key `[led_glow_effect]` and a number from 0 to 1 on the next line, inside its `[matl]` block:
-
-```
-[matl]
-vmatrix_led.bmp
-0
-[matl_transmap]
-\S:1
-[matl_lightmap]
-vmatrix_leer_led_LM.png
-elec_busbar_main
-[led_glow_effect]
-1
-```
-
-- `0` keeps the glow off the material; `1` is a panel at the strength of the player's *LED glow*
-  setting; a number between scales that strength and the halo with it. The halo is strong - a
-  large surface is best given 0.1-0.4.
-- Without the key the material does not glow, whatever it carries. This is a change from earlier
-  versions, where every `\S:n` panel with a white light map glowed: add the key to a panel that
-  should.
-- It works on any material of a vehicle or a scenery object, not only on a script's display. A
-  material with a `[matl_lightmap]` glows where its light map is lit (and its variable switches
-  it); one with only a `[matl_nightmap]` glows by the night map, at night or when the night map is
-  switched on; with neither, all over, in the colour of its texture.
-- A material with a `\S:n` transmap keeps its dots sharp as the *LED mip strength* setting says.
-  A material without one is filtered as usual.
-- The glow follows the player's *LED glow* setting (0 = off for every material), and a
-  `[matl_item]` takes the key of its base material unless it has its own.
-- OMSI 2 ignores the key.
+  The picture's right is the lamp's right as seen from behind it. White is as bright as a
+  headlamp's beam at its strongest, black is no light. The enhanced graphics draw up to eight
+  different pictures at once; the classic graphics, and a lamp whose picture is missing, light
+  a plain cone round the picture's field instead.
+- With shadows on, the player's headlamps cast shadows too (Enhanced): the
+  lamps on the front that light the road share one shadow map, taken from between them.
 
 ## Screens: static cameras
 
@@ -188,6 +154,44 @@ that camera sees from the rear section.
 
 ## Models
 
+- A `[mesh]` (and every other place OMSI reads a mesh) may name a **glTF / GLB**, **FBX**
+  or **OBJ** file besides `.o3d` and `.x`; the format is told by the file's content. The
+  model is read in the frame the modelling tool shows it in - exported from Blender with the
+  vehicle's front along +Y, as for an `.o3d` - in metres (FBX in any unit), with every node's
+  transform applied:
+  - materials keep their base colour and their colour texture. A texture beside the model
+    (or in a `texture` folder beside it) is found there, one packed into a `.glb` or `.fbx`
+    is read from the file; the material is named after the picture's file name, so a
+    `[matl] <picture> <n>` of the model's `.cfg` acts on it as on an `.o3d`'s material;
+  - skins (bone names and weights) and blend shapes come along; an FBX may be ASCII or
+    binary of any version, an OBJ has its `.mtl` (`Kd`, `d`, `map_Kd`) and any polygons;
+  - `cargo run -p omsi-o3d --example mesh_info <file>` shows what openOMSI reads of a model.
+- `[led_glow_effect]` after a `[matl]` (a number from 0 to 1) says how much an LED panel's
+  dots glow in the enhanced picture: 1 the full `LED glow` setting, 0.5 half of it, 0 not at
+  all (the slot is no LED panel). Without it openOMSI guesses: a slot with a `\S:n` script
+  mask and a white light map is taken for an LED panel. See FORMATS.md.
+- A mesh may carry **several visibility conditions** (#729) - no script needed for a mesh
+  shown by two variables at once:
+  - `[visible_range]` with a variable, the lowest and the highest value shows the mesh while
+    the variable is between them (both included): `[visible_range]` `gear` `1` `4`;
+  - once a mesh has a `[visible_range]`, a `!` or a `||`, every condition of a group must
+    hold; plain `[visible]` blocks alone keep OMSI 2's rule (the last one counts), so a mesh
+    shown by two variables at once writes one of them as a range round its value:
+    ```
+    [visible_range]
+    door_open
+    0.5
+    1.5
+
+    [visible]
+    lights_on
+    1
+    ```
+  - a `!` after the variable's name turns a condition round: `door_open !` then `1` shows
+    the mesh while the door is not open (with `[visible_range]` outside the range);
+  - a line `||` between two blocks starts another group of conditions: the mesh shows when
+    all of the conditions before it hold, or all of those after it, as `||` reads in a script.
+  A variable the vehicle does not have reads 0, as with OMSI 2's single `[visible]`.
 - `.o3d` files with 32-bit indices (the long-index flag) are drawn with their full vertex
   and face count; everything is drawn with 32-bit indices.
 - There is no limit on the number of meshes, materials, `[matl_change]` items, `[CTC]`
@@ -196,7 +200,7 @@ that camera sees from the rear section.
 ## Passenger doors: sixteen entries and sixteen exits
 
 OMSI 2 has the door variables of eight `[entry]` and eight `[exit]` paths a vehicle
-(`PAX_Entry0_Open` to `PAX_Entry7_Open`, the same with `_Req` and for `PAX_Exit`). openOMSI
+has (`PAX_Entry0_Open` to `PAX_Entry7_Open`, the same with `_Req` and for `PAX_Exit`). openOMSI
 has them for sixteen of each: `PAX_Entry8_Open` ... `PAX_Entry15_Open`, `PAX_Entry8_Req` ...
 and the same for the exits. An entry or exit past the eighth is a door of its own once the
 script sets its `_Open` variable (or lists it in a varlist); then its passengers wait for that
@@ -244,29 +248,19 @@ every `[stamper]` of every section, and a passenger with a ticket to stamp uses 
 nearest the door they came in by. Write one `[stamper]` block per validator (path point,
 then x, y, z of the device, as usual); OMSI 2 still takes the last of them.
 
-## Articulated buses: interior sounds of each section apart
-
-In OMSI 2 the `[sound]` of a section is heard in the whole bus: standing in the rear section
-of an articulated bus you hear the interior sounds of the front one (and the other way
-round). Put `[int_sounds_separate]` (no parameters) in the `.bus` of the front section - or
-in the `.ovh` of any rear section - and the sections keep their interior sounds to themselves:
-
-* in a section, you hear that section's sounds as usual;
-* of every *other* section you hear only the entries made for the outside (`[viewpoint]` 1,
-  or none), and only as they come through the bodywork - at the volume of `Snd_OutsideVol`
-  and through the same low-pass as the traffic outside (nothing at all while the script keeps
-  `Snd_OutsideVol` at 0.01 or below). Entries that are for the interior only (`[viewpoint]` 2)
-  are silent there.
-
-Which section you are in follows the camera: the driver's view is the front section's, the
-passenger view and the walker's camera are in the section they stand in (the joint's middle
-divides them). Without the tag nothing changes, and a bus with one section is not affected.
-
 ## Scripts and plugins
 
 - Script variables and string variables have no count limit.
 - Lua plugins can read and write script variables, fire triggers and react to game events:
   see [Plugins](PLUGINS.md).
+- `(M.V.GetRadioName)` and `(M.V.GetRadioSong)` put what the bus radio plays on the string
+  stack: the station's name (as the stream gives it in `icy-name`, else as the station list
+  names it) and the title it gives (`StreamTitle`); both empty while the radio is off or the
+  station says nothing. Not in OMSI 2: check for an empty string.
+- The developer tools (**Ctrl+Shift+D**, see the [user guide](USER_GUIDE.md#developer-tools))
+  show and hold the variables, draw the paths, places, boxes, axles, lights, mirrors and views
+  over the bus, and read its paths.cfg, `[passengercabin]`, sound.cfg, `.bus`, model.cfg and
+  constfiles again while it drives.
 
 ## Radio: a map's stations and a bus's display
 
@@ -307,21 +301,6 @@ station), or `SndExt_Radio` (the station button, 0 = off) with `SndVol_Radio` (t
 0..1, up to 2). Dmitrij's "Magnitola" is served as it comes: while it shows its track,
 its `magnitola_1` (`frequency@station`, `@` the line break) gets the map's frequency for the
 place in its first line and the station and song in its second.
-
-**Callbacks for the station and the song.** A script can ask what the radio plays with two
-openOMSI callbacks that return a string, written like OMSI's own:
-
-```
-(M.V.GetRadioName)   { the station's name: what it calls itself (icy-name), else its name in radio.cfg }
-(M.V.GetRadioSong)   { the stream title the station sends: "Artist - Title", or whatever text it puts there }
-```
-
-Both read an empty string while the radio is off, and `GetRadioSong` is empty while the
-station sends no title. The text is as the station sends it (UTF-8): a display font without
-its letters shows gaps, so a script may want to cut or replace what it cannot show. Unlike
-`Snd_Radio_Text` the callbacks need no variable in the bus's files, and the script decides
-what to show and how. OMSI 2 itself does not know them (it reads them as 0), so a bus using
-them should still work without them.
 
 ## What stays as in OMSI 2
 

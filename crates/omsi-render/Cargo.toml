@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "wgpu renderer: textured, lit meshes with OMSI alpha modes; on-screen and off-screen targets"
 
+[features]
+default = ["test-hooks"]
+# The fault-injection hook OMSI_FAKE_GPU_ERROR (see docs/DEBUG_FLAGS.md); a build without
+# it cannot be made to fail on purpose.
+test-hooks = []
+
 [dependencies]
 omsi-cfg = { path = "../omsi-cfg" }
 omsi-geometry = { path = "../omsi-geometry" }
@@ -21,10 +27,17 @@ winit.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_Graphics_Dxgi", "Win32_Foundation"] }
+# (the same glow as wgpu's GL backend, to turn ANGLE's parallel shader compiles off)
+glow = "0.17"
 
 [dev-dependencies]
 naga = { workspace = true, features = ["spv-out", "glsl-out", "hlsl-out"] }
 env_logger.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies.wgpu]
+# Standalone renderer tests do not inherit omsi-app's ANGLE feature.
+workspace = true
+features = ["angle"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ash = "0.38"

@@ -538,13 +538,16 @@ impl EntityRef {
 /// What a car or a person is, told once per client (and again when it asks, `WANT`):
 ///
 /// ```text
-/// DESC|c|<id>|<vehicle file>|<paint scheme index or ->|<line>|<destination>
+/// DESC|c|<id>|<vehicle file>|<paint scheme index or ->|<line>|<destination>|<paint scheme name>
 /// DESC|p|<id>|<human file>
 /// ```
 ///
 /// The files are relative to a content root (`Vehicles/…/x.bus`, `Humans/…/x.hum`) and are
 /// checked like a player's vehicle path; line and destination are what a timetable bus
-/// shows (empty for the random traffic).
+/// shows (empty for the random traffic). The paint scheme goes by its name as well: its
+/// index counts the repaints installed on the sender, and a game with other repaints in
+/// its content folder took another one by that number (#2018). A sender without the name
+/// leaves it empty and the index is taken.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Desc {
     Car {
@@ -553,6 +556,7 @@ pub enum Desc {
         scheme: Option<u8>,
         line: String,
         destination: String,
+        paint: String,
     },
     Person {
         id: u32,
@@ -569,12 +573,14 @@ impl Desc {
                 scheme,
                 line,
                 destination,
+                paint,
             } => format!(
-                "DESC|c|{id}|{}|{}|{}|{}",
+                "DESC|c|{id}|{}|{}|{}|{}|{}",
                 crate::clean_text(file, 260),
                 scheme.map(|s| s.to_string()).unwrap_or_else(|| "-".into()),
                 crate::clean_text(line, 16),
-                crate::clean_text(destination, 64)
+                crate::clean_text(destination, 64),
+                crate::clean_text(paint, 64)
             ),
             Desc::Person { id, file } => {
                 format!("DESC|p|{id}|{}", crate::clean_text(file, 260))
@@ -595,6 +601,7 @@ impl Desc {
                 scheme: parts.get(4).and_then(|s| s.trim().parse::<u8>().ok()),
                 line: crate::clean_text(parts.get(5).copied().unwrap_or(""), 16),
                 destination: crate::clean_text(parts.get(6).copied().unwrap_or(""), 64),
+                paint: crate::clean_text(parts.get(7).copied().unwrap_or(""), 64),
             }),
             "p" => Some(Desc::Person {
                 id,
@@ -809,6 +816,7 @@ mod tests {
             scheme: Some(3),
             line: "37".into(),
             destination: "Hahneberg|x".into(),
+            paint: "BVG 1990".into(),
         };
         let text = d.encode();
         let parts: Vec<&str> = text.split('|').collect();
@@ -820,8 +828,12 @@ mod tests {
                 scheme: Some(3),
                 line: "37".into(),
                 destination: "Hahneberg x".into(),
+                paint: "BVG 1990".into(),
             }
         );
+        // (from a game that sends no name: the index alone)
+        let old: Vec<&str> = "DESC|c|77|Vehicles/x.bus|2|37|#4".split('|').collect();
+        assert!(matches!(Desc::decode(&old), Some(Desc::Car { scheme: Some(2), ref paint, .. }) if paint.is_empty()));
         for bad in [
             "DESC|c|1|../../x.bus|-||",
             "DESC|c|1|/etc/passwd.bus|-||",

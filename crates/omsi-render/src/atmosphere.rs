@@ -68,7 +68,7 @@ const CITY_GLOW: Vec3 = Vec3::new(3.4e-6, 2.85e-6, 2.15e-6);
 const NATURAL_NIGHT: Vec3 = Vec3::new(0.9e-7, 1.0e-7, 1.3e-7);
 /// The light a lit city keeps up around the viewer at night (street lamps, windows) as far
 /// as the exposure is concerned.
-const ARTIFICIAL: f32 = 0.0015;
+pub const ARTIFICIAL: f32 = 0.0015;
 /// How much of the sky at the horizon houses and trees hide (for the ambient light), up to
 /// which elevation (degrees), and how much light they throw back.
 const SURROUND_MAX: f32 = 0.7;
@@ -182,6 +182,12 @@ pub struct SkyState {
     /// so that it can follow a cloud's shadow passing over (`exposure_for`).
     pub e_sun: f32,
     pub e_rest: f32,
+    /// The moon's irradiance on a surface facing it, after the clouds (balanced as the
+    /// rest): a directional light like the sun's, with a shadow of its own by night.
+    pub moon_light: Vec3,
+    /// The part of `e_rest` that stands for the lamps round the viewer when nothing better
+    /// is known (the renderer measures them: `view_lamp_light`).
+    pub e_artificial: f32,
 }
 
 /// Optical depth per unit coefficient (Rayleigh, Mie, ozone) along a ray from altitude h
@@ -669,10 +675,16 @@ impl SkyState {
         let moon_lut = moon.as_ref().map(|r| moon_in_sun_frame(r, m, s));
         // the clear sky, greyed and evened out under a closed cover (a CIE overcast sky:
         // the zenith three times as bright as the horizon, a little brighter round where
-        // the sun stands behind it), holding about a third of what sun and sky together
-        // gave, less under rain
+        // the sun stands behind it), holding what the deck lets through of what sun and sky
+        // together gave: a conservative scattering layer of optical depth tau passes
+        // 1 / (1 + 3/4 (1 - g) tau) of it (two-stream, droplets' g = 0.85) - a grey stratus
+        // deck (tau about 15) a little over a third, a raining nimbostratus (60) an eighth -
+        // and what the ground throws back up, the deck sends down again: under a cover
+        // the light of a snowy day is half again as bright as of a green one
         let clear_global = (raw.sun * s.z.max(0.0) + raw.sky_horizontal).dot(LUM);
-        let overcast_e = clear_global * 0.34 * (1.0 - 0.45 * input.rain.clamp(0.0, 1.0));
+        let tau = 15.0 + 45.0 * input.rain.clamp(0.0, 1.0);
+        let deck_t = 1.0 / (1.0 + 0.75 * (1.0 - 0.85) * tau);
+        let overcast_e = clear_global * deck_t / (1.0 - (1.0 - deck_t) * input.ground_albedo.clamp(0.0, 0.9));
         let grey = Vec3::new(0.96, 0.98, 1.0);
         let (w, h) = (SKY_LUT_W as usize, SKY_LUT_H as usize);
         // the cover's shape, normalised below to its irradiance
@@ -766,12 +778,9 @@ impl SkyState {
                 }
             }
         }
-        // the moonlight, a directional light in the same harmonics
-        if moon_light.max_element() > 0.0 {
-            for (k, y) in sh_basis(m).iter().enumerate() {
-                sh[k] += moon_light * *y;
-            }
-        }
+        // (the moonlight itself is a directional light of its own, `moon_light`, which the
+        // enhanced pass shades with the moon's shadow: in the harmonics it lit every side a
+        // little and cast no shadow at all)
         // the ground: lit by the sun and the sky, seen as the lower half of the sphere
         let ground = (sun * s.z.max(0.0) + sky_horizontal) * input.ground_albedo / std::f32::consts::PI * tint[2];
         let lower = ground_sh(ground);
@@ -803,8 +812,10 @@ impl SkyState {
         let sun_facing = s.z.max(0.0) + (1.0 - s.z.max(0.0)) * LOW_SUN_WALLS * (s.z * 20.0).clamp(0.0, 1.0);
         let e_sun = (sun * sun_facing).dot(LUM);
         // (the rest as a surface facing up gets it from the sky and the clouds in it)
-        let e_rest = sh_irradiance(&sh, Vec3::Z).dot(LUM).max(sky_horizontal.dot(LUM)) + ARTIFICIAL;
-        SkyState { input: *input, sun, sun_disc, moon_disc, sun_at, lut: lut_out, lut_scale, sh, sky_horizontal, ground, exposure: exposure_for(e_sun + e_rest), e_sun, e_rest }
+        // (a village's few lamps keep less light round the viewer than a city's streets)
+        let e_artificial = ARTIFICIAL * input.city_glow.clamp(0.3, 1.0);
+        let e_rest = sh_irradiance(&sh, Vec3::Z).dot(LUM).max(sky_horizontal.dot(LUM)) + e_artificial;
+        SkyState { input: *input, sun, sun_disc, moon_disc, sun_at, lut: lut_out, lut_scale, sh, sky_horizontal, ground, exposure: exposure_for(e_sun + e_rest), e_sun, e_rest, moon_light, e_artificial }
     }
 }
 
@@ -819,14 +830,29 @@ fn ground_sh(l: Vec3) -> [Vec3; 9] {
 
 /// Pre-exposure for a reference irradiance: full exposure by day, only part of the way
 /// up at night (a street at night still looks dark - the eye does not adapt completely).
+///
+/// How far the eye adapts is its key (Krawczyk, Myszkowski and Seidel, "Lightness
+/// perception in tone reproduction for high dynamic range images", 2005, after the
+/// lightness perception data of Gilchrist): the mid grey a scene is seen at falls with the
+/// luminance the eye is adapted to, `1.03 - 2 / (2 + log10(L + 1))` with L in cd/m². A
+/// sunny street (some 6000 cd/m²) is seen at 0.69 of it, an overcast one at 0.6, a street
+/// under its lamps (0.5 cd/m²) at 0.12 - two and a half stops darker than a full
+/// adaptation would show it - and a moonlit field at 0.03, four and a half. (A plain power
+/// law of the light left the lit street only 1.4 stops under that, and the metering lifted
+/// it most of the rest of the way: the night came out as a dim, even overcast day.)
 pub fn exposure_for(e_ref: f32) -> f32 {
-    // (0.8 left a lamp-lit street at night a murky brown: the eye, and a camera, see a lit
-    // street clearly, with the lamps' pools bright and the gaps between them dark)
-    const ADAPT: f32 = 0.89;
+    let e = e_ref.max(1e-6);
     // two thirds of a stop over "mid grey in full light = 0.18" (the tone curve's contrast
     // adds as much again to the bright half), as a camera exposes a sunny street: its soft
     // shoulder holds the sunlit white
-    1.6 * std::f32::consts::PI / (e_ref.max(1e-6).powf(ADAPT) * DAY_REFERENCE.powf(1.0 - ADAPT))
+    1.6 * std::f32::consts::PI / e * adaptation_key(e) / adaptation_key(DAY_REFERENCE)
+}
+
+/// The eye's key (see `exposure_for`) for the adapting irradiance `e` (1 = 10 000 lux): the
+/// luminance it adapts to is that of a mid grey surface in this light.
+fn adaptation_key(e: f32) -> f32 {
+    let l = e * 10_000.0 * 0.18 / std::f32::consts::PI;
+    1.03 - 2.0 / (2.0 + (l + 1.0).log10())
 }
 
 /// A half float from a float (for the sky table's upload).
@@ -919,9 +945,9 @@ mod tests {
         let full = SkyState::compute(&SkyInput { moon_dir, moon_illum: 1.0, ..dark });
         assert!(lum(full.sky_horizontal) > 3.0 * lum(base.sky_horizontal), "{:?} vs {:?}", full.sky_horizontal, base.sky_horizontal);
         assert!(lum(full.moon_disc) > 1e-5, "{:?}", full.moon_disc);
-        let towards = sh_irradiance(&full.sh, moon_dir);
-        let away = sh_irradiance(&full.sh, -Vec3::new(moon_dir.x, moon_dir.y, 0.0).normalize());
-        assert!(lum(towards) > 2.0 * lum(away), "{towards:?} {away:?}");
+        // (its direct light, which the moon's shadow takes away, stronger than all the
+        // night sky's light round it)
+        assert!(lum(full.moon_light) > lum(base.sky_horizontal), "{:?}", full.moon_light);
         // a half moon gives far less than half the light
         let half = SkyState::compute(&SkyInput { moon_dir, moon_illum: 0.5, ..dark });
         assert!(lum(half.moon_disc) < 0.3 * lum(full.moon_disc));

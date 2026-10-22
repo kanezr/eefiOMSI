@@ -181,7 +181,7 @@ pub struct SceneryObject {
 }
 
 fn read_list(r: &mut omsi_cfg::CfgReader, base: &Path) -> Vec<PathBuf> {
-    let n = r.usize();
+    let n = r.count();
     (0..n).map(|_| omsi_cfg::resolve_path(base, r.str())).filter(|p| !p.as_os_str().is_empty()).collect()
 }
 
@@ -270,7 +270,7 @@ impl SceneryObject {
             match k.as_str() {
                 "friendlyname" => o.friendly_name = r.str().to_string(),
                 "groups" => {
-                    let n = r.usize();
+                    let n = r.count();
                     o.groups = (0..n).map(|_| r.str().to_string()).collect();
                 }
                 "onlyeditor" => o.only_editor = true,
@@ -381,8 +381,7 @@ impl SceneryObject {
                 "carpark_p" => o.is_car_park = true,
                 "trafficlight" => o.is_traffic_light = true,
                 "signal" => o.is_signal = true,
-                // [ROLLBACK helper-93] mods spell it their own way: all are route arrows, hidden with them
-                "helparrow" | "routearrow" | "route_arrow" | "help_arrow" | "helperarrow" | "helper_arrow" | "helper" => o.is_help_arrow = true,
+                "helparrow" => o.is_help_arrow = true,
                 "depot" => o.is_depot = true,
                 "petrolstation" => o.is_petrol_station = true,
                 "tree" => {
@@ -435,6 +434,7 @@ impl SceneryObject {
                 }
             }
         }
+        o.model.tidy_visible();
         o
     }
 }
@@ -449,6 +449,24 @@ pub const ATTACH_TOKENS: &[&str] = &["attach_trans", "attach_rot_x", "attach_rot
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_count_larger_than_the_file_reads_only_what_is_there() {
+        let o = SceneryObject::parse(&CfgFile::from_str("objects/x.sco", "[groups]\n1000000000000\nA\nB\n"));
+        assert_eq!(o.groups, ["A", "B"]);
+        let o = SceneryObject::parse(&CfgFile::from_str("objects/x.sco", "[groups]\n2\nA\nB\n[onlyeditor]\n"));
+        assert_eq!(o.groups, ["A", "B"]);
+        assert!(o.only_editor);
+    }
+
+    #[test]
+    fn several_plain_visible_blocks_keep_the_last_as_omsi_does() {
+        let o = SceneryObject::parse(&CfgFile::from_str("objects/x.sco", "[mesh]\na.o3d\n[visible]\nExclamation\n1\n[visible]\nTrafficLightApproach\n1\n"));
+        let m = &o.model.meshes[0];
+        let var = |e: f32, t: f32| move |n: &str| Some(if n == "Exclamation" { e } else { t });
+        assert_eq!(m.visible_by(var(0.0, 1.0)), Some(true));
+        assert_eq!(m.visible_by(var(1.0, 0.0)), Some(false));
+    }
 
     #[test]
     fn terrain_hole_sources_keep_inline_and_referenced_declarations() {

@@ -163,6 +163,7 @@ impl PassengerCabin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    include!("../../../tools/test-support/original_root.rs");
 
     #[test]
     fn seat_lamps_follow_the_seat_before() {
@@ -189,11 +190,15 @@ mod tests {
         let flags: Vec<(i32, bool, bool)> = c.entries.iter().map(|e| (e.path_point, e.no_ticket_sale, e.with_button)).collect();
         assert_eq!(flags, [(0, false, false), (4, true, false), (9, true, true), (11, false, true)]);
         assert_eq!(c.exits, [7, 12]);
+    }
+
+    #[test]
+    #[ignore = "needs the original OMSI 2 install (OMSI_ROOT)"]
+    fn stock_sd200_entry_flags() {
         // the stock SD200: its second entry (path point 4) sells no tickets
-        let root = std::path::PathBuf::from("../../../OMSI 2 Original");
-        if let Ok(c) = PassengerCabin::load(&root.join("Vehicles/MAN_SD200/Model/passengercabin.cfg")) {
-            assert_eq!(c.entries.iter().map(|e| (e.path_point, e.no_ticket_sale)).collect::<Vec<_>>(), [(0, false), (4, true)]);
-        }
+        let root = original_root();
+        let c = PassengerCabin::load(&root.join("Vehicles/MAN_SD200/Model/passengercabin.cfg")).expect("SD200 passengercabin.cfg");
+        assert_eq!(c.entries.iter().map(|e| (e.path_point, e.no_ticket_sale)).collect::<Vec<_>>(), [(0, false), (4, true)]);
     }
 
     /// #721: a `[passpos]` may name a variable that switches it on and off and one the

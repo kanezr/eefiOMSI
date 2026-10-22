@@ -437,6 +437,9 @@ fn put_tail(w: &mut BitWriter, pose: &Pose) {
         }
         None => w.put(0, 1),
     }
+    // later still: the bus radio key (map-wide voice while held; older games end before it)
+    w.put(1, 1);
+    w.put(pose.radio_keyed as u64, 1);
 }
 
 fn get_tail(r: &mut BitReader, p: &mut Pose) {
@@ -470,6 +473,11 @@ fn get_tail(r: &mut BitReader, p: &mut Pose) {
             w.course = (c as f64 * 360.0 / 65536.0) as f32;
         }
     }
+    // (an older game's state ends here)
+    if r.get(1).unwrap_or(0) == 0 {
+        return;
+    }
+    p.radio_keyed = r.get(1).unwrap_or(0) == 1;
 }
 
 fn put_walker(w: &mut BitWriter, walker: Option<Walker>) {
@@ -483,6 +491,7 @@ fn put_walker(w: &mut BitWriter, walker: Option<Walker>) {
             w.put((h as f64 / 360.0 * 65536.0).round() as u64 % 65536, 16);
             w.put_fixed(k.speed as f64, 0.05, 9);
             w.put(k.seated as u64, 1);
+            w.put(k.smoking as u64, 1);
         }
         None => w.put(0, 1),
     }
@@ -501,6 +510,7 @@ fn get_walker(r: &mut BitReader) -> Option<Walker> {
         speed: r.get_fixed(0.05, 9)? as f32,
         course: f32::NAN,
         seated: r.get(1)? == 1,
+        smoking: r.get(1)? == 1,
         aboard: None,
     })
 }
@@ -692,7 +702,7 @@ mod tests {
         p.switches = vec![3.0; MAX_SWITCHES];
         p.values = (0..MAX_VALUES).map(|k| k as f32).collect();
         p.rear = vec![PartPose { x: 1.0, y: -12.0, z: 0.0, heading: 5.0 }; MAX_REAR];
-        p.walker = Some(Walker { x: 1.0, y: 2.0, z: 3.0, heading: 10.0, speed: 1.4, course: 100.0, seated: false, aboard: None });
+        p.walker = Some(Walker { x: 1.0, y: 2.0, z: 3.0, heading: 10.0, speed: 1.4, course: 100.0, seated: false, smoking: false, aboard: None });
         let data = encode_state(&p, 6, 0);
         assert!(data.len() <= MAX_STATE_BYTES, "{} bytes", data.len());
         let (_, _, q) = decode_state(&data, 6).unwrap();
@@ -705,8 +715,9 @@ mod tests {
     fn doors_are_fine_and_walkers_keep_their_course() {
         let mut p = bus();
         p.doors = vec![0.37, 0.5, 1.0];
-        p.walker = Some(Walker { x: 1.0, y: 2.0, z: 3.0, heading: 10.0, speed: 1.4, course: 100.0, seated: false, aboard: None });
+        p.walker = Some(Walker { x: 1.0, y: 2.0, z: 3.0, heading: 10.0, speed: 1.4, course: 100.0, seated: false, smoking: true, aboard: None });
         p.sent_ms = 1234;
+        p.radio_keyed = true;
         let (_, _, q) = decode_state(&encode_state(&p, 3, 0), 3).unwrap();
         // 1/255 now, not the sixteen steps of the 4 bits before the tail
         for (a, b) in q.doors.iter().zip(&p.doors) {
@@ -714,6 +725,8 @@ mod tests {
         }
         let w = q.walker.unwrap();
         assert!((w.course - 100.0).abs() < 0.01 && (w.heading - 10.0).abs() < 0.01);
+        assert!(w.smoking);
+        assert!(q.radio_keyed);
     }
 
     #[test]

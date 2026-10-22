@@ -590,16 +590,20 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, format: Bc) -> (Vec<u8>, f64
     (out, ec, ea)
 }
 
+fn decode_kind(format: Bc) -> u8 {
+    match format {
+        Bc::Bc1 { .. } => 1,
+        Bc::Bc2 => 3,
+        Bc::Bc3 => 5,
+    }
+}
+
 /// Decode blocks back to RGBA (`kind` 1, 3 or 5 as in DXT1/3/5).
 pub fn decode(blocks: &[u8], width: u32, height: u32, format: Bc) -> Vec<u8> {
     let (w, h) = (width.max(1) as usize, height.max(1) as usize);
     let bw = w.div_ceil(4);
     let bb = format.block_bytes();
-    let kind = match format {
-        Bc::Bc1 { .. } => 1,
-        Bc::Bc2 => 3,
-        Bc::Bc3 => 5,
-    };
+    let kind = decode_kind(format);
     let mut rgba = vec![0u8; w * h * 4];
     for (i, blk) in blocks.chunks_exact(bb).enumerate() {
         let (bx, by) = (i % bw, i / bw);
@@ -614,6 +618,190 @@ pub fn decode(blocks: &[u8], width: u32, height: u32, format: Bc) -> Vec<u8> {
         }
     }
     rgba
+}
+
+/// The largest colour shift (luma-weighted squared error of the mean, 0..65025 scale) of a
+/// flat patch - texels of one exact colour, two or more in a block - in a block that holds
+/// three or more such patches over at least 12 of its 16 texels. `src` is the picture,
+/// `dec` its compressed blocks decoded. Such a block is a row of small colour swatches (an
+/// atlas whose handrails or buttons take their colour from two or three texels); four
+/// colours along one line are all a block can hold, so one swatch may turn into another
+/// colour altogether while the picture as a whole still measures well.
+pub fn worst_patch_shift(src: &[u8], dec: &[u8], width: u32, height: u32) -> f64 {
+    let (w, h) = (width as usize, height as usize);
+    worst_shift(src, w, h, |bx, by| gather(dec, w, h, bx, by))
+}
+
+pub(crate) fn worst_block_patch_shift(src: &[u8], blocks: &[u8], width: u32, height: u32, format: Bc) -> f64 {
+    let (w, h) = (width as usize, height as usize);
+    let (bw, bb, kind) = (w.div_ceil(4), format.block_bytes(), decode_kind(format));
+    worst_shift(src, w, h, |bx, by| decode_block(&blocks[(by * bw + bx) * bb..][..bb], kind))
+}
+
+fn worst_shift(src: &[u8], w: usize, h: usize, dec: impl Fn(usize, usize) -> [[u8; 4]; 16]) -> f64 {
+    let mut worst = 0.0f64;
+    for by in 0..h / 4 {
+        for bx in 0..w / 4 {
+            let mut keys = [0u32; 16];
+            for (y, row) in keys.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                let o = ((by * 4 + y) * w + bx * 4) * 4;
+                for (k, p) in row.iter_mut().zip(src[o..o + 16].as_chunks::<4>().0) {
+                    *k = u32::from_le_bytes(*p) & 0x00FF_FFFF;
+                }
+            }
+            if let Some(counts) = swatch_counts(&keys) {
+                worst = worst.max(keys_shift(&keys, &counts, &dec(bx, by)));
+            }
+        }
+    }
+    worst
+}
+
+fn block_patch_shift(src: &[[u8; 4]; 16], dec: &[[u8; 4]; 16]) -> f64 {
+    let keys = src.map(|p| u32::from_le_bytes([p[0], p[1], p[2], 0]));
+    swatch_counts(&keys).map_or(0.0, |counts| keys_shift(&keys, &counts, dec))
+}
+
+fn swatch_counts(keys: &[u32; 16]) -> Option<[u8; 16]> {
+    if keys.iter().all(|&k| k == keys[0]) {
+        return None;
+    }
+    let counts: [u8; 16] = std::array::from_fn(|i| keys.iter().map(|&k| (k == keys[i]) as u8).sum());
+    if counts.iter().filter(|&&n| n >= 2).count() < 12 {
+        return None;
+    }
+    let patches = (0..16).filter(|&i| counts[i] >= 2 && !keys[..i].contains(&keys[i])).count();
+    (patches >= 3).then_some(counts)
+}
+
+fn keys_shift(keys: &[u32; 16], counts: &[u8; 16], dec: &[[u8; 4]; 16]) -> f64 {
+    let mut block_worst = 0.0f64;
+    for i in 0..16 {
+        if counts[i] < 2 || keys[..i].contains(&keys[i]) {
+            continue;
+        }
+        let (n, mut sum) = (counts[i] as u32, [0u32; 3]);
+        for j in i..16 {
+            if keys[j] == keys[i] {
+                for c in 0..3 {
+                    sum[c] += dec[j][c] as u32;
+                }
+            }
+        }
+        let colour = keys[i].to_le_bytes();
+        let e: f64 = (0..3)
+            .map(|c| {
+                let d = sum[c] as f64 / n as f64 - colour[c] as f64;
+                d * d * WEIGHTS[c] as f64
+            })
+            .sum();
+        block_worst = block_worst.max(e);
+    }
+    block_worst
+}
+
+fn quantised_ends(c: [f32; 3]) -> [u16; 3] {
+    let q = |v: f32, max: f32, up: f32| ((v.clamp(0.0, 255.0) * max / 255.0) + up).floor().clamp(0.0, max) as u16;
+    let at = |up: f32| (q(c[0], 31.0, up) << 11) | (q(c[1], 63.0, up) << 5) | q(c[2], 31.0, up);
+    [at(0.5), at(0.0), at(0.999)]
+}
+
+fn swatch_block(px: &[[u8; 4]; 16], four_only: bool, max_shift_sq: f64) -> Option<([u8; 8], f32)> {
+    let fpx: [[f32; 3]; 16] = px.map(|p| [p[0] as f32, p[1] as f32, p[2] as f32]);
+    let mut colours: Vec<[f32; 3]> = Vec::with_capacity(16);
+    for p in &fpx {
+        if !colours.contains(p) {
+            colours.push(*p);
+        }
+    }
+    let mut patch = [false; 16];
+    for i in 0..16 {
+        patch[i] = (0..16).filter(|&j| px[j][..3] == px[i][..3]).count() >= 2;
+    }
+    const FOUR: [f32; 4] = [1.0, 0.0, 2.0 / 3.0, 1.0 / 3.0];
+    const THREE: [f32; 3] = [1.0, 0.0, 0.5];
+    let mut best: Option<(f32, u16, u16, [u8; 16])> = None;
+    let mut try_pair = |lo: u16, hi: u16| {
+        let mut modes: [Option<(u16, u16, bool)>; 2] = [None, None];
+        if hi > lo {
+            modes[0] = Some((hi, lo, true));
+        }
+        if !four_only {
+            modes[1] = Some((lo.min(hi), lo.max(hi), false));
+        }
+        for (c0, c1, four) in modes.into_iter().flatten() {
+            let pal = palette(c0, c1, four);
+            let mut idx = [0u8; 16];
+            let err = assign(&fpx, 0xFFFF, &pal, if four { 4 } else { 3 }, &mut idx);
+            if best.as_ref().is_some_and(|b| err >= b.0) {
+                continue;
+            }
+            let fits = (0..16).all(|i| !patch[i] || (werr(fpx[i], pal[idx[i] as usize]) as f64) <= max_shift_sq);
+            if fits {
+                best = Some((err, c0, c1, idx));
+            }
+        }
+    };
+    let weights: Vec<f32> = if four_only { FOUR.to_vec() } else { FOUR.iter().chain(THREE.iter()).copied().collect() };
+    for (ai, a) in colours.iter().enumerate() {
+        for b in &colours[ai + 1..] {
+            for &u in &weights {
+                for &v in &weights {
+                    if u == v {
+                        continue;
+                    }
+                    let d = [0, 1, 2].map(|c| (a[c] - b[c]) / (u - v));
+                    let e1 = [0, 1, 2].map(|c| a[c] - u * d[c]);
+                    let e0 = [0, 1, 2].map(|c| e1[c] + d[c]);
+                    for q0 in quantised_ends(e0) {
+                        for q1 in quantised_ends(e1) {
+                            try_pair(q0.min(q1), q0.max(q1));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let (err, c0, c1, idx) = best?;
+    let mut bits = 0u32;
+    for (i, &k) in idx.iter().enumerate() {
+        bits |= (k as u32 & 3) << (2 * i);
+    }
+    let mut out = [0u8; 8];
+    out[..2].copy_from_slice(&c0.to_le_bytes());
+    out[2..4].copy_from_slice(&c1.to_le_bytes());
+    out[4..].copy_from_slice(&bits.to_le_bytes());
+    Some((out, err))
+}
+
+pub fn repair_swatches(src: &[u8], blocks: &mut [u8], width: u32, height: u32, format: Bc, max_shift_sq: f64) -> Option<f64> {
+    let (w, h) = (width as usize, height as usize);
+    let bw = w.div_ceil(4);
+    let bb = format.block_bytes();
+    let (kind, colour_at) = match format {
+        Bc::Bc1 { .. } => (1u8, 0usize),
+        Bc::Bc2 => (3, 8),
+        Bc::Bc3 => (5, 8),
+    };
+    let mut delta = 0.0f64;
+    for by in 0..h / 4 {
+        for bx in 0..w / 4 {
+            let px = gather(src, w, h, bx, by);
+            let blk = &mut blocks[(by * bw + bx) * bb..][..bb];
+            let dec = decode_block(blk, kind);
+            if block_patch_shift(&px, &dec) <= max_shift_sq {
+                continue;
+            }
+            if matches!(format, Bc::Bc1 { punch: true }) && px.iter().any(|p| p[3] < 128) {
+                return None;
+            }
+            let (colour, err) = swatch_block(&px, format != Bc::Bc1 { punch: false }, max_shift_sq)?;
+            let before: f32 = (0..16).map(|i| werr([px[i][0] as f32, px[i][1] as f32, px[i][2] as f32], [dec[i][0] as f32, dec[i][1] as f32, dec[i][2] as f32])).sum();
+            blk[colour_at..colour_at + 8].copy_from_slice(&colour);
+            delta += (err - before) as f64;
+        }
+    }
+    Some(delta)
 }
 
 /// Whether a DXT1 block has transparent pixels (three-colour mode with index 3 in use).
@@ -655,6 +843,17 @@ fn linear_to_srgb_table() -> &'static [u8; 4097] {
 /// The next mip level of an sRGB picture: a 2x2 box in linear light (what the GPU's
 /// filtered blit into an sRGB target gives), alpha averaged as it is.
 pub fn downsample(rgba: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+    downsample_filtered(rgba, w, h, false)
+}
+
+/// Colour mips use coverage-weighted RGB, like the GPU mip shader, so white RGB in
+/// clear texels cannot bleach the visible silhouette. With no covered texel, keep
+/// the plain RGB: opaque materials may use zero alpha only as a reflection mask.
+pub fn downsample_alpha_weighted(rgba: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+    downsample_filtered(rgba, w, h, true)
+}
+
+fn downsample_filtered(rgba: &[u8], w: u32, h: u32, weighted: bool) -> (Vec<u8>, u32, u32) {
     let (w, h) = (w as usize, h as usize);
     let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
     let lin = srgb_to_linear_table();
@@ -663,21 +862,26 @@ pub fn downsample(rgba: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
     let fill_row = |y: usize, dst: &mut [u8]| {
         for x in 0..nw {
             let mut c = [0.0f32; 3];
+            let mut covered = [0.0f32; 3];
             let mut a = 0u32;
             for dy in 0..2 {
                 let sy = (y * 2 + dy).min(h - 1);
                 for dx in 0..2 {
                     let sx = (x * 2 + dx).min(w - 1);
                     let o = (sy * w + sx) * 4;
-                    c[0] += lin[rgba[o] as usize];
-                    c[1] += lin[rgba[o + 1] as usize];
-                    c[2] += lin[rgba[o + 2] as usize];
-                    a += rgba[o + 3] as u32;
+                    let alpha = rgba[o + 3] as u32;
+                    for k in 0..3 {
+                        let v = lin[rgba[o + k] as usize];
+                        c[k] += v;
+                        if weighted { covered[k] += v * alpha as f32; }
+                    }
+                    a += alpha;
                 }
             }
             let d = &mut dst[x * 4..x * 4 + 4];
             for k in 0..3 {
-                d[k] = back[((c[k] * 0.25 * 4096.0 + 0.5) as usize).min(4096)];
+                let v = if weighted && a > 0 { covered[k] / a as f32 } else { c[k] * 0.25 };
+                d[k] = back[((v * 4096.0 + 0.5) as usize).min(4096)];
             }
             d[3] = ((a + 2) / 4) as u8;
         }
@@ -927,6 +1131,138 @@ mod tests {
         }
         // the same size is a copy
         assert_eq!(resize(&src, w, h, w, h), src);
+    }
+
+    fn old_block_patch_shift(src: &[[u8; 4]; 16], dec: &[[u8; 4]; 16]) -> f64 {
+        let (mut seen, mut patches, mut covered, mut block_worst) = (0u16, 0, 0, 0.0f64);
+        for i in 0..16 {
+            if seen & (1 << i) != 0 {
+                continue;
+            }
+            let (mut n, mut sum) = (0u32, [0u32; 3]);
+            for j in i..16 {
+                if src[j][..3] == src[i][..3] {
+                    seen |= 1 << j;
+                    n += 1;
+                    for c in 0..3 {
+                        sum[c] += dec[j][c] as u32;
+                    }
+                }
+            }
+            if n >= 2 {
+                patches += 1;
+                covered += n;
+                let e: f64 = (0..3)
+                    .map(|c| {
+                        let d = sum[c] as f64 / n as f64 - src[i][c] as f64;
+                        d * d * WEIGHTS[c] as f64
+                    })
+                    .sum();
+                block_worst = block_worst.max(e);
+            }
+        }
+        if patches >= 3 && covered >= 12 { block_worst } else { 0.0 }
+    }
+
+    fn old_worst_patch_shift(src: &[u8], dec: &[u8], width: u32, height: u32) -> f64 {
+        let (w, h) = (width as usize, height as usize);
+        let mut worst = 0.0f64;
+        for by in 0..h / 4 {
+            for bx in 0..w / 4 {
+                worst = worst.max(old_block_patch_shift(&gather(src, w, h, bx, by), &gather(dec, w, h, bx, by)));
+            }
+        }
+        worst
+    }
+
+    struct Rng(u32);
+
+    impl Rng {
+        fn next(&mut self) -> u32 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 17;
+            self.0 ^= self.0 << 5;
+            self.0
+        }
+    }
+
+    fn swatch_picture(rng: &mut Rng, w: u32, h: u32) -> Vec<u8> {
+        let palette: Vec<[u8; 4]> = (0..24).map(|_| rng.next().to_le_bytes()).map(|c| [c[0], c[1], c[2], if c[3] > 40 { 255 } else { c[3] }]).collect();
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for by in 0..h / 4 {
+            for bx in 0..w / 4 {
+                let style = rng.next() % 6;
+                let colours = 1 + rng.next() as usize % 6;
+                let base = rng.next() as usize % palette.len();
+                for i in 0..16u32 {
+                    let (x, y) = (bx * 4 + i % 4, by * 4 + i / 4);
+                    let p = match style {
+                        0 => [x as u8, y as u8, (x ^ y) as u8, 255],
+                        1 => rng.next().to_le_bytes(),
+                        2 => palette[base],
+                        3 => palette[(base + (i % 4) as usize % colours) % palette.len()],
+                        4 => palette[(base + rng.next() as usize % colours) % palette.len()],
+                        _ => {
+                            let mut c = palette[(base + (i / 4) as usize % colours) % palette.len()];
+                            c[0] = c[0].wrapping_add(rng.next().is_multiple_of(3) as u8);
+                            c
+                        }
+                    };
+                    rgba[((y * w + x) * 4) as usize..][..4].copy_from_slice(&p);
+                }
+            }
+        }
+        rgba
+    }
+
+    #[test]
+    fn swatch_check_is_unchanged() {
+        let mut rng = Rng(0x9E37_79B9);
+        let mut swatch_blocks = 0;
+        for _ in 0..200_000 {
+            let colours = 1 + rng.next() as usize % 7;
+            let palette: Vec<[u8; 4]> = (0..colours).map(|_| rng.next().to_le_bytes()).collect();
+            let src: [[u8; 4]; 16] = std::array::from_fn(|_| {
+                let mut c = palette[rng.next() as usize % colours];
+                c[3] = rng.next() as u8;
+                c
+            });
+            let noisy = rng.next().is_multiple_of(2);
+            let dec: [[u8; 4]; 16] = std::array::from_fn(|i| if noisy { rng.next().to_le_bytes() } else { src[i].map(|v| v.saturating_add(rng.next() as u8 % 9)) });
+            let old = old_block_patch_shift(&src, &dec);
+            assert_eq!(block_patch_shift(&src, &dec).to_bits(), old.to_bits(), "{src:?} {dec:?}");
+            swatch_blocks += (old > 0.0) as u32;
+        }
+        assert!(swatch_blocks > 10_000, "{swatch_blocks}");
+        for (w, h) in [(64u32, 64u32), (256, 128), (36, 20), (6, 9)] {
+            let src = swatch_picture(&mut rng, w, h);
+            for format in [Bc::Bc1 { punch: false }, Bc::Bc1 { punch: true }, Bc::Bc3, Bc::Bc2] {
+                let (blocks, _, _) = encode(&src, w, h, format);
+                let dec = decode(&blocks, w, h, format);
+                let old = old_worst_patch_shift(&src, &dec, w, h);
+                assert_eq!(worst_patch_shift(&src, &dec, w, h).to_bits(), old.to_bits());
+                assert_eq!(worst_block_patch_shift(&src, &blocks, w, h, format).to_bits(), old.to_bits());
+                if w >= 64 {
+                    assert!(old > 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn swatch_check_speed() {
+        let (w, h) = (1024u32, 1024u32);
+        let src = swatch_picture(&mut Rng(12345), w, h);
+        let (blocks, _, _) = encode(&src, w, h, Bc::Bc1 { punch: false });
+        let t = std::time::Instant::now();
+        let dec = decode(&blocks, w, h, Bc::Bc1 { punch: false });
+        let old = old_worst_patch_shift(&src, &dec, w, h);
+        let before = t.elapsed().as_secs_f64();
+        let t = std::time::Instant::now();
+        let new = worst_block_patch_shift(&src, &blocks, w, h, Bc::Bc1 { punch: false });
+        let after = t.elapsed().as_secs_f64();
+        assert_eq!(old.to_bits(), new.to_bits());
+        eprintln!("swatch check of a 1024x1024 BC1 picture: decode + check {:.1} ms before, {:.1} ms now", before * 1e3, after * 1e3);
     }
 
     #[test]

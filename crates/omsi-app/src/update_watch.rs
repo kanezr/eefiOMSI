@@ -35,10 +35,10 @@ impl UpdateWatch {
         let text = std::fs::read_to_string(omsi_launcher_lib::data_dir().join("settings.cfg")).ok();
         let s = omsi_launcher_lib::settings_from_text(text.as_deref());
         let on = |k: &str, d: bool| s.get(k).and_then(|v| v.as_bool()).unwrap_or(d);
-        let testing = omsi_cfg::env::var_os("OMSI_UPDATE_URL").is_some();
+        let testing = omsi_cfg::flags::OMSI_UPDATE_URL.is_set();
         let installable = testing || updater::install_place().is_ok() || cfg!(target_os = "android");
         let enabled = on("update_check", true)
-            && omsi_cfg::env::var_os("OMSI_NO_UPDATE").is_none()
+            && !omsi_cfg::flags::OMSI_NO_UPDATE.is_set()
             && !updater::is_test_build(updater::current_version())
             && updater::asset_name(updater::current_version()).is_some()
             && installable;
@@ -70,7 +70,7 @@ impl UpdateWatch {
                     self.told_found = Some(r.version.clone());
                     log::info!("update: {} is out - downloading it in the background", r.version);
                     if self.notify {
-                        let text = format!("openOMSI {} is out: it is downloaded in the background and installed when this session ends", r.version);
+                        let text = format!("eefiOMSI {} is out: it is downloaded in the background and installed when this session ends", r.version);
                         push_notice(notices, Notice { kind: NoticeKind::Update, text, left: 10.0, total: 10.0 });
                     }
                 }
@@ -80,12 +80,12 @@ impl UpdateWatch {
                 self.told_ready = Some(r.version.clone());
                 if self.notify {
                     // (a quick download: this card takes the place of "is out" still showing)
-                    let found = format!("openOMSI {} is out", r.version);
+                    let found = format!("eefiOMSI {} is out", r.version);
                     notices.retain(|n| !(n.kind == NoticeKind::Update && n.text.starts_with(&found)));
                     let text = if cfg!(target_os = "android") || !self.auto {
-                        format!("openOMSI {} is downloaded: the launcher offers it when this session ends", r.version)
+                        format!("eefiOMSI {} is downloaded: the launcher offers it when this session ends", r.version)
                     } else {
-                        format!("openOMSI {} is downloaded: it is installed when this session ends", r.version)
+                        format!("eefiOMSI {} is downloaded: it is installed when this session ends", r.version)
                     };
                     push_notice(notices, Notice { kind: NoticeKind::Update, text, left: 8.0, total: 8.0 });
                 }

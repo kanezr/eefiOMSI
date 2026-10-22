@@ -185,9 +185,133 @@ pub fn detail_volume() -> Vec<Vec<u8>> {
     levels
 }
 
+/// Deterministic cloud data, shared by renderer rebuilds in this process. The disk copy
+/// also avoids regenerating hundreds of thousands of Worley texels on the next start.
+pub struct Noise {
+    pub shape: Vec<Vec<u8>>,
+    pub detail: Vec<Vec<u8>>,
+}
+
+const CACHE_HEADER: &[u8; 8] = b"OMSCN001"; // bump when the noise algorithm changes
+
+fn levels_size(size: u32, dimensions: u32, bpp: usize) -> usize {
+    (0..=size.trailing_zeros()).map(|m| ((size >> m) as usize).pow(dimensions) * bpp).sum()
+}
+
+fn cache_size() -> usize {
+    16 + levels_size(SHAPE_SIZE, 2, 4) + levels_size(DETAIL_SIZE, 3, 1)
+}
+
+fn checksum(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3))
+}
+
+fn decode_cache(bytes: &[u8]) -> Option<Noise> {
+    if bytes.len() != cache_size() || &bytes[..8] != CACHE_HEADER {
+        return None;
+    }
+    let expected = u64::from_le_bytes(bytes[8..16].try_into().ok()?);
+    if checksum(&bytes[16..]) != expected { return None; }
+    let mut at = 16;
+    let mut read = |size: u32, dimensions: u32, bpp: usize| {
+        (0..=size.trailing_zeros()).map(|m| {
+            let len = ((size >> m) as usize).pow(dimensions) * bpp;
+            let level = bytes[at..at + len].to_vec();
+            at += len;
+            level
+        }).collect()
+    };
+    Some(Noise { shape: read(SHAPE_SIZE, 2, 4), detail: read(DETAIL_SIZE, 3, 1) })
+}
+
+fn encode_cache(noise: &Noise) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(cache_size());
+    bytes.extend_from_slice(CACHE_HEADER);
+    bytes.extend_from_slice(&[0; 8]);
+    for level in noise.shape.iter().chain(&noise.detail) { bytes.extend_from_slice(level); }
+    let hash = checksum(&bytes[16..]);
+    bytes[8..16].copy_from_slice(&hash.to_le_bytes());
+    bytes
+}
+
+fn cache_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let home = std::path::PathBuf::from(home);
+    // An unavailable home or cache is harmless; do not write into the game/mod folders.
+    home.is_absolute().then(|| home.join(".openomsi/cache/cloud-noise-v1.bin"))
+}
+
+fn load_noise(path: Option<&std::path::Path>) -> Noise {
+    if let Some(path) = path {
+        // Bound reads before allocating: an unrelated/corrupt file cannot exhaust memory.
+        if std::fs::metadata(path).ok().is_some_and(|m| m.len() == cache_size() as u64) {
+            if let Some(noise) = std::fs::read(path).ok().and_then(|b| decode_cache(&b)) {
+                return noise;
+            }
+        }
+        let _ = std::fs::remove_file(path); // a bad copy must be replaceable on Windows too
+    }
+    let (shape, detail) = std::thread::scope(|s| {
+        let a = s.spawn(shape_map);
+        let b = s.spawn(detail_volume);
+        (a.join().expect("cloud shape"), b.join().expect("cloud detail"))
+    });
+    let noise = Noise { shape, detail };
+    if let Some(path) = path { save_noise(path, &noise); }
+    noise
+}
+
+fn save_noise(path: &std::path::Path, noise: &Noise) {
+    use std::io::Write;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let Some(parent) = path.parent() else { return };
+    if std::fs::create_dir_all(parent).is_err() { return; }
+    let temp = path.with_extension(format!("{}-{}.tmp", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temp)?;
+        file.write_all(&encode_cache(noise))?;
+        drop(file);
+        // A competing launcher/game may have filled it first. Either complete copy works.
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() { let _ = std::fs::remove_file(temp); }
+}
+
+pub fn noise() -> &'static Noise {
+    static NOISE: std::sync::OnceLock<Noise> = std::sync::OnceLock::new();
+    NOISE.get_or_init(|| load_noise(cache_path().as_deref()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_round_trip_rejects_stale_truncated_and_corrupt_data() {
+        let generated = load_noise(None);
+        let bytes = encode_cache(&generated);
+        assert_eq!(bytes.len(), cache_size());
+        let loaded = decode_cache(&bytes).unwrap();
+        assert_eq!(loaded.shape, generated.shape);
+        assert_eq!(loaded.detail, generated.detail);
+        assert!(decode_cache(&bytes[..bytes.len() - 1]).is_none());
+        let mut bad = bytes.clone();
+        bad[7] ^= 1;
+        assert!(decode_cache(&bad).is_none());
+        let mut bad = bytes.clone();
+        bad[100] ^= 1;
+        assert!(decode_cache(&bad).is_none());
+        let path = std::env::temp_dir().join(format!("omsi-cloud-cache-{}.bin", std::process::id()));
+        save_noise(&path, &generated);
+        let disk = load_noise(Some(&path));
+        assert_eq!(disk.shape, generated.shape);
+        assert_eq!(disk.detail, generated.detail);
+        std::fs::write(&path, b"interrupted write").unwrap();
+        let recovered = load_noise(Some(&path));
+        assert_eq!(recovered.shape, generated.shape);
+        assert_eq!(recovered.detail, generated.detail);
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn noise_tiles_and_spans_its_range() {

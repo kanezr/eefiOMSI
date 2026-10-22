@@ -197,7 +197,15 @@ fn gate_values(p: &Program, block: BlockId, var: VarId) -> Vec<f32> {
 
 impl Unit {
     fn learn(p: &Program, operable: &dyn Fn(&str) -> bool) -> Unit {
-        let mut u = Unit { mode: p.var("IBIS_mode"), line: p.var("IBIS_LinieKurs").or_else(|| p.var("IBIS_Linie")), route: p.var("IBIS_RouteIndex"), terminus: p.var("IBIS_TerminusIndex"), busstop: p.var("IBIS_busstop"), ..Default::default() };
+        let mut u = Unit {
+            mode: p.var("IBIS_mode"),
+            line: p.var("IBIS_LinieKurs").or_else(|| p.var("IBIS_Linie")),
+            route: p.var("IBIS_RouteIndex").or_else(|| p.var("ibox_routenindex")),
+            terminus: p.var("IBIS_TerminusIndex"),
+            // Aachen's ibox keeps the stop on `ibox_busstop` (no stock `IBIS_busstop`).
+            busstop: p.var("IBIS_busstop").or_else(|| p.var("ibox_busstop")),
+            ..Default::default()
+        };
         let names: Vec<String> = {
             let mut n: Vec<String> = p.triggers.keys().cloned().collect();
             n.sort();
@@ -465,7 +473,7 @@ thread_local! {
 /// busy for two and a half minutes, and the displays stayed blank until the duty was set
 /// directly after that. `OMSI_IBIS_BUDGET` (seconds) changes it.
 fn trial_budget() -> std::time::Duration {
-    let s = omsi_cfg::env::var("OMSI_IBIS_BUDGET").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(10.0);
+    let s = omsi_cfg::flags::OMSI_IBIS_BUDGET.parse::<f64>().unwrap_or(10.0);
     std::time::Duration::from_secs_f64(s.max(0.1))
 }
 
@@ -738,7 +746,7 @@ impl Typist {
 }
 
 fn debug() -> bool {
-    omsi_cfg::env::var_os("OMSI_DEBUG_IBIS").is_some()
+    omsi_cfg::flags::OMSI_DEBUG_IBIS.is_set()
 }
 
 fn goal_met(u: &Unit, t: &Target, var: &dyn Fn(VarId) -> Option<f32>) -> bool {

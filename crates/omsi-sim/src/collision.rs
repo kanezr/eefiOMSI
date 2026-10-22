@@ -365,11 +365,16 @@ impl MeshShape {
     /// Indices of the parts within `r` of the local point `c` (each once).
     fn near(&self, c: DVec2, r: f64) -> Vec<u32> {
         let mut out: Vec<u32> = Vec::new();
-        for y in ((c.y - r) / PART_CELL).floor() as i32..=((c.y + r) / PART_CELL).floor() as i32 {
-            for x in ((c.x - r) / PART_CELL).floor() as i32..=((c.x + r) / PART_CELL).floor() as i32 {
+        let (x0, y0) = (((c.x - r) / PART_CELL).floor() as i32, ((c.y - r) / PART_CELL).floor() as i32);
+        for y in y0..=((c.y + r) / PART_CELL).floor() as i32 {
+            for x in x0..=((c.x + r) / PART_CELL).floor() as i32 {
                 for &i in self.grid.get(&(x, y)).map(|v| v.as_slice()).unwrap_or(&[]) {
                     let p = &self.parts[i as usize];
-                    if (p.center - c).length() <= r + p.radius() && !out.contains(&i) {
+                    let pr = p.radius();
+                    // listed in every cell it covers: taken in the first of them met here
+                    let first = (((p.center.x - pr) / PART_CELL).floor() as i32).max(x0) == x
+                        && (((p.center.y - pr) / PART_CELL).floor() as i32).max(y0) == y;
+                    if first && (p.center - c).length() <= r + pr {
                         out.push(i);
                     }
                 }
@@ -811,6 +816,36 @@ mod mesh_tests {
 
     fn bus(x: f64, y: f64, z: f64) -> Obb {
         Obb::from_box([2.5, 12.0, 2.9, 0.0, 0.0, 1.75], DVec3::new(x, y, z), 0.0)
+    }
+
+    #[test]
+    fn near_lists_each_part_once_in_the_order_met() {
+        let mut seed = 7u64;
+        let mut rnd = |a: f64, b: f64| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            a + (b - a) * ((seed >> 11) as f64 / (1u64 << 53) as f64)
+        };
+        let mut tris = Vec::new();
+        for _ in 0..400 {
+            let (x, y, w, d) = (rnd(-30.0, 30.0), rnd(-30.0, 30.0), rnd(0.2, 14.0), rnd(0.2, 14.0));
+            tris.extend(cube(DVec3::new(x, y, 0.0), DVec3::new(x + w, y + d, rnd(1.0, 6.0))));
+        }
+        let shape = MeshShape::from_triangles(tris.into_iter(), 0.3);
+        for _ in 0..300 {
+            let (c, r) = (DVec2::new(rnd(-40.0, 40.0), rnd(-40.0, 40.0)), rnd(0.5, 25.0));
+            let mut want: Vec<u32> = Vec::new();
+            for y in ((c.y - r) / PART_CELL).floor() as i32..=((c.y + r) / PART_CELL).floor() as i32 {
+                for x in ((c.x - r) / PART_CELL).floor() as i32..=((c.x + r) / PART_CELL).floor() as i32 {
+                    for &i in shape.grid.get(&(x, y)).map(|v| v.as_slice()).unwrap_or(&[]) {
+                        let p = &shape.parts[i as usize];
+                        if (p.center - c).length() <= r + p.radius() && !want.contains(&i) {
+                            want.push(i);
+                        }
+                    }
+                }
+            }
+            assert_eq!(shape.near(c, r), want);
+        }
     }
 
     #[test]

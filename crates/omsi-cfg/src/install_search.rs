@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-const NAMES: &[&str] = &["OMSI 2", "OMSI 2 Original", "Omsi 2", "OMSI2", "omsi2", "OMSI 2 Steam Edition", "OMSI"];
+pub const NAMES: &[&str] = &["OMSI 2", "OMSI 2 Original", "Omsi 2", "OMSI2", "omsi2", "OMSI 2 Steam Edition", "OMSI"];
 
 fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)
@@ -90,6 +90,13 @@ pub fn candidates() -> Vec<PathBuf> {
             bases.push(s.join("Download"));
             bases.push(s.join("Games"));
             bases.push(s);
+        }
+    }
+    // an iPhone or an iPad: the app's own Documents (the content folder, which the Files app
+    // shows as "openOMSI"), where a copy of the game is put by the Files app or the Finder
+    if cfg!(target_os = "ios") {
+        if let Some(c) = crate::flags::OMSI_CONTENT.live_os() {
+            bases.push(PathBuf::from(c));
         }
     }
     if let Ok(exe) = std::env::current_exe() {

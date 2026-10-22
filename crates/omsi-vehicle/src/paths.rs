@@ -36,7 +36,7 @@ impl VehiclePaths {
         while let Some(k) = r.next_keyword() {
             match k.as_str() {
                 "stepsoundpack" => {
-                    let n = r.usize();
+                    let n = r.count();
                     p.step_sound_packs.push((0..n).map(|_| r.str().to_string()).collect());
                 }
                 "next_roomheight" => room_height = r.f32(),

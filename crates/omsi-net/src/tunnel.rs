@@ -18,12 +18,12 @@ use std::time::{Duration, Instant};
 /// Where `cloudflared` is, if anywhere.
 pub fn find_cloudflared() -> Option<PathBuf> {
     let exe = if cfg!(windows) { "cloudflared.exe" } else { "cloudflared" };
-    if let Some(p) = std::env::var_os("OMSI_CLOUDFLARED").map(PathBuf::from).filter(|p| p.is_file()) {
+    if let Some(p) = omsi_cfg::flags::OMSI_CLOUDFLARED.live_os().map(PathBuf::from).filter(|p| p.is_file()) {
         return Some(p);
     }
     // (`OMSI_CLOUDFLARED_OWN=1`: only the game's own copy, for testing the download)
     let own = own_dir().filter(|d| d.join(VERIFIED).is_file()).map(|d| d.join(exe)).filter(|p| p.is_file());
-    if std::env::var_os("OMSI_CLOUDFLARED_OWN").is_some() {
+    if omsi_cfg::flags::OMSI_CLOUDFLARED_OWN.live_os().is_some() {
         return own;
     }
     let mut dirs: Vec<PathBuf> = Vec::new();

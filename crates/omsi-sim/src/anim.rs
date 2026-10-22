@@ -124,7 +124,7 @@ impl MeshAnimator {
 /// as a last resort.
 pub fn link_parents(animators: &mut [MeshAnimator], defs: &[&MeshDef]) {
     // `OMSI_NO_ANIMPARENT=1`: every mesh on its own, for an A/B
-    if omsi_cfg::env::var_os("OMSI_NO_ANIMPARENT").is_some() {
+    if omsi_cfg::flags::OMSI_NO_ANIMPARENT.is_set() {
         return;
     }
     for (i, a) in animators.iter_mut().enumerate() {

@@ -17,7 +17,9 @@ pub struct Driver {
     pub crashes: [i32; 4],
     pub tickets: [f64; 2],
     pub rating: [f64; 5],
-    pub per_bus_info: Vec<String>,
+    /// Hectometres driven in each bus (`[perbusinfo]`, one block per bus): the bus as its
+    /// `[friendlyname]` names it, manufacturer and type with a space between.
+    pub per_bus: Vec<(String, i64)>,
 }
 
 impl Driver {
@@ -36,11 +38,9 @@ impl Driver {
         for v in &self.rating {
             t.push_str(&format!("{v:.6}\r\n"));
         }
-        if !self.per_bus_info.is_empty() {
-            t.push_str("\r\n[perbusinfo]\r\n");
-            for l in &self.per_bus_info {
-                t.push_str(&format!("{l}\r\n"));
-            }
+        // (as Omsi.exe's SaveAllDriver 0x746aec: a block per bus driven, none for a bus at 0)
+        for (bus, hm) in self.per_bus.iter().filter(|(_, hm)| *hm != 0) {
+            t.push_str(&format!("\r\n[perbusinfo]\r\n{bus}\r\n{hm}\r\n"));
         }
         let mut bytes = vec![0xFF, 0xFE];
         for u in t.encode_utf16() {
@@ -69,12 +69,27 @@ impl Driver {
                 "crashs" => d.crashes = [r.i32(), r.i32(), r.i32(), r.i32()],
                 "tickets" => d.tickets = r.f64s::<2>(),
                 "rating" => d.rating = r.f64s::<5>(),
-                "perbusinfo" => d.per_bus_info = r.rest_of_block().into_iter().map(|s| s.to_string()).collect(),
+                "perbusinfo" => {
+                    let bus = r.str().to_string();
+                    let hm = r.f64().round() as i64;
+                    d.add_bus_hektom(&bus, hm);
+                }
                 _ => {}
             }
         }
         d.check_ratings();
         Ok(d)
+    }
+
+    /// Add `hm` hectometres to the bus `bus` (manufacturer and type, see `per_bus`).
+    pub fn add_bus_hektom(&mut self, bus: &str, hm: i64) {
+        if bus.trim().is_empty() {
+            return;
+        }
+        match self.per_bus.iter_mut().find(|(b, _)| b == bus) {
+            Some((_, v)) => *v += hm,
+            None => self.per_bus.push((bus.to_string(), hm)),
+        }
     }
 
     /// The `[rating]` block is OMSI's driver record from +0x40 on (the original,
@@ -123,5 +138,25 @@ mod tests {
         let back = Driver::load(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(back.bus_stops, [10, 1, 3]);
+    }
+
+    /// Each bus driven keeps its own hectometres, in a `[perbusinfo]` block of its own (#2475).
+    #[test]
+    fn every_bus_keeps_its_own_kilometres() {
+        let path = std::env::temp_dir().join(format!("omsi_driver_perbus_{}.odr", std::process::id()));
+        let mut d = Driver { name: "Test".into(), ..Default::default() };
+        d.add_bus_hektom("MAN SD202 - D86", 12);
+        d.add_bus_hektom("MAN NG 272", 3);
+        d.add_bus_hektom("MAN SD202 - D86", 5);
+        d.add_bus_hektom(" ", 9);
+        d.save(&path).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let units: Vec<u16> = bytes[2..].chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let text = String::from_utf16(&units).unwrap();
+        assert!(text.contains("[perbusinfo]\r\nMAN SD202 - D86\r\n17\r\n"), "{text}");
+        assert!(text.contains("[perbusinfo]\r\nMAN NG 272\r\n3\r\n"), "{text}");
+        let back = Driver::load(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(back.per_bus, vec![("MAN SD202 - D86".to_string(), 17), ("MAN NG 272".to_string(), 3)]);
     }
 }

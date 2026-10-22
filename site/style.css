@@ -97,14 +97,14 @@
 html { scroll-padding-top: 80px; }
 body {
   margin: 0;
-  font: 400 16px/1.6 Roboto, system-ui, sans-serif;
+  font: 400 16px/1.6 Inter, system-ui, sans-serif;
   color: var(--on-surface);
   background: var(--background);
   -webkit-font-smoothing: antialiased;
 }
 a { color: var(--link); text-decoration: none; }
 a:hover { text-decoration: underline; }
-code, pre { font-family: "Roboto Mono", ui-monospace, monospace; font-size: .88em; }
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .88em; }
 code { background: var(--code-bg); padding: .1em .35em; border-radius: 4px; }
 pre { background: var(--code-bg); padding: 14px 16px; border-radius: 4px; overflow-x: auto; line-height: 1.45; max-width: 100%; }
 pre code { background: none; padding: 0; overflow-wrap: normal; }
@@ -307,3 +307,7 @@ h1 { line-height: 1.25; }
 .dl-mine { outline-offset: -2px; }
 .dl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .dl-badge { white-space: nowrap; font-size: 12px; font-weight: 600; line-height: 1; padding: 5px 10px; border-radius: 999px; background: var(--primary); color: #fff; }
+
+/* "playing now": a green dot in front of the count */
+.chip-live .material-icons { color: #2ea043; }
+.release-channels { display: flex; gap: 12px; flex-wrap: wrap; margin: 20px 0; }

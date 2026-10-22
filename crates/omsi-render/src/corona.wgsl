@@ -45,6 +45,9 @@ struct CoronaOut {
     // a smoke puff's: how high this point is over the ground it fades into (m), and how
     // high the fade reaches (0: not faded)
     @location(6) ground: vec2<f32>,
+    // precipitation (Enhanced, see `precip_light`): the particle's place, w 1 for rain, 2
+    // for snow, 0 for anything else
+    @location(7) wpos: vec4<f32>,
 };
 
 @vertex
@@ -181,10 +184,9 @@ fn vs_main(in: CoronaIn) -> CoronaOut {
     let to_cam = camera.cam_pos.xyz - in.pos;
     let dist = length(to_cam);
     let view_dir = to_cam / max(dist, 0.001);
-    // (cone value -2 is a rain streak, -3 a snow flake: a soft matte speck lit by the day's
-    // light, which the sender has put in its colour, not a lamp's glare)
-    let flake = in.dir.w < -2.5;
-    let streak = in.dir.w < -1.5 && !flake;
+    // (a cone of -2 marks a raindrop, of -3 a snowflake: rain.rs)
+    let streak = in.dir.w < -1.5 && in.dir.w > -2.5;
+    let flake = in.dir.w <= -2.5;
     let directed = length(in.dir.xyz) > 0.5 && !streak;
     var brightness = in.color.a;
     if (directed) {
@@ -195,8 +197,15 @@ fn vs_main(in: CoronaIn) -> CoronaOut {
         let inner = select(0.0, acos(clamp(in.extra.x, -1.0, 1.0)), in.extra.x >= -1.0);
         brightness = brightness * clamp((outer - ang) / max(outer - inner, 0.0001), 0.0, 1.0);
     }
+    // the light that reaches the eye through the fog: Beer-Lambert's exp(-density x
+    // distance), the same law the scene's own fog follows (`shader.wgsl`). Left out, the
+    // street lamps and signals shone at full strength to the end of the view in a fog that
+    // had hidden their poles 50 m away, a fan of dots at the horizon (#1212).
+    if (!streak) {
+        brightness = brightness * exp(-dist * max(camera.fog.w, 0.0));
+    }
     // a star grows with the light's strength; every sprite's strength stops at 1
-    let star_sprite = (u32(in.extra.z + 0.5) & 8u) != 0u && !streak && !flake;
+    let star_sprite = (u32(in.extra.z + 0.5) & 8u) != 0u && !streak;
     let grow = select(1.0, brightness, star_sprite);
     if (!streak) {
         brightness = min(brightness, 1.0);
@@ -223,28 +232,32 @@ fn vs_main(in: CoronaIn) -> CoronaOut {
         }
     }
     // coronas keep a minimum on-screen size in the distance like the original;
-    // precipitation particles (cone < -1.5) are thin vertical streaks.
+    // precipitation particles (cone < -1.5) follow their motion relative to the eye.
     // A sprite's radius, from the light's size (its diameter) and that distance floor. The
     // 0.9 is measured against Omsi.exe: at the size the game files ask for, every glow reads
     // a shade too wide beside the original, which draws the sprite a little inside the
     // diameter its `size` names. (Streaks keep their size: they are rain, not a light.)
-    let size = select(select(max(in.size * grow, dist * 0.002) * 0.9, max(in.size, dist * 0.0012), flake), in.size, streak);
+    let size = select(max(in.size * grow, dist * 0.002) * 0.9, in.size, streak);
     let stretch = select(vec2<f32>(1.0, 1.0), vec2<f32>(0.06, 4.0), streak);
-    let upv = select(up, vec3<f32>(0.0, 0.0, 1.0), streak);
+    var upv = up;
+    if (streak) {
+        upv = vec3<f32>(0.0, 0.0, 1.0);
+        if (length(in.dir.xyz) > 0.5) { upv = normalize(in.dir.xyz); }
+        let across = cross(upv, view_dir);
+        if (length(across) > 0.001) { right = normalize(across); }
+    }
     // the spot moved towards the viewer by its z offset, so that a lamp inside its housing
     // shows (without one: half its size, at most half a metre)
     let pull = select(min(size * 0.5, 0.5), in.extra.y, in.extra.y >= 0.0);
-    let wp = in.pos + (right * c.x * stretch.x + upv * c.y * stretch.y) * size + select(view_dir * min(pull, dist * 0.9), vec3<f32>(0.0), streak || flake);
+    let wp = in.pos + (right * c.x * stretch.x + upv * c.y * stretch.y) * size + select(view_dir * min(pull, dist * 0.9), vec3<f32>(0.0), streak);
     out.clip = camera.view_proj * vec4<f32>(wp, 1.0);
-    // (a flake's picture is turned by its own angle, the cosine and sine of which are in up.xy)
-    let cu = select(c, vec2<f32>(c.x * in.up.x - c.y * in.up.y, c.x * in.up.y + c.y * in.up.x), flake);
-    out.uv = cu * 0.5 + 0.5;
+    out.uv = c * 0.5 + 0.5;
     out.color = vec4<f32>(in.color.rgb, brightness);
-    out.kind = select(select(0.0, 1.0, streak), 2.0, flake);
+    out.kind = select(0.0, 1.0, streak);
+    out.wpos = vec4<f32>(in.pos, select(select(0.0, 2.0, flake), 1.0, streak));
     out.star = 0.0;
     out.beam = 0.0;
-    // (a flake: which of its four shapes, in the parameter bits 4 and 5)
-    out.cone = vec2<f32>(select(0.0, f32((u32(in.extra.z + 0.5) >> 4u) & 3u), flake), 0.0);
+    out.cone = vec2<f32>(0.0, 0.0);
     // (not `<= 0.001`: a NaN brightness is not smaller, and Direct3D drew it as a black
     // square where Metal's fast maths had dropped it)
     if (!(brightness > 0.001) || (bitcast<u32>(brightness) & 0x7f800000u) == 0x7f800000u) {
@@ -277,31 +290,6 @@ fn corona_shape(in: CoronaOut) -> vec3<f32> {
     let a = 0.05 + 0.9 * 1.5708 * clamp((phi - in.cone.x) / span, 0.0, 1.0);
     let fan_uv = clamp(vec2<f32>(0.0, 1.0) + min(r, 1.0) * vec2<f32>(sin(a), -cos(a)), vec2<f32>(0.0), vec2<f32>(1.0));
     let tb = textureSample(t_corona, s_corona, fan_uv).r;
-    if (in.kind > 1.5) {
-        // a snow flake, one of four shapes in six-fold symmetry: a hexagonal plate, a
-        // six-armed star, a branching crystal and a soft clump of flakes; the arms are
-        // laid out by the angle and a reach per angle, with a soft rim and a bright heart
-        let q = (in.uv - vec2<f32>(0.5)) * 2.0;
-        let fr = length(q);
-        let ang = atan2(q.y, q.x);
-        let s3 = abs(cos(3.0 * ang));
-        let v = u32(in.cone.x + 0.5);
-        var reach = 0.55 + 0.12 * cos(6.0 * ang);
-        if (v == 1u) {
-            reach = 0.22 + 0.78 * pow(s3, 8.0);
-        } else if (v == 2u) {
-            reach = max(0.2 + 0.8 * pow(s3, 12.0), 0.18 + 0.45 * pow(abs(cos(6.0 * ang)), 24.0) * smoothstep(0.0, 0.5, fr));
-        } else if (v == 3u) {
-            reach = 0.7;
-        }
-        let edge = 1.0 - smoothstep(reach - 0.22, reach + 0.04, fr);
-        let heart = 0.55 + 0.45 * (1.0 - clamp(fr, 0.0, 1.0));
-        var fa = edge * heart;
-        if (v == 3u) {
-            fa = exp(-fr * fr * 3.5);
-        }
-        return vec3<f32>(fa);
-    }
     if (in.beam > 0.5) {
         let inside = select(0.0, 1.0, r <= 1.0 && phi <= in.cone.y);
         return vec3<f32>(tb * inside);
@@ -311,7 +299,7 @@ fn corona_shape(in: CoronaOut) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: CoronaOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(finish_output(in.color.rgb * corona_shape(in) * in.color.a), 1.0);
+    return vec4<f32>(in.color.rgb * corona_shape(in) * in.color.a, 1.0);
 }
 
 // Enhanced graphics: the corona in the pre-exposed high-range picture - the glare of a
@@ -319,6 +307,11 @@ fn fs_main(in: CoronaOut) -> @location(0) vec4<f32> {
 // glow filter picks it up; precipitation streaks keep the vanilla level.
 @fragment
 fn fs_enhanced(in: CoronaOut) -> @location(0) vec4<f32> {
+    if (in.wpos.w > 0.5) {
+        let to_eye = normalize(camera.cam_pos.xyz - in.wpos.xyz);
+        let l = precip_light(in.wpos.xyz, to_eye, in.wpos.w > 1.5);
+        return vec4<f32>(in.color.rgb * corona_shape(in) * in.color.a * l * enh.exposure.x, 1.0);
+    }
     // (a fog cone is lit fog, not glare: it keeps the scene's level too)
     let scale = select(enh.exposure.w, enh.exposure.y, in.kind > 0.5);
     var shape = corona_shape(in);
@@ -339,6 +332,10 @@ fn fs_enhanced(in: CoronaOut) -> @location(0) vec4<f32> {
         let w = max(0.1, px * 1.5);
         let core = exp(-r * r / (w * w)) * 3.0 + exp(-r * 9.0) * 0.35;
         shape = mix(core * max(lit, shape) + shape * 0.22, shape, wet);
+        // (round, inside the circle the sprite holds: a far lamp's sprite is a few pixels,
+        // the core spans it, and brighter than white even in its corners it showed the
+        // whole quad - a square blot of light for every distant headlamp)
+        shape = shape * (1.0 - smoothstep(1.0 - px, 1.0, r));
     }
     return vec4<f32>(in.color.rgb * shape * in.color.a * scale, 1.0);
 }
@@ -356,8 +353,7 @@ fn smoke_color(in: CoronaOut) -> vec4<f32> {
 
 @fragment
 fn fs_smoke(in: CoronaOut) -> @location(0) vec4<f32> {
-    let c = smoke_color(in);
-    return vec4<f32>(finish_output(c.rgb), c.a);
+    return smoke_color(in);
 }
 
 @fragment

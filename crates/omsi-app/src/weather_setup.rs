@@ -2,126 +2,37 @@
 
 use super::*;
 
-pub(crate) const CUSTOM_CLOUDS: [&str; 5] = ["No clouds", "Cumulus 1", "Cumulus 2", "Cumulus 3", "Overcast 1"];
-pub(crate) const CUSTOM_PRECIP: [&str; 3] = ["None", "Rain", "Snow"];
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct CustomWeather {
-    pub visibility_m: f32,
-    pub brightness: f32,
-    pub wind_dir: f32,
-    pub wind_speed: f32,
-    pub temp_c: f32,
-    pub humidity: f32,
-    pub pressure: f32,
-    pub cloud: usize,
-    pub cloud_base_m: f32,
-    pub precip: i32,
-    pub precip_intensity: f32,
-    pub road_wetness: f32,
-    pub snow_cover: bool,
-    pub snow_on_road: bool,
-}
-impl Default for CustomWeather {
-    fn default() -> Self {
-        Self { visibility_m: 50_000.0, brightness: 1.0, wind_dir: 0.0, wind_speed: 0.0,
-            temp_c: 15.0, humidity: 51.0, pressure: 1013.0, cloud: 0, cloud_base_m: 50.0,
-            precip: 0, precip_intensity: 32.0, road_wetness: 0.0, snow_cover: false, snow_on_road: false }
-    }
-}
-impl CustomWeather {
-    pub(crate) fn normalize(&mut self) {
-        self.visibility_m=self.visibility_m.clamp(50.0,50_000.0);
-        self.brightness=self.brightness.clamp(0.0,1.5);
-        self.wind_dir=self.wind_dir.rem_euclid(360.0);
-        self.wind_speed=self.wind_speed.clamp(0.0,50.0);
-        self.temp_c=self.temp_c.clamp(-40.0,50.0);
-        self.humidity=self.humidity.clamp(0.0,100.0);
-        self.pressure=self.pressure.clamp(900.0,1100.0);
-        self.cloud=self.cloud.min(CUSTOM_CLOUDS.len()-1);
-        self.cloud_base_m=self.cloud_base_m.clamp(50.0,5000.0);
-        self.precip=self.precip.clamp(0,2);
-        self.precip_intensity=self.precip_intensity.clamp(0.0,255.0);
-        self.road_wetness=self.road_wetness.clamp(0.0,1.0);
-    }
-    pub(crate) fn parse(text:&str)->Option<Self>{
-        let body=text.strip_prefix("custom:").or_else(||text.strip_prefix("CUSTOM:"))?;
-        let mut c=Self::default();
-        for part in body.split(';') {
-            let Some((key,value))=part.split_once('=') else {continue};
-            let n=value.trim().parse::<f32>().ok();
-            match key.trim().to_ascii_lowercase().as_str() {
-                "vis"=>if let Some(v)=n{c.visibility_m=v},
-                "br"=>if let Some(v)=n{c.brightness=v},
-                "wd"=>if let Some(v)=n{c.wind_dir=v},
-                "ws"=>if let Some(v)=n{c.wind_speed=v},
-                "t"=>if let Some(v)=n{c.temp_c=v},
-                "rh"=>if let Some(v)=n{c.humidity=v},
-                "p"=>if let Some(v)=n{c.pressure=v},
-                "c"=>if let Some(v)=n{c.cloud=v.round().max(0.0) as usize},
-                "cb"=>if let Some(v)=n{c.cloud_base_m=v},
-                "pt"=>if let Some(v)=n{c.precip=v.round() as i32},
-                "pi"=>if let Some(v)=n{c.precip_intensity=v},
-                "wet"=>if let Some(v)=n{c.road_wetness=v},
-                "snow"=>if let Some(v)=n{c.snow_cover=v>=0.5},
-                "snowroad"=>if let Some(v)=n{c.snow_on_road=v>=0.5},
-                _=>{}
-            }
-        }
-        c.normalize(); Some(c)
-    }
-    pub(crate) fn encode(&self)->String{
-        let mut c=self.clone(); c.normalize();
-        format!("custom:vis={:.0};br={:.2};wd={:.0};ws={:.1};t={:.1};rh={:.0};p={:.0};c={};cb={:.0};pt={};pi={:.0};wet={:.2};snow={};snowroad={}",
-            c.visibility_m,c.brightness,c.wind_dir,c.wind_speed,c.temp_c,c.humidity,c.pressure,c.cloud,c.cloud_base_m,
-            c.precip,c.precip_intensity,c.road_wetness,c.snow_cover as u8,c.snow_on_road as u8)
-    }
-    pub(crate) fn from_weather(w:&omsi_content::weather::Weather,brightness:f32,wetness:f32)->Self{
-        let kind=w.clouds.0.trim().to_ascii_lowercase();
-        let cloud=if kind.starts_with("cumulus 1"){1}else if kind.starts_with("cumulus 2"){2}else if kind.starts_with("cumulus 3"){3}else if kind.starts_with("overcast"){4}else{0};
-        let mut c=Self{
-            visibility_m:w.fog.0,brightness,wind_dir:w.wind.0,wind_speed:w.wind.1,temp_c:w.temp.0,
-            humidity:relative_humidity(w.temp.0,w.temp.1),pressure:if w.pressure>0.0{w.pressure}else{1013.0},
-            cloud,cloud_base_m:w.clouds.1.max(50.0),precip:w.precip.first().copied().unwrap_or(0.0).round() as i32,
-            precip_intensity:w.precip.get(1).copied().unwrap_or(32.0),road_wetness:wetness,snow_cover:w.snow,snow_on_road:w.snow_on_road};
-        c.normalize(); c
-    }
-    pub(crate) fn to_weather(&self)->omsi_content::weather::Weather{
-        let mut c=self.clone(); c.normalize();
-        let cloud=match c.cloud{1=>"Cumulus 1",2=>"Cumulus 2",3=>"Cumulus 3",4=>"Overcast 1",_=>"-1"};
-        omsi_content::weather::Weather{
-            path:std::path::PathBuf::from(c.encode()),name:"Custom weather".into(),description:"User-defined weather".into(),
-            fog:(c.visibility_m,1.0),wind:(c.wind_dir,c.wind_speed),temp:(c.temp_c,absolute_humidity(c.temp_c,c.humidity)),
-            pressure:c.pressure,clouds:(cloud.into(),c.cloud_base_m),precip:vec![c.precip as f32,c.precip_intensity,0.0,0.0,0.0],
-            ground_wet:[c.road_wetness*255.0,0.0,0.0],snow:c.snow_cover,snow_on_road:c.snow_on_road}
-    }
-}
-fn saturation_vapour_pressure(temp_c:f32)->f32{6.112*((17.67*temp_c)/(temp_c+243.5)).exp()}
-pub(crate) fn absolute_humidity(temp_c:f32,relative:f32)->f32{
-    let vapour=saturation_vapour_pressure(temp_c)*relative.clamp(0.0,100.0)/100.0;
-    (216.7*vapour/(temp_c+273.15).max(1.0)).max(0.0)
-}
-pub(crate) fn relative_humidity(temp_c:f32,absolute:f32)->f32{
-    let vapour=absolute.max(0.0)*(temp_c+273.15).max(1.0)/216.7;
-    (vapour/saturation_vapour_pressure(temp_c).max(0.001)*100.0).clamp(0.0,100.0)
-}
-pub(crate) fn dew_point_c(temp_c:f32,relative:f32)->f32{
-    let rh=(relative.clamp(0.1,100.0)/100.0).ln();
-    let g=rh+17.67*temp_c/(243.5+temp_c); 243.5*g/(17.67-g)
-}
-pub(crate) fn custom_weather(text:Option<&str>)->Option<CustomWeather>{text.and_then(CustomWeather::parse)}
+// (the cloud kinds, a hand-set weather's text and the METAR airports: omsi_content::weather_choice)
+pub(crate) use omsi_content::weather_choice::{cloud_kind_index, cloud_kind_nearest, cover_of, custom_weather, dew_point_c, metar_airports, relative_humidity, CustomWeather, CLOUD_KINDS};
+pub(crate) use omsi_weather::conditions::{cloud_drift_at, cloud_drift_step, initial_wetness, precip_of, road_wetness, street_condition};
 
 
 /// Weather from `--weather`, else the clear-sky default.
 pub(crate) fn load_weather(args: &Args) -> omsi_content::weather::Weather {
+    load_weather_run(args).0
+}
+
+/// [`load_weather`], and the physical model's run when the weather is the model's, for the
+/// session to keep in its `SkyState` and carry on with its clock.
+pub(crate) fn load_weather_run(args: &Args) -> (omsi_content::weather::Weather, Option<crate::weather_model::ModelRun>) {
+    if crate::weather_tomorrow::selected(args.weather.as_deref()) {
+        let w = CustomWeather::default().to_weather();
+        omsi_sim::host::set_ambient_weather(w.temp.0, w.temp.1);
+        publish_page_weather(&w);
+        return (w, None);
+    }
     // no weather chosen, or `natural`: the physical model (weather_model.rs)
     if crate::weather_model::is_natural(args.weather.as_deref()) {
-        let w = crate::weather_model::start(&crate::situation::start_clock(args));
-        scene::SNOW_WEATHER.store(w.snow, std::sync::atomic::Ordering::Relaxed);
+        let (run, w) = crate::weather_model::ModelRun::start(&crate::situation::start_clock(args));
         omsi_sim::host::set_ambient_weather(w.temp.0, w.temp.1);
-        return w;
+        crate::weather_setup::publish_page_weather(&w);
+        return (w, Some(run));
     }
-    crate::weather_model::stop();
+    (load_chosen_weather(args), None)
+}
+
+/// A chosen weather: a hand-set one, a METAR report, an `.owt` file.
+fn load_chosen_weather(args: &Args) -> omsi_content::weather::Weather {
     let rel = args
         .weather
         .clone()
@@ -129,8 +40,8 @@ pub(crate) fn load_weather(args: &Args) -> omsi_content::weather::Weather {
         .unwrap_or_else(|| "Weather/#CAVOK.owt".into());
     if let Some(w)=CustomWeather::parse(&rel).map(|c|c.to_weather()){
         log::info!("weather custom: fog range {} m, precip {:?}, temp {:?}",w.fog.0,w.precip,w.temp);
-        scene::SNOW_WEATHER.store(w.snow,std::sync::atomic::Ordering::Relaxed);
         omsi_sim::host::set_ambient_weather(w.temp.0,w.temp.1);
+        crate::weather_setup::publish_page_weather(&w);
         return w;
     }
     // OMSI 2's current weather: `metar:<ICAO>` fetches the airport's report
@@ -156,18 +67,16 @@ pub(crate) fn load_weather(args: &Args) -> omsi_content::weather::Weather {
             // No weather chosen: the clear default (#CAVOK, no cloud at all) gets a few fair-
             // weather cumulus clouds, as long as clouds are wanted - a sky without a single
             // cloud was the first thing that looked wrong.
-            if args.weather.is_none() && CLOUDS.load(std::sync::atomic::Ordering::Relaxed) && w.clouds.0.trim().starts_with("-1") {
+            if args.weather.is_none() && args.session_settings.clouds && w.clouds.0.trim().starts_with("-1") {
                 w.clouds = ("Cumulus 1".into(), 100.0);
             }
-            // the vehicles ask for it while they go onto the GPU (the snow on the panes)
-            scene::SNOW_WEATHER.store(w.snow, std::sync::atomic::Ordering::Relaxed);
-            // and their {init} reads the temperature
+            // the vehicles' {init} reads the temperature
             omsi_sim::host::set_ambient_weather(w.temp.0, w.temp.1);
+            crate::weather_setup::publish_page_weather(&w);
             w
         }
         Err(e) => {
             log::warn!("weather {rel}: {e}");
-            scene::SNOW_WEATHER.store(false, std::sync::atomic::Ordering::Relaxed);
             omsi_content::weather::Weather {
                 fog: (50000.0, 1.0),
                 ..Default::default()
@@ -183,6 +92,7 @@ pub(crate) fn setup_sky(
     scene: &mut Scene,
     envir: Option<&omsi_content::Envir>,
     weather: Option<&omsi_content::weather::Weather>,
+    sky_clouds: &mut SkyClouds,
 ) {
     const STOCK: [&str; 3] = ["Texture\\himmel01.bmp", "Texture\\himmel04.bmp", "Texture\\himmel05.bmp"];
     let names = envir.map(|e| e.sky_textures.clone()).unwrap_or_else(|| STOCK.map(String::from));
@@ -211,8 +121,71 @@ pub(crate) fn setup_sky(
     let t = std::time::Instant::now();
     let field = cloud_field(cover.as_ref());
     log::debug!("cloud field made in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0);
-    let clouds = Some(renderer.add_texture(scene, &field, true));
-    renderer.set_sky_textures_clouds(scene, [ids[0], ids[1], ids[2]], clouds);
+    let clouds = Some(renderer.add_texture_data(scene, &cloud_field_levels(field)));
+    // the classic sky draws the cloud type's texture itself, its alpha the cover (the
+    // renderer's mip chain weighs the colour by it, as for any cut-out texture)
+    let ty = cloud_type(&args.root, &kind);
+    let vanilla = ty.as_ref().and_then(|t| {
+        omsi_texture::decode_file(&omsi_cfg::resolve_path(&omsi_cfg::resolve_path(&args.root, "Texture"), &t.texture))
+            .map_err(|e| log::warn!("cloud texture {}: {e}", t.texture))
+            .ok()
+    });
+    *sky_clouds = ty.filter(|_| vanilla.is_some()).map(|t| (kind.clone(), t));
+    let vanilla = vanilla.map(|img| renderer.add_texture(scene, &img, true));
+    let sun = omsi_texture::decode_file(&omsi_cfg::resolve_path(&args.root, "Texture\\sonne.bmp"))
+        .map_err(|e| log::warn!("sun texture: {e}"))
+        .ok()
+        .map(|img| renderer.add_texture(scene, &img, false));
+    renderer.set_sky_textures_vanilla(scene, [ids[0], ids[1], ids[2]], clouds, vanilla, sun);
+}
+
+/// A `[cloudtype]` of `Weather/clouds.cfg`: its texture (under `Texture\`), the metres of
+/// ground a tile of it covers, and whether it is an `ovc` deck (else `sct`).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CloudType {
+    pub texture: String,
+    pub size: f32,
+    pub overcast: bool,
+}
+
+/// The cloud type the sky was last set up with (its name and entry): the classic sky's
+/// cloud layer is drawn by it while the weather names it.
+pub(crate) type SkyClouds = Option<(String, CloudType)>;
+
+/// What a scene's sky is drawn from besides the weather itself, kept by whoever owns the
+/// scene (the window's session, the offscreen run, the showroom's look) and handed to
+/// `weather_lighting`: the cloud type `setup_sky` set its textures up with, and the
+/// physical weather model when the weather is the model's (`load_weather_run`).
+#[derive(Default)]
+pub(crate) struct SkyState {
+    pub(crate) clouds: SkyClouds,
+    pub(crate) model: Option<crate::weather_model::ModelRun>,
+    /// The graphics' kind and whether clouds are wanted (see `startup::SessionSettings`).
+    pub(crate) look: crate::startup::SessionSettings,
+}
+
+/// The `[cloudtype]` entry named `kind` (`-1` or empty: none), read as Omsi.exe reads it
+/// (0x754664): name, texture, size, then `ovc` or `sct`.
+pub(crate) fn cloud_type(root: &Path, kind: &str) -> Option<CloudType> {
+    if kind.is_empty() || kind.starts_with("-1") {
+        return None;
+    }
+    let cfg = omsi_cfg::vfs::read(&root.join("Weather").join("clouds.cfg")).ok()?;
+    cloud_type_in(&omsi_cfg::codepage::decode(&cfg), kind)
+}
+
+fn cloud_type_in(text: &str, kind: &str) -> Option<CloudType> {
+    let lines: Vec<&str> = text.lines().map(|l| l.trim()).collect();
+    (0..lines.len()).find_map(|i| {
+        if !lines[i].eq_ignore_ascii_case("[cloudtype]") || !lines.get(i + 1).is_some_and(|n| n.eq_ignore_ascii_case(kind)) {
+            return None;
+        }
+        Some(CloudType {
+            texture: lines.get(i + 2)?.to_string(),
+            size: lines.get(i + 3).and_then(|v| v.parse::<f32>().ok()).filter(|v| *v > 0.0).unwrap_or(2000.0),
+            overcast: lines.get(i + 4).is_some_and(|v| v.eq_ignore_ascii_case("ovc")),
+        })
+    })
 }
 
 /// Edge of the cloud field texture (texels); it tiles.
@@ -334,25 +307,63 @@ pub(crate) fn cloud_field(cover: Option<&omsi_texture::Image>) -> omsi_texture::
     omsi_texture::Image { width: n as u32, height: n as u32, rgba, has_alpha: true }
 }
 
+/// The cloud field with its mip chain, each level the plain mean of four texels of the one
+/// above. The renderer's own chain (`add_texture`) weighs a texel's colour by its alpha, which
+/// keeps the colour of a transparent texel out of a leaf's silhouette - but the field's
+/// alpha is how tall the cloud grows, not a coverage: weighed by it, the cumulus shape (G)
+/// of a smaller level was the shape of its tall clouds alone, so the clouds changed their
+/// outline from one level to the next, and a cloud on a low patch vanished where the sky
+/// went over to the next level - a visible line across it. The colour channels hold linear
+/// values in sRGB bytes (see `cloud_field`), so they are averaged decoded, as the GPU reads them.
+pub(crate) fn cloud_field_levels(field: omsi_texture::Image) -> omsi_texture::TextureData {
+    let decode = |b: u8| -> f32 {
+        let s = b as f32 / 255.0;
+        if s <= 0.040_45 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    };
+    let encode = |x: f32| -> u8 {
+        let x = x.clamp(0.0, 1.0);
+        let s = if x <= 0.003_130_8 { x * 12.92 } else { 1.055 * x.powf(1.0 / 2.4) - 0.055 };
+        (s * 255.0 + 0.5) as u8
+    };
+    let (w, h) = (field.width as usize, field.height as usize);
+    let mut levels = vec![field.rgba];
+    let (mut lw, mut lh) = (w, h);
+    while lw > 1 || lh > 1 {
+        let (nw, nh) = ((lw / 2).max(1), (lh / 2).max(1));
+        let prev = levels.last().expect("level");
+        let mut next = vec![0u8; nw * nh * 4];
+        for y in 0..nh {
+            for x in 0..nw {
+                // (the field tiles: a texel past an odd edge wraps round)
+                let px = [(2 * x) % lw, (2 * x + 1) % lw];
+                let py = [(2 * y) % lh, (2 * y + 1) % lh];
+                let texels = [(px[0], py[0]), (px[1], py[0]), (px[0], py[1]), (px[1], py[1])];
+                for c in 0..4 {
+                    let sum: f32 = texels
+                        .iter()
+                        .map(|&(tx, ty)| {
+                            let v = prev[(ty * lw + tx) * 4 + c];
+                            if c < 3 { decode(v) } else { v as f32 / 255.0 }
+                        })
+                        .sum();
+                    let mean = sum / 4.0;
+                    next[(y * nw + x) * 4 + c] = if c < 3 { encode(mean) } else { (mean * 255.0 + 0.5) as u8 };
+                }
+            }
+        }
+        levels.push(next);
+        lw = nw;
+        lh = nh;
+    }
+    omsi_texture::TextureData { width: w as u32, height: h as u32, format: omsi_texture::PixelFormat::Rgba8, levels, has_alpha: true, gpu_mips: false }
+}
+
 /// The texture of a cloud type named in `Weather/clouds.cfg` (`[cloudtype]` name, texture,
 /// size in metres, sct/ovc), as the sky shaders read it: the cover in the colour channels.
 /// A scattered type's texture is white with the clouds in its alpha; an overcast one is a
 /// picture of the cloud deck, its brightness is the cover.
 fn cloud_texture(root: &Path, kind: &str) -> Option<omsi_texture::Image> {
-    if kind.is_empty() || kind.starts_with("-1") {
-        return None;
-    }
-    let cfg = omsi_cfg::vfs::read(&root.join("Weather").join("clouds.cfg")).ok()?;
-    let text = omsi_cfg::codepage::decode(&cfg);
-    let lines: Vec<&str> = text.lines().map(|l| l.trim()).collect();
-    let mut file = None;
-    for i in 0..lines.len() {
-        if lines[i].eq_ignore_ascii_case("[cloudtype]") && lines.get(i + 1).map(|n| n.eq_ignore_ascii_case(kind)).unwrap_or(false) {
-            file = lines.get(i + 2).map(|s| s.to_string());
-            break;
-        }
-    }
-    let file = file?;
+    let file = cloud_type(root, kind)?.texture;
     let mut img = omsi_texture::decode_file(&omsi_cfg::resolve_path(&omsi_cfg::resolve_path(&root, "Texture"), &file)).ok()?;
     if img.has_alpha {
         for px in img.rgba.chunks_mut(4) {
@@ -370,84 +381,74 @@ fn cloud_texture(root: &Path, kind: &str) -> Option<omsi_texture::Image> {
 
 /// Cloud cover of a weather file: `[clouds] type density`, type -1 = clear, density up to
 /// ~300 (Cumulus 3) - mapped to 0..1; the cover drifts with the wind.
-pub(crate) fn clouds_of(w: &omsi_content::weather::Weather, drift: [f32; 2]) -> (f32, [f32; 2]) {
-    let kind = w.clouds.0.trim();
-    if kind.is_empty() || kind.starts_with("-1") || !CLOUDS.load(std::sync::atomic::Ordering::Relaxed) {
+pub(crate) fn clouds_of(w: &omsi_content::weather::Weather, drift: [f64; 4], clouds: bool) -> (f32, [f32; 2]) {
+    if !clouds {
         return (0.0, [0.0; 2]);
     }
-    // cover by type: Cumulus 1..3 scattered → broken, Overcast closed
-    let lower = kind.to_ascii_lowercase();
-    let density = if lower.starts_with("overcast") {
-        1.0
-    } else if lower.starts_with("cumulus") {
-        match lower
-            .trim_start_matches("cumulus")
-            .trim()
-            .parse::<i32>()
-            .unwrap_or(1)
-        {
-            1 => 0.35,
-            2 => 0.55,
-            _ => 0.75,
-        }
-    } else {
-        0.5
+    // the cover decides, not the name (`cover_of`: a hand-set weather's own, else its type's)
+    (cover_of(w), [drift[0] as f32, drift[1] as f32])
+}
+
+
+
+/// The classic sky's weather (see `omsi_render::VanillaSky`).
+pub(crate) fn vanilla_sky(w: &omsi_content::weather::Weather, drift: [f64; 4], sky_clouds: &SkyClouds, clouds: bool) -> omsi_render::VanillaSky {
+    // the visibility Omsi.exe fogs with (0x753120): the fog range, shortened by rain to
+    // 100000 m / its intensity and by snow to 20000 m / its intensity
+    let range = w.fog.0.max(1.0);
+    let intensity = w.precip.get(1).copied().unwrap_or(0.0).max(1.0);
+    let visibility = match w.precip.first().copied().unwrap_or(0.0) as i32 {
+        1 => range.min(100_000.0 / intensity),
+        2 => range.min(20_000.0 / intensity),
+        _ => range,
     };
-    (density, drift)
-}
-
-/// The clouds' drift after `time` seconds of a steady wind (see `cloud_drift_step`).
-pub(crate) fn cloud_drift_at(w: &omsi_content::weather::Weather, time: f64) -> [f32; 2] {
-    let mut d = [0.0; 2];
-    cloud_drift_step(&mut d, w, time);
-    d
-}
-
-/// Move the clouds on by `secs` of [wind] direction (deg) speed (m/s), over the 2500 m
-/// tiling; the field repeats every tile, so only the fraction of a tile is kept. (Taken
-/// from the absolute time, every change of the wind while a weather blends in moved the
-/// whole sky by time x change.)
-pub(crate) fn cloud_drift_step(d: &mut [f32; 2], w: &omsi_content::weather::Weather, secs: f64) {
-    let (dir, speed) = (w.wind.0.to_radians() as f64, w.wind.1 as f64);
-    let s = secs * speed / 2500.0;
-    d[0] = (d[0] as f64 + dir.sin() * s).rem_euclid(1.0) as f32;
-    d[1] = (d[1] as f64 + dir.cos() * s).rem_euclid(1.0) as f32;
-}
-
-/// How wet the roads are: rain soaks them in a few minutes, sunshine dries them in about
-/// twenty. `secs` is how long this weather has been running.
-pub(crate) fn road_wetness(rate: f32, secs: f64, start: f32) -> f32 {
-    if rate > 0.0 {
-        (start + secs as f32 * rate / 180.0).clamp(0.0, 1.0)
-    } else {
-        (start - secs as f32 / 1200.0).clamp(0.0, 1.0)
+    let kind = w.clouds.0.trim();
+    let ty = sky_clouds
+        .as_ref()
+        .filter(|(k, _)| k.eq_ignore_ascii_case(kind) && clouds)
+        .map(|(_, t)| t.clone());
+    omsi_render::VanillaSky {
+        cloud_height: w.clouds.1,
+        fog_range: w.fog.0,
+        visibility,
+        cloud_size: ty.as_ref().map_or(0.0, |t| t.size),
+        overcast: ty.as_ref().is_some_and(|t| t.overcast),
+        cloud_offset: [drift[2] as f32, drift[3] as f32],
     }
 }
+
 
 /// The renderer's lighting for this weather at this moment: the daylight, then what the
 /// cloud cover, the rain and the snow make of it.
 pub(crate) fn weather_lighting(
     daylight: &omsi_sim::Daylight,
     w: &omsi_content::weather::Weather,
-    cloud_drift: [f32; 2],
+    cloud_drift: [f64; 4],
     wetness: f32,
+    snow_cover: f32,
     shadows: bool,
+    sky: &SkyState,
 ) -> omsi_render::Lighting {
     let mut lighting = lights::lighting_from(daylight, w.fog.0);
-    lighting.enhanced = ENHANCED.load(std::sync::atomic::Ordering::Relaxed);
-    lighting.classic = CLASSIC.load(std::sync::atomic::Ordering::Relaxed);
-    let (density, offset) = clouds_of(w, cloud_drift);
+    lighting.enhanced = sky.look.enhanced;
+    lighting.classic = sky.look.classic;
+    let (density, offset) = clouds_of(w, cloud_drift, sky.look.clouds);
     lighting.cloud_density = density;
     lighting.cloud_offset = offset;
-    let model_sky = *crate::weather_model::CURRENT.lock().unwrap_or_else(|e| e.into_inner());
+    lighting.vanilla_sky = vanilla_sky(w, cloud_drift, &sky.clouds, sky.look.clouds);
+    let model_sky = sky.model.as_ref().map(|m| m.sky());
     let (kind, rate) = precip_of(w);
     lights::apply_weather(
         &mut lighting,
         density,
         kind,
         rate,
-        if w.snow { 1.0 } else { 0.0 },
+        // (the weather's own snow cover, or what the snowfalls have laid so far)
+        if w.snow { 1.0 } else { snow_cover },
     );
+    // (the roads are kept clear unless the weather says the snow lies on them: the traffic
+    // and the gritters keep them black while the roofs and the verges turn white)
+    lighting.roads_clear = !w.snow_on_road;
     if let Some(custom)=CustomWeather::parse(&w.path.to_string_lossy()){
         let k=custom.brightness;
         lighting.sun_intensity*=k;
@@ -463,15 +464,20 @@ pub(crate) fn weather_lighting(
         }
     }
     lighting.wetness = wetness;
+    // [wind] direction (deg) and speed (m/s): the snowfall drifts with it
+    lighting.wind = glam::Vec3::new(w.wind.0.to_radians().sin() * w.wind.1, w.wind.0.to_radians().cos() * w.wind.1, 0.0);
+    omsi_sim::particles::set_wind(lighting.wind);
     // Omsi.exe hides the sun under an 'ovc' cloud type (the Overcast ones in clouds.cfg) and
     // draws no sun shadows below 350 m visibility
     let overcast = w.clouds.0.trim().to_ascii_lowercase().starts_with("overcast");
     lighting.shadows = shadows && !overcast && w.fog.0 > 350.0;
+    // (a street lamp casts its shadow in any weather)
+    lighting.lamp_shadows = shadows;
     // the physical model: how much of which cloud there is and what the air holds, which
     // the enhanced atmosphere turns into light (the `.owt` values above stay for the rest)
     if let Some(m) = model_sky.filter(|_| lighting.enhanced) {
         let closed = ((m.deck - 0.85) / 0.15).clamp(0.0, 1.0);
-        if CLOUDS.load(std::sync::atomic::Ordering::Relaxed) {
+        if sky.look.clouds {
             lighting.cloud_density = m.cumulus.max(m.deck * 0.95);
         }
         lighting.overcast = m.deck;
@@ -483,15 +489,18 @@ pub(crate) fn weather_lighting(
     lighting
 }
 
-/// Push the weather into a vehicle's script host.
-pub(crate) fn precip_of(w: &omsi_content::weather::Weather) -> (i32, f32) {
-    let kind = w.precip.first().copied().unwrap_or(0.0) as i32;
-    let rate = if kind == 0 {
-        0.0
-    } else {
-        (w.precip.get(1).copied().unwrap_or(0.0) / 255.0).clamp(0.0, 1.0)
-    };
-    (kind, rate)
+
+/// Tell the htmltexture pages the weather (`omsi.weather`), with the temperature the
+/// vehicles get.
+pub(crate) fn publish_page_weather(w: &omsi_content::weather::Weather) {
+    let (kind, rate) = precip_of(w);
+    omsi_sim::vehicle_api::set_page_weather(omsi_sim::vehicle_api::PageWeather {
+        temperature: w.temp.0,
+        abs_humidity: w.temp.1,
+        visibility: w.fog.0,
+        clouds: w.clouds.0.clone(),
+        precip: (kind as f32, rate * 255.0),
+    });
 }
 
 pub(crate) fn apply_weather(
@@ -502,12 +511,14 @@ pub(crate) fn apply_weather(
     let (kind, rate) = precip_of(w);
     v.host.precip_type = kind as f32;
     v.host.precip_rate = rate;
+    v.host.wind = crate::rain::weather_wind(w);
     v.host.street_cond = street_condition(w, wetness);
     v.set_var("PrecipType", kind as f32);
     v.set_var("PrecipRate", rate);
     v.host.temperature = w.temp.0;
     v.host.abs_humidity = w.temp.1;
     omsi_sim::host::set_ambient_weather(w.temp.0, w.temp.1);
+    crate::weather_setup::publish_page_weather(&w);
 }
 
 /// `OMSI_DEBUG_SOUND[=seconds]`: how often the mixer says what every sound entry of the
@@ -515,49 +526,15 @@ pub(crate) fn apply_weather(
 pub(crate) fn debug_sound_every() -> Option<f32> {
     static EVERY: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
     *EVERY.get_or_init(|| {
-        omsi_cfg::env::var("OMSI_DEBUG_SOUND")
-            .ok()
+        omsi_cfg::flags::OMSI_DEBUG_SOUND
+            .var()
             .map(|v| v.parse::<f32>().ok().filter(|s| *s > 0.0).unwrap_or(5.0))
     })
 }
 
-/// The road under the wheels as the scripts and the sound configurations read it
-/// (`StreetCond`): 0 dry, 1 wet, 2 covered in snow. A snowfall (or a weather with
-/// `[snowOnRoad]`) puts it into the upper half, everything else follows the water film.
-pub(crate) fn street_condition(w: &omsi_content::weather::Weather, wetness: f32) -> f32 {
-    let wet = wetness.clamp(0.0, 1.0);
-    if w.snow_on_road || precip_of(w).0 == 2 {
-        1.0 + wet
-    } else {
-        wet
-    }
-}
-
-/// How wet the roads are when a session starts: what this weather has already left on them
-/// (`[groundwet]`, 0 … 255), and at least what the rain falling now would soak them to.
-pub(crate) fn initial_wetness(w: &omsi_content::weather::Weather) -> f32 {
-    let rate = precip_of(w).1;
-    let falling = if rate > 0.0 {
-        (0.4 + rate).min(1.0)
-    } else {
-        0.0
-    };
-    (w.ground_wet[0] / 255.0).clamp(0.0, 1.0).max(falling)
-}
 
 
-/// The airports OMSI's METAR list (`Weather/ICAO.txt`) offers: (ICAO, "ICAO - name").
-pub(crate) fn metar_airports(root:&std::path::Path)->Vec<(String,String)>{
-    static CACHE:std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf,Vec<(String,String)>>>>=std::sync::OnceLock::new();
-    let cache=CACHE.get_or_init(||std::sync::Mutex::new(std::collections::HashMap::new()));
-    if let Some(v)=cache.lock().unwrap_or_else(|e|e.into_inner()).get(root).cloned(){return v}
-    let text=std::fs::read(omsi_cfg::resolve_path(root,"Weather/ICAO.txt")).map(|b|omsi_cfg::codepage::decode(&b)).unwrap_or_default();
-    let mut v:Vec<(String,String)>=text.lines().filter_map(|l|l.split_once(" - ").map(|(c,n)|(c.trim().to_ascii_uppercase(),format!("{} - {}",c.trim(),n.trim()))))
-        .filter(|(c,_)|c.len()==4&&c.chars().all(|x|x.is_ascii_alphabetic())).collect();
-    if !v.iter().any(|a|a.0=="EDDB"){v.push(("EDDB".into(),"EDDB - Berlin Brandenburg".into()))}
-    v.sort_by(|a,b|a.0.cmp(&b.0)); v.dedup_by(|a,b|a.0==b.0);
-    cache.lock().unwrap_or_else(|e|e.into_inner()).insert(root.to_path_buf(),v.clone()); v
-}
+
 
 /// The weather of an airport's METAR report (aviationweather.gov), or a clear day when it
 /// cannot be had (no network, an unknown station).
@@ -627,4 +604,81 @@ pub(crate) fn from_report(s: &str) -> Option<omsi_content::weather::Weather> {
     let mut w = omsi_content::weather::from_metar(icao, raw);
     w.path = std::path::PathBuf::from(format!("metar:{icao}"));
     Some(w)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tomorrow_starts_with_fallback_without_a_natural_model() {
+        let args = Args::try_parse_from(["openomsi", "--weather", "tomorrow"]).unwrap();
+        let (weather, model) = load_weather_run(&args);
+        assert!(model.is_none(), "natural weather must not overwrite observations");
+        assert_eq!(weather.name, "Custom weather");
+        assert!(!weather.snow);
+        assert!(weather.temp.0.is_finite());
+    }
+
+    #[test]
+    fn the_weather_drifts_the_classic_clouds_over_the_renderers_tiling() {
+        assert_eq!(omsi_weather::conditions::CLOUD_PERIOD, omsi_render::VANILLA_CLOUD_PERIOD);
+    }
+
+    #[test]
+    fn cloud_types_are_read_as_omsi_reads_them() {
+        let cfg = "\tHier werden alle Wolkentypen definiert:\n\n\t[cloudtype]\n\tname\n\ttexture\n\n[cloudtype]\nCumulus 2\nCumulus_2.tga\n2000\nsct\n\n[cloudtype]\nOvercast 1\nOVC_1.bmp\n1000\novc\n";
+        assert_eq!(cloud_type_in(cfg, "cumulus 2"), Some(CloudType { texture: "Cumulus_2.tga".into(), size: 2000.0, overcast: false }));
+        assert_eq!(cloud_type_in(cfg, "Overcast 1"), Some(CloudType { texture: "OVC_1.bmp".into(), size: 1000.0, overcast: true }));
+        assert_eq!(cloud_type_in(cfg, "Cumulus 9"), None);
+    }
+
+    #[test]
+    fn the_classic_clouds_drift_downwind_by_omsis_angle() {
+        let w = omsi_content::weather::Weather { wind: (100.0, 5.0), ..Default::default() };
+        let d = cloud_drift_at(&w, 10.0);
+        // 100 degrees taken as 100 x pi/200: due east, 50 m in 10 s
+        assert!((d[2] - 50.0).abs() < 1e-3 && d[3].abs() < 1e-3, "{d:?}");
+    }
+
+    /// An older `custom:` text kept the index of a cloud type in `c=` as a whole number,
+    /// where the cover is written with three decimals: `c=1` reads back as Cumulus 1's cover,
+    /// not as the 1.0 of a closed deck.
+    #[test]
+    fn an_old_custom_texts_cloud_index_reads_back_as_its_kinds_cover() {
+        for (index, cover) in [0.0, 0.35, 0.55, 0.75, 1.0].into_iter().enumerate() {
+            let text = format!("custom:vis=20000;br=1.00;c={index}");
+            let c = CustomWeather::parse(&text).expect(&text);
+            assert!((c.cloud_cover - cover).abs() < 1e-6, "{text}: {} not {cover}", c.cloud_cover);
+        }
+        for (text, cover) in [("custom:vis=20000;c=0.000", 0.0), ("custom:vis=20000;c=0.550", 0.55), ("custom:vis=20000;c=1.000", 1.0)] {
+            let c = CustomWeather::parse(text).expect(text);
+            assert!((c.cloud_cover - cover).abs() < 1e-6, "{text}: {}", c.cloud_cover);
+        }
+    }
+
+    /// What `encode` writes parses back to the same cover, and the weather it makes names a
+    /// kind with clouds for any cover above none.
+    #[test]
+    fn a_custom_weathers_cover_survives_its_own_text() {
+        let c = CustomWeather { cloud_cover: 0.12, ..CustomWeather::default() };
+        let back = CustomWeather::parse(&c.encode()).expect("its own text");
+        assert!((back.cloud_cover - 0.12).abs() < 1e-6, "{}", back.cloud_cover);
+        let w = back.to_weather();
+        assert_eq!(w.clouds.0, "Cumulus 1");
+        assert!((cover_of(&w) - 0.12).abs() < 1e-6);
+        assert_eq!(cover_of(&CustomWeather::default().to_weather()), 0.0);
+    }
+
+    #[test]
+    fn the_cloud_kinds_are_found_by_every_name() {
+        assert_eq!(cloud_kind_index("Overcast 1"), Some(4));
+        assert_eq!(cloud_kind_index("overcast"), Some(4));
+        assert_eq!(cloud_kind_index("Broken"), Some(3));
+        assert_eq!(cloud_kind_index("-1"), Some(0));
+        assert_eq!(cloud_kind_index("Cirrus 7"), None);
+        assert_eq!(cloud_kind_nearest(0.01), 1);
+        assert_eq!(cloud_kind_nearest(0.0), 0);
+        assert_eq!(cloud_kind_nearest(0.9), 4);
+    }
 }

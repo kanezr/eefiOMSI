@@ -25,12 +25,16 @@ voice_server_uid = abcdEFGH1234abcdEFGH1234abc=
 voice_channel = 12
 voice_channel_password =
 voice_range = 20
+voice_radio = 1
 ```
 
 `voice_server_uid` is the unique id from GreenTeaSpeak's server info panel (needed: the
 plugin moves nobody on a voice server the session does not name), `voice_channel` the
 in-game channel's id or name (empty: no voice chat), `voice_range` how far a player is heard
-in metres. The channel's password is sent to every player who joins.
+in metres. `voice_radio` (default on) gives drivers a bindable map-wide bus radio on top of
+proximity voice: taking a bus puts them on it; hold the *Multiplayer: bus radio* key
+(Controls, X by default) to transmit to every driver on the map while people nearby still
+hear them through proximity. The channel's password is sent to every player who joins.
 
 ## Protocol
 
@@ -48,13 +52,13 @@ game at a time.
 |---|---|---|
 | `hello` | `key` | checks the key; `welcome` |
 | `initiate` | `serverUid`, `channel`, `password`, `nickname`, `range` | checks the server's unique id (refused when empty), renames the user, moves them into the channel, switches 3D voice on |
-| `self` | `x`, `y`, `z`, `yaw` | `setListenerPose` (`yaw` = `yawDeg`, SaltyChat's rotation: 0 north, counter-clockwise) |
-| `players` | `players: [{nickname, x, y, z, range, volume}]` | `findClientByName` (looked up again every 10 s: a player who came back has a new client id) → `setClientPose` (`volume`: `volumeOverride`, null for the distance fall-off); players no longer listed get `clearClientPose` |
+| `self` | `x`, `y`, `z`, `yaw`, `onRadio`, `keyed` | `setListenerPose` (`yaw` = `yawDeg`, SaltyChat's rotation: 0 north, counter-clockwise); `keyed` opens the mic for the bus radio while held |
+| `players` | `players: [{nickname, x, y, z, range, volume, radio}]`, `onRadio` | `findClientByName` (looked up again every 10 s: a player who came back has a new client id) → `setClientPose` (`volume`: `volumeOverride`, null for the distance fall-off; `radio`: place at the listener for map-wide hear); players no longer listed get `clearClientPose` |
 | `reset` | | `resetSpatial`, 3D voice off, the user's nickname and channel as before the session |
 
 Positions are metres, z up, relative to a point near where the game started (map coordinates
 run into the millions). The plugin answers with `state` (`inChannel`, `error`), `talk`
-(`nickname`, `talking`) and `mute` (`microphoneMuted`, `soundMuted`).
+(`nickname`, `talking`, `radio`) and `mute` (`microphoneMuted`, `soundMuted`).
 
 The plugin is plain JavaScript (ES module, `node:net`, no dependencies): GreenTeaSpeak's
 `@greentea/plugin-sdk` is only needed for its types when writing a plugin. The game's side is

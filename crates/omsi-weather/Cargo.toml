@@ -1,0 +1,15 @@
+[package]
+name = "omsi-weather"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "openOMSI's weather as state and physics: the physical weather model, the weather cycle, the seasons' phases, the roads' wetness, the cabin air and the drops on the glass"
+
+[dependencies]
+omsi-cfg = { path = "../omsi-cfg" }
+omsi-content = { path = "../omsi-content" }
+omsi-map = { path = "../omsi-map" }
+omsi-sim = { path = "../omsi-sim" }
+omsi-texture = { path = "../omsi-texture" }
+glam.workspace = true
+log.workspace = true

@@ -39,6 +39,20 @@ impl Stacks {
         }
         self.sst[0] = s;
     }
+    /// Push a copy of `s` into the buffer of the string that falls off the bottom (no
+    /// allocation once the buffers have grown).
+    #[inline]
+    pub fn push_str_copy(&mut self, s: &str) {
+        self.sst.rotate_right(1);
+        self.sst[0].clear();
+        self.sst[0].push_str(s);
+    }
+    /// Remove `sst[0]` as [`Stacks::pop_str`] does, keeping its buffer for later pushes.
+    #[inline]
+    pub fn drop_str(&mut self) {
+        self.sst.rotate_left(1);
+        self.sst[7].clear();
+    }
     #[inline]
     pub fn pop_str(&mut self) -> String {
         let v = std::mem::take(&mut self.sst[0]);
@@ -131,6 +145,10 @@ pub struct Vm {
     rng: u64,
     /// Macro recursion guard.
     depth: u32,
+    /// Instructions the engine-called block now running may still take (`MAX_OPS`, `MAX_INIT_OPS`).
+    budget: u64,
+    /// A run was cut short by the budget (said once).
+    starved: bool,
 }
 
 /// The state every `random` starts from while no session seed is set (tests and tools
@@ -149,6 +167,17 @@ pub fn set_session_seed(seed: u64) {
     SESSION_SEED.store(seed.max(1), std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The session's seed, if one was set ([`set_session_seed`]), for whatever else draws its
+/// random numbers per session (the AI traffic's population).
+pub fn session_seed() -> Option<u64> {
+    Some(SESSION_SEED.load(std::sync::atomic::Ordering::Relaxed)).filter(|&s| s != 0)
+}
+
+/// A well-mixed number from `z` (SplitMix64), for deriving one seed from another.
+pub fn mix_seed(z: u64) -> u64 {
+    splitmix64(z)
+}
+
 fn splitmix64(mut z: u64) -> u64 {
     z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -160,11 +189,24 @@ impl Default for Vm {
     fn default() -> Self {
         let session = SESSION_SEED.load(std::sync::atomic::Ordering::Relaxed);
         let rng = if session == 0 { FIXED_RNG } else { splitmix64(session ^ splitmix64(SEEDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed))) | 1 };
-        Self { stacks: Stacks::default(), rng, depth: 0 }
+        Self { stacks: Stacks::default(), rng, depth: 0, budget: MAX_OPS, starved: false }
     }
 }
 
 const MAX_DEPTH: u32 = 64;
+
+/// Instructions one vehicle's frame (all its `{frame}` or `{frame_ai}` blocks together), or
+/// one trigger, may take, macros included. The language has no loops, but
+/// a macro that calls itself a few times over, 64 deep, would run for ever - a script that
+/// came from another machine (a host's mods, another player's bus) would stop this game. The
+/// stock scripts take thousands a frame; a run cut short leaves its variables as they are.
+const MAX_OPS: u64 = 2_000_000;
+
+/// Instructions one `{init}` block may take: it runs once, as the vehicle is set up, so a long
+/// one only delays that. GPM's Citaro C2 looks up its depot file from its `{init}` (its AFR4
+/// printer's `ReadHof`) in 4.4 million; cut at `MAX_OPS`, its destination sign, IBIS and
+/// climate were never set up. Triggers run while driving and keep `MAX_OPS`.
+const MAX_INIT_OPS: u64 = 50_000_000;
 
 impl Vm {
     pub fn new() -> Self {
@@ -194,17 +236,23 @@ impl Vm {
         }
     }
 
-    /// Run the `{frame}` blocks.
+    /// Run the `{frame}` blocks - one budget (`MAX_OPS`) for all of them: a vehicle's frame.
     pub fn run_frame(&mut self, p: &Program, state: &mut State, host: &mut dyn Host) {
-        for &b in &p.frame {
-            self.run_top(p, b, state, host);
-        }
+        self.run_frame_blocks(p, &p.frame, state, host);
     }
 
-    /// Run the `{frame_ai}` blocks (falls back to nothing when absent).
+    /// Run the `{frame_ai}` blocks (falls back to nothing when absent), on one budget too.
     pub fn run_frame_ai(&mut self, p: &Program, state: &mut State, host: &mut dyn Host) {
-        for &b in &p.frame_ai {
-            self.run_top(p, b, state, host);
+        self.run_frame_blocks(p, &p.frame_ai, state, host);
+    }
+
+    /// `blocks` run one after the other on empty stacks, sharing one budget: with a budget
+    /// for each block, a script made of many blocks would stall the game as many times over.
+    fn run_frame_blocks(&mut self, p: &Program, blocks: &[BlockId], state: &mut State, host: &mut dyn Host) {
+        self.budget = MAX_OPS;
+        for &b in blocks {
+            self.stacks.clear();
+            self.run_block(p, b, state, host);
         }
     }
 
@@ -219,6 +267,7 @@ impl Vm {
                 self.stacks.clear();
                 let value = if name.to_ascii_lowercase().ends_with("_off") { 0.0 } else { 1.0 };
                 self.stacks.push(value);
+                self.budget = MAX_OPS;
                 self.run_block(p, b, state, host);
                 true
             }
@@ -232,6 +281,7 @@ impl Vm {
     /// the last one's.
     fn run_top(&mut self, p: &Program, block: BlockId, state: &mut State, host: &mut dyn Host) {
         self.stacks.clear();
+        self.budget = MAX_INIT_OPS;
         self.run_block(p, block, state, host);
     }
 
@@ -244,6 +294,14 @@ impl Vm {
         let ops = &p.blocks[block as usize].ops;
         let mut pc = 0usize;
         while pc < ops.len() {
+            if self.budget == 0 {
+                if !self.starved {
+                    self.starved = true;
+                    log::warn!("script: {} ran out of its instructions for one run and was cut short", p.blocks[block as usize].name);
+                }
+                break;
+            }
+            self.budget -= 1;
             let op = &ops[pc];
             pc += 1;
             match op {
@@ -377,58 +435,48 @@ fn exec_cold(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut
             let file = s.pop_str();
             host.sound_trigger_file(p.name(*n), &file);
         }
-        Op::LoadStr(id) => {
-            let v = state.str_vars[*id as usize].clone();
-            s.push_str(v)
-        }
-        Op::StoreStr(id) => state.str_vars[*id as usize] = s.sst[0].clone(),
-        Op::PushStr(i) => s.push_str(p.strings[*i as usize].clone()),
+        // (The string operations work on the stack's own buffers: a pop followed by a push
+        // leaves the stack as changing `sst[0]` in place does, and a push takes over the
+        // buffer of the string that falls off the bottom. Each of them used to allocate.)
+        Op::LoadStr(id) => s.push_str_copy(&state.str_vars[*id as usize]),
+        Op::StoreStr(id) => state.str_vars[*id as usize].clone_from(&s.sst[0]),
+        Op::PushStr(i) => s.push_str_copy(&p.strings[*i as usize]),
         Op::StackDump => host.stack_dump(s),
         Op::StrConcat => {
-            let a = s.pop_str();
-            let b = s.pop_str();
-            s.push_str(format!("{b}{a}"))
+            // `b a $+`: a appended to b, then a dropped
+            let (a, b) = s.sst.split_at_mut(1);
+            b[0].push_str(&a[0]);
+            s.drop_str();
         }
-        Op::StrEq => {
-            let a = s.pop_str();
-            let b = s.pop_str();
-            s.push(b2f(b == a))
-        }
-        Op::StrLt => {
-            let a = s.pop_str();
-            let b = s.pop_str();
-            s.push(b2f(b < a))
-        }
-        Op::StrGt => {
-            let a = s.pop_str();
-            let b = s.pop_str();
-            s.push(b2f(b > a))
-        }
-        Op::StrLe => {
-            let a = s.pop_str();
-            let b = s.pop_str();
-            s.push(b2f(b <= a))
-        }
-        Op::StrGe => {
-            let a = s.pop_str();
-            let b = s.pop_str();
-            s.push(b2f(b >= a))
+        Op::StrEq | Op::StrLt | Op::StrGt | Op::StrLe | Op::StrGe => {
+            let (a, b) = (&s.sst[0], &s.sst[1]);
+            let r = match op {
+                Op::StrEq => b == a,
+                Op::StrLt => b < a,
+                Op::StrGt => b > a,
+                Op::StrLe => b <= a,
+                _ => b >= a,
+            };
+            s.drop_str();
+            s.drop_str();
+            s.push(b2f(r))
         }
         Op::StrDup => {
-            let v = s.sst[0].clone();
-            s.push_str(v)
+            s.sst.rotate_right(1);
+            let (a, b) = s.sst.split_at_mut(1);
+            a[0].clone_from(&b[0]);
         }
         Op::StrRepeat => {
             // Omsi.exe (op 0x21): the pattern repeated to fill `Round(n)` characters, cut
             // there ("ab" 3 `$*` is "aba"); 1000 or more gives "ERROR"
             let n = s.pop();
-            let pat = s.pop_str();
+            let pat = &s.sst[0];
             let v = if n >= 1000.0 {
                 "ERROR".to_string()
             } else {
                 pat.chars().cycle().take(if pat.is_empty() { 0 } else { omsi_round(n) }).collect()
             };
-            s.push_str(v)
+            s.sst[0] = v;
         }
         Op::StrLength => {
             // reads the top string and leaves it there: the chura/Krüger matrix measures
@@ -441,64 +489,71 @@ fn exec_cold(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut
         Op::StrMsg => {
             // shows the top string and leaves it on the stack (IBIS-2 builds the
             // announcement path across a `$msg`)
-            let v = s.top_str().to_string();
-            host.message(&v)
+            host.message(s.top_str())
         }
         Op::StrRemoveSpaces => {
             // Omsi.exe 0x7ef304: tabs, line breaks, spaces and quotes off both ends only -
             // a Krueger++ bitmap "206 to jkkyz.bmp" lost its inner spaces and was not found
-            let v = s
-                .pop_str()
-                .trim_matches(|c| matches!(c, '\t' | '\n' | '\r' | ' ' | '"'))
-                .to_string();
-            s.push_str(v)
+            let t = &mut s.sst[0];
+            let cut = |c| matches!(c, '\t' | '\n' | '\r' | ' ' | '"');
+            let end = t.trim_end_matches(cut).len();
+            t.truncate(end);
+            let start = end - t.trim_start_matches(cut).len();
+            t.drain(..start);
         }
         Op::StrCutBegin => {
             let n = omsi_round(s.pop());
-            let v: String = s.pop_str().chars().skip(n).collect();
-            s.push_str(v)
+            let t = &mut s.sst[0];
+            let at = t.char_indices().nth(n).map(|(i, _)| i).unwrap_or(t.len());
+            t.drain(..at);
         }
         Op::StrCutEnd => {
             let n = omsi_round(s.pop());
-            let src = s.pop_str();
-            let len = src.chars().count();
-            let v: String = src.chars().take(len.saturating_sub(n)).collect();
-            s.push_str(v)
+            let t = &mut s.sst[0];
+            let keep = t.chars().count().saturating_sub(n);
+            let at = t.char_indices().nth(keep).map(|(i, _)| i).unwrap_or(t.len());
+            t.truncate(at);
         }
-        Op::StrSetLengthL => {
-            let n = omsi_round(s.pop());
-            let v = set_length(&s.pop_str(), n, Align::Left);
-            s.push_str(v)
-        }
-        Op::StrSetLengthR => {
-            let n = omsi_round(s.pop());
-            let v = set_length(&s.pop_str(), n, Align::Right);
-            s.push_str(v)
-        }
-        Op::StrSetLengthC => {
-            let n = omsi_round(s.pop());
-            let v = set_length(&s.pop_str(), n, Align::Center);
-            s.push_str(v)
+        // `$SetLength*` read their width and leave it on the number stack: Omsi.exe's
+        // executor (0x5d4a50) pops before an op only for the ops in the bit set at 0x5d5bac,
+        // where `$cutBegin` and `$cutEnd` are and these are not. The Kruger++ matrix display
+        // reads the width again; popped, its `*L[...]` commands showed as text.
+        Op::StrSetLengthL | Op::StrSetLengthR | Op::StrSetLengthC => {
+            let align = match op {
+                Op::StrSetLengthL => Align::Left,
+                Op::StrSetLengthR => Align::Right,
+                _ => Align::Center,
+            };
+            let width = omsi_round(s.top());
+            s.sst[0] = set_length(&s.sst[0], width, align);
         }
         Op::StrIntToStr => {
-            let v = (s.pop().trunc() as i64).to_string();
-            s.push_str(v)
+            use std::fmt::Write;
+            let v = s.pop().trunc() as i64;
+            s.push_str_copy("");
+            let _ = write!(s.sst[0], "{v}");
         }
         Op::StrIntToStrEnh => {
             let fmt = s.pop_str();
             let v = int_to_str_enh(s.pop(), &fmt);
             s.push_str(v)
         }
-        Op::StrDigitsFirst => {
-            let v = digits_first(&s.pop_str());
-            s.push_str(v)
-        }
+        Op::StrDigitsFirst => s.sst[0] = digits_first(&s.sst[0]),
         Op::StrToFloat => {
-            let v = str_to_float(&s.pop_str());
+            let v = str_to_float(&s.sst[0]);
+            s.drop_str();
             s.push(v)
         }
 
-        _ => unreachable!("numeric ops run in exec_hot"),
+        // (every numeric op is exec_hot's: this cannot be reached unless the program's
+        // memory was damaged - it was, once, on an Exynos phone, and the panic ended the
+        // game, #1812; a script that does a step less beats a game that stops)
+        other => {
+            static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                log::error!("script: instruction {other:?} reached the string/host dispatch; skipped");
+            }
+        }
     }
 }
 
@@ -506,7 +561,7 @@ fn exec_cold(s: &mut Stacks, op: &Op, p: &Program, state: &mut State, host: &mut
 /// (a model going wrong shows up as NaN far from where it started).
 fn debug_nan() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("OMSI_DEBUG_NAN").is_some())
+    *ON.get_or_init(|| omsi_cfg::flags::OMSI_DEBUG_NAN.live_os().is_some())
 }
 
 /// `$StrToFloat`: a number, or -1 when the text is none. Scripts test for that: the chura
@@ -627,6 +682,86 @@ mod tests {
         let distinct = a.iter().map(|v| *v as i64).collect::<std::collections::BTreeSet<_>>().len();
         assert!(distinct >= 15, "{a:?}");
         assert!(a.iter().any(|v| *v > 650000.0) && a.iter().any(|v| *v < 650000.0), "{a:?}");
+    }
+
+    /// A macro that calls itself twice, 64 deep, would make 2^64 calls: the run is cut short
+    /// at its budget, the game goes on, and the next run has a budget of its own.
+    #[test]
+    fn a_script_that_would_run_for_ever_is_cut_short() {
+        let p = prog("{macro:m}\n(L.L.a) 1 + (S.L.a) (M.L.m) (M.L.m)\n{end}\n{frame}\n(M.L.m)\n{end}\n");
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        let mut vm = Vm::new();
+        let mut st = State::new(&p);
+        let t0 = std::time::Instant::now();
+        vm.run_frame(&p, &mut st, &mut NullHost);
+        let a = st.get(p.var("a").unwrap());
+        assert!(a > 1000.0, "{a}");
+        vm.run_frame(&p, &mut st, &mut NullHost);
+        assert!(st.get(p.var("a").unwrap()) > a, "the next run had a budget of its own");
+        assert!(t0.elapsed() < std::time::Duration::from_secs(10), "{:?}", t0.elapsed());
+    }
+
+    /// A chain of macros run 10 x 10 x ... times, as GPM's AFR4 printer reads its depot file.
+    fn nested_count(top: &str) -> String {
+        let mut src = String::from("{macro:m1}\n(L.L.a) 1 + (S.L.a)\n{end}\n");
+        for k in 1..7 {
+            src.push_str(&format!("{{macro:m{}}}\n{}\n{{end}}\n", k + 1, format!("(M.L.m{k}) ").repeat(10)));
+        }
+        src.push_str(&format!("{{{top}}}\n(M.L.m7)\n{{end}}\n"));
+        src
+    }
+
+    /// An `{init}` block may take more than a frame: GPM's Citaro C2 reads its depot file there
+    /// in 4.4 million instructions, and cut at a frame's budget its destination sign stayed dark.
+    #[test]
+    fn an_init_block_may_take_more_than_a_frame() {
+        let p = prog(&nested_count("init"));
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        let mut vm = Vm::new();
+        let mut st = State::new(&p);
+        vm.run_init(&p, &mut st, &mut NullHost);
+        assert_eq!(st.get(p.var("a").unwrap()), 1_000_000.0);
+        // the same in a frame or a trigger, while driving, is still cut short
+        let p = prog(&nested_count("frame"));
+        let mut st = State::new(&p);
+        vm.run_frame(&p, &mut st, &mut NullHost);
+        assert!(st.get(p.var("a").unwrap()) < 1_000_000.0);
+        let p = prog(&nested_count("trigger:t"));
+        let mut st = State::new(&p);
+        assert!(vm.run_trigger(&p, "t", &mut st, &mut NullHost));
+        assert!(st.get(p.var("a").unwrap()) < 1_000_000.0);
+    }
+
+    #[test]
+    fn an_init_block_that_would_run_for_ever_is_cut_short() {
+        let p = prog("{macro:m}\n(L.L.a) 1 + (S.L.a) (M.L.m) (M.L.m)\n{end}\n{init}\n(M.L.m)\n{end}\n");
+        let mut vm = Vm::new();
+        let mut st = State::new(&p);
+        let t0 = std::time::Instant::now();
+        vm.run_init(&p, &mut st, &mut NullHost);
+        assert!(st.get(p.var("a").unwrap()) > 1000.0);
+        assert!(t0.elapsed() < std::time::Duration::from_secs(10), "{:?}", t0.elapsed());
+    }
+
+    /// The budget is one vehicle's frame, not one block's: a script split into many
+    /// `{frame}` blocks, each of which would run for ever, takes no more than one budget in
+    /// all (with a budget for each, 50 blocks would stall the game 50 times as long).
+    #[test]
+    fn many_frame_blocks_share_one_budget() {
+        let mut src = String::from("{macro:m}\n(L.L.a) 1 + (S.L.a) (M.L.m) (M.L.m)\n{end}\n");
+        for _ in 0..50 {
+            src.push_str("{frame}\n(M.L.m)\n{end}\n");
+        }
+        let p = prog(&src);
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        assert_eq!(p.frame.len(), 50);
+        let mut vm = Vm::new();
+        let mut st = State::new(&p);
+        vm.run_frame(&p, &mut st, &mut NullHost);
+        // every op of `m` that counts `a` is one of the budget's: the 50 blocks together
+        // stayed within one budget, not 50
+        let a = st.get(p.var("a").unwrap());
+        assert!(a > 1000.0 && (a as u64) < MAX_OPS, "{a}");
     }
 
     #[test]
@@ -831,6 +966,104 @@ mod tests {
         assert_eq!(st.vars[p.var("a").unwrap() as usize], 2.0);
     }
 
+    /// Runs `body` as an {init} block: variable `result` and the top string after it.
+    fn after_init(body: &str) -> (f32, String) {
+        let p = prog(&format!("{{init}}\n{body}\n{{end}}\n"));
+        let mut st = State::new(&p);
+        let mut vm = Vm::new();
+        vm.run_init(&p, &mut st, &mut NullHost);
+        (p.var("result").map_or(f32::NAN, |r| st.vars[r as usize]), vm.stacks.top_str().to_string())
+    }
+
+    /// The width of `$SetLength*` stays on the number stack (added to the 3 below it here),
+    /// the count of `$cutBegin` / `$cutEnd` is taken off (the 3 is on top again).
+    #[test]
+    fn length_ops_and_the_number_stack() {
+        let padded = [("$SetLengthR", "   xyz"), ("$SetLengthL", "xyz   ")];
+        for (op, want) in padded {
+            assert_eq!(after_init(&format!("3 \"xyz\" 6 {op} + (S.L.result)")), (9.0, want.to_string()), "{op}");
+        }
+        let (sum, centred) = after_init("3 \"xyz\" 6 $SetLengthC + (S.L.result)");
+        assert_eq!((sum, centred.trim(), centred.len()), (9.0, "xyz", 6));
+        for op in ["$cutEnd", "$cutBegin"] {
+            let (w, cut) = after_init(&format!("3 \"wxyz\" 2 {op} (S.L.result)"));
+            assert_eq!((w, cut.len()), (3.0, 2), "{op}");
+        }
+    }
+
+    /// More than one `{else}`: each one reached goes on at the `{endif}`, inside a nested
+    /// `{if}` too, and the code after the `{endif}` runs on every path.
+    #[test]
+    fn extra_elses_end_their_if() {
+        let chain = "{if} 10 (S.L.result) {else} 20 (S.L.result) {else} 30 (S.L.result) {else} 40 (S.L.result) {endif}";
+        for (cond, want) in [(1, 10.0), (0, 20.0)] {
+            let (w, _) = after_init(&format!("{cond} {chain} (L.L.result) 0.5 + (S.L.result)"));
+            assert_eq!(w, want + 0.5, "condition {cond}");
+        }
+        let nested = "1 {if} 0 {if} 1 (S.L.result) {else} 2 (S.L.result) {else} 3 (S.L.result) {endif} {else} 4 (S.L.result) {endif}";
+        assert_eq!(after_init(nested).0, 2.0);
+    }
+
+    /// Aachen ibox / ticket-printer buttons (#744): the press trigger sets a flag, `_drag`
+    /// and `_off` clear it, and the frame script is what acts. The frame must run while the
+    /// flag is still set - openOMSI does that from `Player::click` via `update_scripts_only`.
+    #[test]
+    fn momentary_mouse_flag_needs_frame_before_drag_clear() {
+        let dir = std::env::temp_dir().join(format!(
+            "omsi_script_ibox_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("ibox.osc");
+        std::fs::write(
+            &script,
+            "{trigger:ibox_taste_A1}\n\t1 (S.L.ibox_taste_A1)\n{end}\n\
+             {trigger:ibox_taste_A1_drag}\n\t0 (S.L.ibox_taste_A1)\n{end}\n\
+             {trigger:ibox_taste_A1_off}\n\t0 (S.L.ibox_taste_A1)\n{end}\n\
+             {frame}\n\
+             \t(L.L.ibox_taste_A1) 1 =\n\
+             \t{if}\n\
+             \t\t(L.L.hits) 1 + (S.L.hits)\n\
+             \t{endif}\n\
+             {end}\n",
+        )
+        .unwrap();
+        let vl = dir.join("v.txt");
+        std::fs::write(&vl, "ibox_taste_A1\nhits\n").unwrap();
+        let p = compile(&CompileInput {
+            varlists: vec![vl],
+            scripts: vec![script],
+            ..Default::default()
+        });
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        let taste = p.var("ibox_taste_A1").unwrap();
+        let hits = p.var("hits").unwrap();
+
+        // Wrong order (drag before frame): the flag is gone before the frame sees it.
+        let mut vm = Vm::new();
+        let mut st = State::new(&p);
+        vm.run_trigger(&p, "ibox_taste_A1", &mut st, &mut NullHost);
+        vm.run_trigger(&p, "ibox_taste_A1_drag", &mut st, &mut NullHost);
+        vm.run_frame(&p, &mut st, &mut NullHost);
+        assert_eq!(st.get(taste), 0.0);
+        assert_eq!(st.get(hits), 0.0, "drag before frame must lose the press");
+
+        // Right order (frame on press, then drag): one hit, then the flag is cleared so a
+        // held button does not repeat every frame.
+        st.set(hits, 0.0);
+        vm.run_trigger(&p, "ibox_taste_A1", &mut st, &mut NullHost);
+        vm.run_frame(&p, &mut st, &mut NullHost);
+        assert_eq!(st.get(hits), 1.0, "frame on press must see the flag");
+        vm.run_trigger(&p, "ibox_taste_A1_drag", &mut st, &mut NullHost);
+        vm.run_frame(&p, &mut st, &mut NullHost);
+        assert_eq!(st.get(hits), 1.0, "cleared flag must not hit again while held");
+        assert_eq!(st.get(taste), 0.0);
+    }
+
 }
 
 /// A line number as a display of three digit cells and a letter cell shows it: the digits
@@ -858,5 +1091,139 @@ mod int_to_str_tests {
         assert_eq!(f(7.0, " 0"), "");
         assert_eq!(f(7.0, "0"), "ERROR");
         assert_eq!(f(42.0, " 4"), "  42");
+    }
+}
+
+#[cfg(test)]
+mod str_op_tests {
+    use super::*;
+    use crate::StrVarId;
+
+    /// The string operations as they were before they worked in the stack's buffers: each
+    /// popped its operands as owned strings and pushed a new one.
+    fn reference_str_op(s: &mut Stacks, op: &Op, p: &Program, state: &mut State) {
+        match op {
+            Op::LoadStr(id) => s.push_str(state.str_vars[*id as usize].clone()),
+            Op::StoreStr(id) => state.str_vars[*id as usize] = s.sst[0].clone(),
+            Op::PushStr(i) => s.push_str(p.strings[*i as usize].clone()),
+            Op::StrConcat => {
+                let a = s.pop_str();
+                let b = s.pop_str();
+                s.push_str(format!("{b}{a}"))
+            }
+            Op::StrEq | Op::StrLt | Op::StrGt | Op::StrLe | Op::StrGe => {
+                let a = s.pop_str();
+                let b = s.pop_str();
+                let r = match op {
+                    Op::StrEq => b == a,
+                    Op::StrLt => b < a,
+                    Op::StrGt => b > a,
+                    Op::StrLe => b <= a,
+                    _ => b >= a,
+                };
+                s.push(b2f(r))
+            }
+            Op::StrDup => {
+                let v = s.sst[0].clone();
+                s.push_str(v)
+            }
+            Op::StrRepeat => {
+                let n = s.pop();
+                let pat = s.pop_str();
+                let v = if n >= 1000.0 { "ERROR".to_string() } else { pat.chars().cycle().take(if pat.is_empty() { 0 } else { omsi_round(n) }).collect() };
+                s.push_str(v)
+            }
+            Op::StrLength => {
+                let n = s.top_str().chars().count();
+                s.push(n as f32)
+            }
+            Op::StrRemoveSpaces => {
+                let v = s.pop_str().trim_matches(|c| matches!(c, '\t' | '\n' | '\r' | ' ' | '"')).to_string();
+                s.push_str(v)
+            }
+            Op::StrCutBegin => {
+                let n = omsi_round(s.pop());
+                let v: String = s.pop_str().chars().skip(n).collect();
+                s.push_str(v)
+            }
+            Op::StrCutEnd => {
+                let n = omsi_round(s.pop());
+                let src = s.pop_str();
+                let len = src.chars().count();
+                let v: String = src.chars().take(len.saturating_sub(n)).collect();
+                s.push_str(v)
+            }
+            Op::StrSetLengthL | Op::StrSetLengthR | Op::StrSetLengthC => {
+                let align = match op {
+                    Op::StrSetLengthL => Align::Left,
+                    Op::StrSetLengthR => Align::Right,
+                    _ => Align::Center,
+                };
+                // (the width stays on the stack, see `exec_cold`)
+                let v = set_length(&s.pop_str(), omsi_round(s.top()), align);
+                s.push_str(v)
+            }
+            Op::StrIntToStr => {
+                let v = (s.pop().trunc() as i64).to_string();
+                s.push_str(v)
+            }
+            Op::StrDigitsFirst => {
+                let v = digits_first(&s.pop_str());
+                s.push_str(v)
+            }
+            Op::StrToFloat => {
+                let v = str_to_float(&s.pop_str());
+                s.push(v)
+            }
+            Op::Push(v) => s.push(*v),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Random runs of string operations leave the stacks and the string variables as the
+    /// operations did before they worked in place.
+    #[test]
+    fn string_ops_in_place_do_what_they_did() {
+        let mut p = Program::default();
+        p.strings = [" 206 to jkkyz.bmp ", "\"Rathaus Spandau\"", "Bf. Zoologischer Garten", "", "ab", "M45", "12.5", "Ünter den Linden ", "\t\n", "-3"]
+            .map(String::from)
+            .to_vec();
+        let ids: Vec<StrVarId> = ["t", "u", "v"].map(|n| p.declare_str_var(n)).to_vec();
+        let ops = |r: u64, p: &Program| -> Op {
+            let pick = |n: usize| (r >> 8) as usize % n;
+            match r % 24 {
+                0 | 1 | 2 => Op::PushStr(pick(p.strings.len()) as u32),
+                3 => Op::LoadStr(ids[pick(ids.len())]),
+                4 => Op::StoreStr(ids[pick(ids.len())]),
+                5 | 6 => Op::StrConcat,
+                7 => [Op::StrEq, Op::StrLt, Op::StrGt, Op::StrLe, Op::StrGe][pick(5)].clone(),
+                8 => Op::StrDup,
+                9 => Op::StrRepeat,
+                10 => Op::StrLength,
+                11 => Op::StrRemoveSpaces,
+                12 => Op::StrCutBegin,
+                13 => Op::StrCutEnd,
+                14 => [Op::StrSetLengthL, Op::StrSetLengthR, Op::StrSetLengthC][pick(3)].clone(),
+                15 => Op::StrIntToStr,
+                16 => Op::StrDigitsFirst,
+                17 => Op::StrToFloat,
+                _ => Op::Push([0.0, 1.0, 2.4, 2.5, 3.5, 7.0, -2.0, 25.0, 1000.0, f32::NAN, -1e12][pick(11)]),
+            }
+        };
+        let mut r: u64 = 0x2545_f491_4f6c_dd1d;
+        for _run in 0..400 {
+            let (mut a, mut b) = (Stacks::default(), Stacks::default());
+            let (mut sa, mut sb) = (State::new(&p), State::new(&p));
+            for _ in 0..60 {
+                r ^= r << 13;
+                r ^= r >> 7;
+                r ^= r << 17;
+                let op = ops(r, &p);
+                exec_op(&mut a, &op, &p, &mut sa, &mut NullHost);
+                reference_str_op(&mut b, &op, &p, &mut sb);
+                let same_st = a.st.iter().zip(&b.st).all(|(x, y)| x == y || (x.is_nan() && y.is_nan()));
+                assert!(same_st && a.sst == b.sst && sa.str_vars == sb.str_vars, "{op:?}: {a:?} / {b:?}");
+            }
+        }
     }
 }

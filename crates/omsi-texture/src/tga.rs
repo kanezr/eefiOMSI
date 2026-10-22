@@ -107,10 +107,9 @@ pub fn decode(b: &[u8]) -> Result<Image, String> {
                         idx |= (p[k] as usize) << (8 * k);
                     }
                     let idx = idx.saturating_sub(cmap_start);
-                    if idx < cmap_len {
-                        to_rgba(&cmap[idx * cmap_bytes..][..cmap_bytes], cmap_bpp)
-                    } else {
-                        [0, 0, 0, 255]
+                    match (idx < cmap_len).then(|| cmap.get(idx * cmap_bytes..(idx + 1) * cmap_bytes)).flatten() {
+                        Some(entry) => to_rgba(entry, cmap_bpp),
+                        None => [0, 0, 0, 255],
                     }
                 }
                 2 => to_rgba(p, bpp),
@@ -132,5 +131,12 @@ mod damaged_tests {
         let mut b = vec![0u8, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 8, 0];
         b.push(0);
         assert!(super::decode(&b).is_err());
+    }
+
+    #[test]
+    fn a_colour_mapped_picture_without_its_colour_map_is_black() {
+        let b = [0u8, 0, 1, 0, 0, 1, 0, 8, 0, 0, 0, 0, 1, 0, 1, 0, 8, 0, 0];
+        let img = super::decode(&b).unwrap();
+        assert_eq!(img.rgba, [0, 0, 0, 255]);
     }
 }

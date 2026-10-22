@@ -26,12 +26,9 @@ impl Terminus {
 
     /// Name used by the destination menu: the identifier on the second `[addterminus]` line.
     pub fn menu_name(&self) -> String {
-        let first = self.strings.iter().find(|s| !s.trim().is_empty()).map(String::as_str).unwrap_or("").trim();
-        if !first.is_empty() && (first.eq_ignore_ascii_case("no") || is_destination_image_path(first) || has_route_label(&self.texture_id)) {
-            let id = self.texture_id.trim();
-            if !id.is_empty() {
-                return id.to_string();
-            }
+        let name = self.texture_id.trim();
+        if !name.is_empty() {
+            return name.to_string();
         }
         self.display_name()
     }
@@ -40,11 +37,6 @@ impl Terminus {
 fn is_destination_image_path(s: &str) -> bool {
     let s = s.trim().to_ascii_lowercase();
     s.ends_with(".bmp") || s.ends_with(".tga") || s.ends_with(".png")
-}
-
-fn has_route_label(s: &str) -> bool {
-    let Some((prefix, _)) = s.trim().split_once(':') else { return false };
-    !prefix.is_empty() && prefix.chars().all(|c| c.is_ascii_digit() || c.is_ascii_alphabetic())
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -75,17 +67,60 @@ pub struct Hof {
     pub info_trips: Vec<InfoTrip>,
     pub info_busstop_lists: Vec<Vec<String>>,
     pub info_busstops: Vec<Vec<String>>,
-    /// Where the virtual termini begin (see [`Hof::with_custom_terminus`]); None: the file
-    /// has none. Never read from a file: they exist only in memory.
-    pub custom_from: Option<usize>,
-    /// Which of the two virtual termini was filled last (0 or 1).
-    pub custom_last: usize,
 }
 
+/// The name of the destination `Hof::with_free_text` adds (its `[addterminus]` identifier).
+pub const FREE_TEXT: &str = "(free text)";
+
 impl Hof {
+    /// This depot file with one destination more, or the one it had of the kind changed:
+    /// `lines` typed by the driver as the displays' text (the destination form's two free
+    /// lines). Its strings are those a destination of the file has, as many: the first holds
+    /// the first line, the second the second, every other the first again (a side or rear
+    /// sign of one line shows the destination's main line); a display that reads its text
+    /// through the scripts' `GetTerminusString` shows them. Both empty: a destination with
+    /// nothing to show, the display cleared. Its code is the file's highest and one, so no
+    /// destination of the file is taken for it. Returns the file and its index.
+    pub fn with_free_text(&self, lines: [&str; 2]) -> (Hof, usize) {
+        let mut hof = self.clone();
+        let n = self.string_count_terminus.max(self.termini.iter().map(|t| t.strings.len()).max().unwrap_or(0)).max(2);
+        let (a, b) = (lines[0].trim(), lines[1].trim());
+        let strings = (0..n).map(|k| if k == 1 { b } else { a }.to_string()).collect();
+        let index = hof.termini.iter().position(|t| t.texture_id == FREE_TEXT).unwrap_or(hof.termini.len());
+        let code = self.termini.iter().filter(|t| t.texture_id != FREE_TEXT).map(|t| t.code).max().unwrap_or(0) + 1;
+        let t = Terminus { code, texture_id: FREE_TEXT.to_string(), terminus_stop: None, all_exit: true, strings };
+        if index == hof.termini.len() {
+            hof.termini.push(t);
+        } else {
+            hof.termini[index] = t;
+        }
+        (hof, index)
+    }
+
     pub fn load(path: &Path) -> Result<Hof, omsi_cfg::CfgError> {
         let f = CfgFile::read(path)?;
         Ok(Self::parse(&f))
+    }
+
+    /// Whether the IBIS trips carry line `line` (a map's line name, "11-11s"): a trip coded
+    /// line x 100 + route, or one named after the line ("91.06A -> MASSY GARE").
+    pub fn has_line(&self, line: &str) -> bool {
+        let l = line.trim().to_ascii_lowercase();
+        if l.is_empty() {
+            return false;
+        }
+        let digits: String = l.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let number = digits.parse::<i32>().ok().filter(|n| *n > 0);
+        let boundary = |rest: &str| rest.chars().next().is_none_or(|c| !c.is_ascii_alphanumeric());
+        self.info_trips.iter().any(|t| {
+            let code = omsi_cfg::parse_i32(&t.code);
+            let head = t.name.split("->").next().unwrap_or("").trim().to_ascii_lowercase();
+            let named = !head.is_empty()
+                && (l.strip_prefix(head.as_str()).is_some_and(boundary)
+                    || (l.ends_with(|c: char| c.is_ascii_digit())
+                        && head.strip_prefix(l.as_str()).is_some_and(|r| r.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))));
+            named || number.is_some_and(|n| code >= 100 && code / 100 == n)
+        })
     }
 
     /// Only the `[name]` of a depot file ("" when it has none), kept for the session: the
@@ -138,7 +173,7 @@ impl Hof {
                 "name" => h.name = r.str().to_string(),
                 "servicetrip" => h.service_trip = r.str().to_string(),
                 "global_strings" => {
-                    let n = r.usize();
+                    let n = r.count();
                     h.global_strings = (0..n).map(|_| r.str().to_string()).collect();
                 }
                 "addterminus" | "addterminus_allexit" => {
@@ -205,7 +240,7 @@ impl Hof {
                     // the list of the trip read last (0x7ea16f: DynArrayHigh of the trips);
                     // pushed as one more list, a trip without one (the IVU data routes of
                     // some depot files) gave every later trip the stops of the one before
-                    let n = r.usize();
+                    let n = r.count();
                     let list: Vec<String> = (0..n).map(|_| r.str().to_string()).collect();
                     if let Some(last) = h.info_busstop_lists.last_mut() {
                         *last = list;
@@ -216,56 +251,6 @@ impl Hof {
             }
         }
         h
-    }
-
-    /// The termini the file itself lists (without the virtual ones of
-    /// [`Hof::with_custom_terminus`]): what a destination menu offers.
-    pub fn real_termini(&self) -> &[Terminus] {
-        let end = self.custom_from.unwrap_or(self.termini.len()).min(self.termini.len());
-        &self.termini[..end]
-    }
-
-    /// A copy of this depot file with a destination of the driver's own text, and its
-    /// index: a virtual terminus the bus scripts find by `GetTerminusString` /
-    /// `GetTerminusCode` / `GetTerminusIndex` like any other of the file (the file on disk is
-    /// not touched). `top` is string 1 (the upper line), `bottom` string 2 (the lower one);
-    /// string 0 and the rest stay empty.
-    ///
-    /// Two virtual termini (the codes after the highest of the file, one and two above it)
-    /// are filled in turn: scripts refresh a display when the terminus index or code they
-    /// last saw changes, so a second custom text must not come under the code of the first.
-    /// Each call fills the one not shown now and answers its index.
-    pub fn with_custom_terminus(&self, top: &str, bottom: &str) -> (Hof, usize) {
-        let mut h = self.clone();
-        let slots_there = h.custom_from.is_some_and(|f| h.termini.len() >= f + 2);
-        if !slots_there {
-            // (a file replaced or edited since leaves no stale slots: start from its own termini)
-            let from = h.custom_from.filter(|f| *f <= h.termini.len()).unwrap_or(h.termini.len());
-            h.termini.truncate(from);
-            let base = h.termini.iter().map(|t| t.code).max().unwrap_or(0).max(0);
-            for k in 1..=2 {
-                h.termini.push(Terminus { code: base.saturating_add(k), ..Default::default() });
-            }
-            h.custom_from = Some(from);
-            h.custom_last = 1;
-        }
-        let from = h.custom_from.unwrap_or(0);
-        let slot = 1 - h.custom_last.min(1);
-        let count = h.string_count_terminus.max(3);
-        // As in the depot files (code, ident, then: a full text, the upper line, the lower
-        // line, and what other displays take - pictures, signs): strings 1 and 2 are the
-        // two lines and every other string is empty.
-        let mut strings = vec![String::new(); count];
-        strings[1] = top.to_string();
-        strings[2] = bottom.to_string();
-        let ident = if top.trim().is_empty() { bottom.trim() } else { top.trim() }.to_string();
-        let t = &mut h.termini[from + slot];
-        t.texture_id = ident.clone();
-        t.terminus_stop = Some(ident);
-        t.all_exit = false;
-        t.strings = strings;
-        h.custom_last = slot;
-        (h, from + slot)
     }
 
     pub fn terminus_by_code(&self, code: i32) -> Option<&Terminus> {
@@ -406,6 +391,38 @@ pub fn depot_anywhere(name: &str) -> Option<Hof> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn free_text_is_a_destination_of_its_own() {
+        let hof = Hof {
+            string_count_terminus: 3,
+            termini: vec![
+                Terminus { code: 12, texture_id: "Rathaus".into(), strings: vec!["Rathaus".into(), "Spandau".into(), "Rathaus".into()], ..Default::default() },
+                Terminus { code: 40, texture_id: "Hbf".into(), strings: vec!["Hbf".into()], ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let (one, i) = hof.with_free_text(["Sonderfahrt", " Betriebshof "]);
+        assert_eq!(i, 2);
+        assert_eq!(one.termini[2].strings, ["Sonderfahrt", "Betriebshof", "Sonderfahrt"]);
+        assert_eq!(one.termini[2].code, 41);
+        assert_eq!(one.termini[2].menu_name(), FREE_TEXT);
+        // typed again: the same destination changed, not another one added
+        let (two, j) = one.with_free_text(["", ""]);
+        assert_eq!((j, two.termini.len(), two.termini[2].code), (2, 3, 41));
+        assert!(two.termini[2].strings.iter().all(|s| s.is_empty()));
+        assert_eq!(two.termini[..2], hof.termini[..]);
+    }
+
+    #[test]
+    fn a_depot_file_carries_a_line_by_its_trip_codes_or_names() {
+        let trip = |code: &str, name: &str| InfoTrip { code: code.into(), name: name.into(), ..Default::default() };
+        let global = Hof { info_trips: vec![trip("1101", "11 -> PETIT VILTAIN"), trip("1401", "14 -> MOULON")], ..Default::default() };
+        let inter = Hof { info_trips: vec![trip("001", "91.06A -> MASSY GARE"), trip("005", "91.06C -> MASSY GARE")], ..Default::default() };
+        assert!(global.has_line("11-11s") && global.has_line("14"));
+        assert!(!global.has_line("1") && !global.has_line("91.06C") && !global.has_line(""));
+        assert!(inter.has_line("91.06C") && inter.has_line("91.06") && !inter.has_line("11-11s"));
+    }
+
     use super::*;
 
     /// #896: the bus's own depot of the map's place, not the first of its folder.
@@ -455,28 +472,6 @@ mod tests {
     }
 
     #[test]
-    fn custom_terminus_alternates_two_virtual_slots() {
-        let text = "stringcount_terminus\n3\n[addterminus_list]\n\t10\tA\tAAA\tTOP\tAAA\n\t282\tB\tBBB\t\t\n[end]\n";
-        let h = Hof::parse(&CfgFile::from_str("t.hof", text));
-        assert_eq!(h.termini.len(), 2);
-        let (h1, i1) = h.with_custom_terminus("Upper", "Lower");
-        assert_eq!((i1, h1.termini[i1].code), (2, 283));
-        assert_eq!(h1.termini[i1].strings, vec!["", "Upper", "Lower"]);
-        assert_eq!(h1.real_termini().len(), 2);
-        // the next text goes under the other code, the first one stays as it was
-        let (h2, i2) = h1.with_custom_terminus("X", "Y");
-        assert_eq!((i2, h2.termini[i2].code), (3, 284));
-        assert_eq!(h2.termini[i1].strings[1], "Upper");
-        // and the third back under the first slot: never the same code twice in a row
-        let (h3, i3) = h2.with_custom_terminus("P", "Q");
-        assert_eq!(i3, i1);
-        assert_eq!(h3.termini.len(), 4);
-        assert_eq!(h3.termini[i3].strings, vec!["", "P", "Q"]);
-        // the file's own data is untouched
-        assert_eq!(h3.real_termini(), h.termini.as_slice());
-    }
-
-    #[test]
     fn terminus_list_columns() {
         let text = "stringcount_terminus\r\n3\r\n\r\n[addterminus_list]\r\n{ALLEX}\t13\tBetriebsfahrt\tBETRIEBSFAHRT\t\tBETRIEBSFAHRT\t\t\r\n\t282\tU Ruhleben\tRUHLEBEN\tU-BAHNHOF\tRUHLEBEN  \t\t\t\r\n[end]\r\n";
         let h = Hof::parse(&CfgFile::from_str("test.hof", text));
@@ -502,9 +497,46 @@ mod tests {
     }
 
     #[test]
-    fn normal_hof_menu_name_keeps_display_text() {
+    fn numeric_hof_menu_name_uses_the_ident() {
         let t = Terminus { texture_id: "910".into(), strings: vec!["AEC".into()], ..Default::default() };
-        assert_eq!(t.menu_name(), "AEC");
+        assert_eq!(t.menu_name(), "910");
+        assert_eq!(t.display_name(), "AEC");
+    }
+
+    #[test]
+    fn menu_names_do_not_use_matrix_text_or_empty_destination_markers() {
+        let t = Terminus { texture_id: " Matrix check ".into(), strings: vec!["###".into(), "M A T R I X".into()], ..Default::default() };
+        assert_eq!(t.menu_name(), "Matrix check");
+        assert_eq!(t.display_name(), "###");
+
+        let empty = Terminus { code: 0, texture_id: "empty".into(), all_exit: true, strings: vec!["A".into()], ..Default::default() };
+        assert_eq!(empty.menu_name(), "empty");
+        assert_eq!(empty.strings, vec!["A"]);
+    }
+
+    #[test]
+    fn unnamed_hof_menu_entry_falls_back_to_display_text() {
+        let t = Terminus { strings: vec!["".into(), "Fallback".into()], ..Default::default() };
+        assert_eq!(t.menu_name(), "Fallback");
+    }
+
+    #[test]
+    fn destination_names_and_blank_displays_survive_both_hof_formats() {
+        // Synthetic records: both formats keep a destination whose display is blank.
+        let records = [
+            "[addterminus_allexit]\n0\nempty\n\n\n\n\n\n[addterminus_allexit]\n505\nMatrix check\n###\nM A T R I X\nCHECK\nx\nMC\n",
+            "[addterminus_list]\n{ALLEX}\t0\tempty\t\t\t\t\t\n{ALLEX}\t505\tMatrix check\t###\tM A T R I X\tCHECK\tx\tMC\n[end]\n",
+        ];
+        for records in records {
+            let h = Hof::parse(&CfgFile::from_str("menu.hof", &format!("stringcount_terminus\n5\n{records}")));
+            assert_eq!(h.termini.len(), 2);
+            let empty = &h.termini[0];
+            assert_eq!((empty.code, empty.menu_name(), empty.all_exit), (0, "empty".into(), true));
+            assert_eq!(empty.strings, vec![""; 5]);
+            let check = &h.termini[1];
+            assert_eq!((check.code, check.menu_name()), (505, "Matrix check".into()));
+            assert_eq!(check.strings, vec!["###", "M A T R I X", "CHECK", "x", "MC"]);
+        }
     }
 
     #[test]

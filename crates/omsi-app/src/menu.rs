@@ -95,7 +95,7 @@ impl Menu {
             let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| e.eq_ignore_ascii_case("owt")).unwrap_or(false)).collect();
             files.sort();
             for f in files {
-                let name = f.file_stem().unwrap().to_string_lossy().trim_start_matches('#').to_string();
+                let name = omsi_ui::tr(&omsi_launcher_lib::weather_name(&f)).into_owned();
                 weathers.push((name, format!("Weather/{}", f.file_name().unwrap().to_string_lossy())));
             }
         }

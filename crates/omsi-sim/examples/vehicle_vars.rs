@@ -3,6 +3,7 @@
 //! A trigger written as `name@N` fires at frame N (default 0).
 use std::path::Path;
 fn main() {
+    omsi_sim::image_decode::install(decode_picture);
     let a: Vec<String> = std::env::args().collect();
     let root = Path::new(&a[1]);
     omsi_cfg::add_content_root(root.to_path_buf());
@@ -10,7 +11,7 @@ fn main() {
     if archives.is_dir() {
         omsi_cfg::vfs::mount_dir_zips(&archives);
     }
-    let orig_dir = std::env::var_os("OMSI_ORIGINAL").map(std::path::PathBuf::from).unwrap_or_default();
+    let orig_dir = omsi_cfg::flags::OMSI_ORIGINAL.live_os().map(std::path::PathBuf::from).unwrap_or_default();
     let orig = orig_dir.as_path();
     if orig.is_dir() {
         omsi_cfg::add_content_root(orig.to_path_buf());
@@ -63,4 +64,11 @@ fn main() {
     }
     println!("sound triggers: {:?}", v.host.fired_triggers.iter().collect::<std::collections::BTreeSet<_>>());
     println!("messages: {:?}", v.host.messages);
+}
+
+/// The game's picture decoder for the simulation (as omsi-app registers it at start).
+fn decode_picture(path: &std::path::Path) -> Result<omsi_sim::image_decode::DecodedImage, String> {
+    omsi_texture::decode_file(path)
+        .map(|i| omsi_sim::image_decode::DecodedImage { width: i.width, height: i.height, rgba: i.rgba, has_alpha: i.has_alpha })
+        .map_err(|e| e.to_string())
 }

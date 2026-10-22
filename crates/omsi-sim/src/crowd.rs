@@ -200,8 +200,7 @@ pub fn step(walkers: &mut [Walker], blocks: &[Block], params: &CrowdParams, dt: 
                 }
             }
         }
-        // (a ghost goes through vehicles too: the last way out of a jam)
-        if me.space == 0 && !me.ghost {
+        if me.space == 0 {
             for b in blocks {
                 if !b.near(me.pos, params.sense) {
                     continue;
@@ -280,7 +279,7 @@ pub fn step(walkers: &mut [Walker], blocks: &[Block], params: &CrowdParams, dt: 
             }
         }
         for w in walkers.iter_mut() {
-            if w.fixed || w.ghost || w.space != 0 {
+            if w.fixed || w.space != 0 {
                 continue;
             }
             for b in blocks {

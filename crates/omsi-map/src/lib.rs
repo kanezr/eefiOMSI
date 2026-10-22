@@ -5,6 +5,8 @@
 pub mod ailists;
 pub mod calendar;
 pub mod global;
+pub mod layers;
+pub mod package;
 pub mod terrain;
 pub mod tile;
 
@@ -87,7 +89,7 @@ pub fn world_tile_scale(ty: i32) -> (f64, f64) {
 /// situation too, which runs before the world (with 300 m a Spandau situation put the bus
 /// kilometres off the map). `OMSI_OLD_WORLD_GRID`: the one size of 371.9 m for comparison.
 pub fn configure_grid(global: &GlobalCfg) {
-    let old_grid = std::env::var_os("OMSI_OLD_WORLD_GRID").is_some();
+    let old_grid = omsi_cfg::flags::OMSI_OLD_WORLD_GRID.live_os().is_some();
     set_tile_size(if global.world_coordinates && !old_grid {
         world_tile_size(global.tiles.iter().map(|t| t.y))
     } else if global.world_coordinates {

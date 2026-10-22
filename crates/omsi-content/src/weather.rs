@@ -16,6 +16,10 @@ pub struct Weather {
     pub temp: (f32, f32),
     pub pressure: f32,
     pub clouds: (String, f32),
+    /// How much of the sky the clouds cover, 0..1; `None` = the cloud type in `clouds.0`
+    /// decides. A weather set by hand (`custom:`) sets it as one value from a clear sky to a
+    /// closed one, rather than naming the nearest of the five types.
+    pub cloud_cover: Option<f32>,
     pub precip: Vec<f32>,
     pub ground_wet: [f32; 3],
     pub snow: bool,

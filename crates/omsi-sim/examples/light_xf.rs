@@ -1,8 +1,9 @@
 //! The transform each light-carrying mesh of a vehicle gets (for checking where its
 //! [light_enh] coronas land). usage: light_xf <content folder> <bus>
 fn main() {
+    omsi_sim::image_decode::install(decode_picture);
     let a: Vec<String> = std::env::args().collect();
-    let root = std::path::PathBuf::from(std::env::var("OMSI_ROOT").unwrap());
+    let root = std::path::PathBuf::from(omsi_cfg::flags::OMSI_ROOT.live_var().unwrap());
     omsi_cfg::add_content_root(std::path::PathBuf::from(&a[1]));
     omsi_cfg::add_content_root(root.clone());
     let path = omsi_cfg::resolve_path(std::path::Path::new(&a[1]), &a[2]);
@@ -27,4 +28,11 @@ fn main() {
             None => println!("{:40} not loaded", md.file),
         }
     }
+}
+
+/// The game's picture decoder for the simulation (as omsi-app registers it at start).
+fn decode_picture(path: &std::path::Path) -> Result<omsi_sim::image_decode::DecodedImage, String> {
+    omsi_texture::decode_file(path)
+        .map(|i| omsi_sim::image_decode::DecodedImage { width: i.width, height: i.height, rgba: i.rgba, has_alpha: i.has_alpha })
+        .map_err(|e| e.to_string())
 }

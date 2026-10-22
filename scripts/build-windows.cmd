@@ -15,14 +15,20 @@ if errorlevel 1 (
   echo Install Rust from https://rustup.rs using the MSVC toolchain, then run this script again.
   exit /b 1
 )
-rem Always rebuild from scratch (cargo is incremental by default)
-cargo clean --release --target %TARGET%
-if errorlevel 1 goto :failed
 cargo build --locked --release --target %TARGET% -p omsi-app -p omsi-launcher-core
 if errorlevel 1 goto :failed
 if not exist "dist\windows" mkdir "dist\windows"
 copy /y "target\%TARGET%\release\openomsi.exe" "dist\windows\openomsi.exe" >nul || goto :failed
 copy /y "target\%TARGET%\release\openomsi-launcher.exe" "dist\windows\openomsi-launcher.exe" >nul || goto :failed
+rem the desktop launcher (launcher\, Tauri on WebView2): a plain start of openomsi.exe opens it,
+rem stamped with the release version (numbers only)
+if defined OPENOMSI_VERSION for /f "tokens=1 delims=-" %%v in ("%OPENOMSI_VERSION%") do set "TAURI_CONFIG={"version":"%%v"}"
+cargo build --locked --release --target %TARGET% --manifest-path launcher\src-tauri\Cargo.toml
+if errorlevel 1 goto :failed
+copy /y "launcher\src-tauri\target\%TARGET%\release\openomsi-launcher-app.exe" "dist\windows\openomsi-launcher-app.exe" >nul || goto :failed
+rem (the release package also carries Google's ANGLE - libEGL.dll, libGLESv2.dll and
+rem LICENSE-ANGLE.txt from openOMSI-org/angle-openomsi, see .github/workflows/release.yml -
+rem for the "ANGLE (DirectX 11)" graphics API; startup::backend_order skips it without them)
 rem (Steam's library, x64 only: an ARM64 build has no Steam, see crates\omsi-app\build.rs)
 if /i "%TARGET%"=="x86_64-pc-windows-msvc" copy /y "assets\steam_redist\steam_api64.dll" "dist\windows\steam_api64.dll" >nul || goto :failed
 echo.

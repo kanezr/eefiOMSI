@@ -123,7 +123,7 @@ fn script_set(file: &CfgFile) -> CompileInput {
             "constfile" => &mut inp.constfiles,
             _ => continue,
         };
-        let n = r.usize();
+        let n = r.count();
         for _ in 0..n {
             let rel = r.str();
             if !rel.trim().is_empty() {

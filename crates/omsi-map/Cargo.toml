@@ -7,5 +7,7 @@ description = "Map loading: global.cfg, tiles, terrain, calendar, AI lists, chro
 
 [dependencies]
 omsi-cfg = { path = "../omsi-cfg" }
+glam.workspace = true
+hashbrown.workspace = true
 log.workspace = true
 thiserror.workspace = true

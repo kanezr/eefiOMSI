@@ -1,6 +1,7 @@
 //! In-game controller configuration. Edits are saved before installing mappings on the
 //! existing controller; opening this UI never creates another hardware connection.
 use crate::controllers::{DeviceCfg, Func};
+use crate::gamepad_profile::{self, PadKind};
 use crate::game_lists::{ListKind, Move, HEADING};
 use crate::App;
 
@@ -9,7 +10,7 @@ pub(crate) fn is_controller_list(kind: Option<&ListKind>) -> bool {
 }
 
 fn configurations(app: &App) -> Vec<DeviceCfg> {
-    app.controllers.as_ref().map(|c| c.configuration()).unwrap_or_else(|| crate::controllers::read_cfg(&app.args.root))
+    app.input.controllers.as_ref().map(|c| c.configuration()).unwrap_or_else(|| crate::controllers::read_cfg(&app.args.root))
 }
 
 fn index(devices: &[DeviceCfg], name: &str) -> Option<usize> {
@@ -25,9 +26,18 @@ fn event_names(app: &App, device: &DeviceCfg) -> Vec<(String, String)> {
         .chain(crate::game_lists::keyboard_actions(app))
         .chain(app.player.as_ref().into_iter().flat_map(|p| p.vehicle.ty.program.trigger_names()))
         .chain(["kw_s_R_fest", "kw_s_1_fest", "kw_s_2_fest", "kw_s_3_fest", "kw_s_4_fest", "kw_s_5_fest", "kw_s_6_fest", "kw_s_7_fest", "kw_s_8_fest", "kw_s_9_fest", "kw_s_10_fest",
-                "gear_up", "gear_down", "view_look_left", "view_look_right", "view_look_up", "view_look_down", "view_toggle_viewpoint", "view_driver", "view_outside", "view_passenger"].into_iter().map(str::to_string)) {
+                "gear_up", "gear_down", "view_look_left", "view_look_right", "view_look_up", "view_look_down", "view_toggle_viewpoint", "view_driver", "view_outside", "view_passenger", "voice_radio", "open_menu", "radio_power"].into_iter().map(str::to_string)) {
         if !action.is_empty() && !events.iter().any(|(a, _)| a.eq_ignore_ascii_case(&action)) {
-            events.push((action.clone(), names.control(&action)));
+            let label = if action.eq_ignore_ascii_case("voice_radio") {
+                "Multiplayer: bus radio (hold)".into()
+            } else if action.eq_ignore_ascii_case("open_menu") {
+                "Open / close the main menu".into()
+            } else if action.eq_ignore_ascii_case("radio_power") {
+                "Radio: on / off".into()
+            } else {
+                names.control(&action)
+            };
+            events.push((action.clone(), label));
         }
     }
     events.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()).then_with(|| a.0.cmp(&b.0)));
@@ -39,9 +49,53 @@ fn row(name: &str, value: &str, desc: &str, action: String) -> (String, String) 
 }
 
 const DEVICE_TABS: [&str; 4] = ["Device", "Axes and pedals", "Buttons", "Force feedback"];
-const COMMON_TABS: [&str; 3] = ["Devices", "Driving", "Force feedback"];
+pub(crate) const COMMON_TABS: [&str; 4] = ["Devices", "Driving", "Gamepad", "Force feedback"];
 const AXES: [&str; 8] = ["X axis", "Y axis", "Z axis", "X rotation", "Y rotation", "Z rotation", "Slider 1", "Slider 2"];
+const PAD_TYPES: [&str; 4] = ["auto", "xbox", "ps4", "ps5"];
 type Rows = Vec<(String, String)>;
+
+/// The family the gamepad's buttons are named for: the setting, else the first pad found,
+/// else Xbox (what most players hold).
+fn pad_kind(app: &App, connected: &[crate::controllers::Connected]) -> PadKind {
+    PadKind::from_setting(&app.settings.pad_type)
+        .or_else(|| connected.iter().find_map(|c| PadKind::detect(&c.name, c.hardware_id)))
+        .unwrap_or(PadKind::Xbox)
+}
+
+/// The Gamepad page: which pad it is, how its stick steers and what its buttons do.
+fn gamepad_rows(app: &App, connected: &[crate::controllers::Connected]) -> Rows {
+    let mut out: Rows = Vec::new();
+    out.push(("Controller".into(), HEADING.into()));
+    let found: Vec<_> = connected.iter().filter_map(|c| PadKind::detect(&c.name, c.hardware_id).map(|k| (c, k))).collect();
+    for (c, k) in &found {
+        out.push((crate::game_lists::row(&c.name, 'i', k.title(), "Found by its name and USB ids", None), "noop".into()));
+    }
+    if found.is_empty() {
+        out.push((crate::game_lists::row("No Xbox or PlayStation pad found", 'i', "", "Connect a pad, or choose its type below to see the button names", None), "noop".into()));
+    }
+    let shown = match PadKind::from_setting(&app.settings.pad_type) {
+        Some(k) => k.title().to_string(),
+        None => format!("Automatic ({})", pad_kind(app, connected).title()),
+    };
+    out.push((crate::game_lists::row("Controller type", 'o', &shown, "Names the buttons below for the pad you hold: Automatic, Xbox, PlayStation 4 or PlayStation 5", None), "pad_type".into()));
+    out.push(("Steering and view".into(), HEADING.into()));
+    out.extend([
+        crate::game_lists::slider_row(app, "pad_steer_speed", "Steering speed", "Seconds the stick takes to turn the wheel from the middle to the full lock - more is smoother", &|v| format!("{v:.1} s")),
+        crate::game_lists::slider_row(app, "pad_steer_smooth", "Stick smoothing", "Evens out the small shakes of the stick (off: the stick as it reads)", &|v| if v <= 0.0 { "Off".to_string() } else { format!("{v:.0} ms") }),
+        crate::game_lists::slider_row(app, "pad_deadzone", "Stick dead zone", "Ignore movement round the stick's centre (raise it if the bus steers by itself)", &|v| format!("{:.0} %", v * 100.0)),
+        crate::game_lists::switch_row(app, "pad_steer_linear", "Stick steers like a wheel", "The wheel where the stick points, as far at any speed: for a wheel the system calls an Xbox controller"),
+        crate::game_lists::switch_row(app, "right_stick_look", "Right stick turns the view", "Switch off to keep the camera still while you steer"),
+    ].into_iter().flatten());
+    out.push(("Buttons".into(), HEADING.into()));
+    out.extend(crate::game_lists::switch_row(app, "pad_buttons", "Default buttons", "A gamepad with no buttons set up drives the cabin with these; set up its buttons under Devices to use your own"));
+    out.push((crate::game_lists::row("Left stick / triggers", 'i', "Steer / brake, throttle", "Left stick steers, left trigger brakes, right trigger is the throttle", None), "noop".into()));
+    let kind = pad_kind(app, connected);
+    for b in gamepad_profile::PRESET_BUTTONS {
+        let Some(action) = gamepad_profile::default_action(b) else { continue };
+        out.push((crate::game_lists::row(kind.label(b), 'i', gamepad_profile::action_text(action), "", None), "noop".into()));
+    }
+    out
+}
 
 /// The sidebar uses the same pages and indices as keyboard/mouse tab navigation.
 pub(crate) fn pages(app: &App, kind: &ListKind) -> Option<(Vec<(&'static str, Rows)>, usize)> {
@@ -73,7 +127,7 @@ fn axis_rows(d: &DeviceCfg, live: Option<&crate::controllers::Connected>) -> Row
     AXES.iter().enumerate().map(|(a, label)| {
         let function = Func::LABELS[(Func::code(d.axes[a].map(|x| x.0)) + 1) as usize];
         let value = live.and_then(|c| c.axes.iter().find(|(k, _)| *k == a))
-            .map(|(_, v)| format!(" · {v:+.2}")).unwrap_or_default();
+            .map(|(_, v)| format!(" | {v:+.2}")).unwrap_or_default();
         crate::game_lists::opens(&format!("{label}: {function}{value}"),
             "Choose the function, direction and response curve of this axis", &format!("edit_axis {a}"))
     }).collect()
@@ -83,15 +137,15 @@ fn axis_rows(d: &DeviceCfg, live: Option<&crate::controllers::Connected>) -> Row
 /// available through physical capture or the separate button-number list.
 fn button_rows(d: &DeviceCfg, names: &crate::describe::ControlNames) -> Rows {
     let mut out = vec![
-        crate::game_lists::opens("Press a button to assign it…", "Capture a button on this device", "capture_button"),
-        crate::game_lists::opens("Choose a button by number…", "Includes unassigned buttons and hat directions", "button_numbers"),
+        crate::game_lists::opens("Press a button to assign it...", "Capture a button on this device", "capture_button"),
+        crate::game_lists::opens("Choose a button by number...", "Includes unassigned buttons and hat directions", "button_numbers"),
         ("Assigned buttons".into(), HEADING.into()),
     ];
     for b in 0..d.buttons.len().max(d.latching.iter().max().map(|b| b + 1).unwrap_or(0)).min(crate::controllers::HAT_BUTTONS + 16) {
         let action = d.buttons.get(b).map(|x| x.0.as_str()).unwrap_or("");
         if action.is_empty() && !d.latching.contains(&b) { continue; }
         let label = if action.is_empty() { "<none>".into() } else { names.control(action) };
-        let desc = if d.latching.contains(&b) { "Latching switch · choose its action or behaviour" } else { "Choose its action or switch behaviour" };
+        let desc = if d.latching.contains(&b) { "Latching switch | choose its action or behaviour" } else { "Choose its action or switch behaviour" };
         out.push(crate::game_lists::opens(&format!("{}: {label}", button_label(b)), desc, &format!("button {b}")));
     }
     if out.len() == 3 {
@@ -105,14 +159,14 @@ fn action_rows(events: Vec<(String, String)>) -> Rows {
     let mut counts = std::collections::HashMap::new();
     for (_, label) in &events { *counts.entry(label.clone()).or_insert(0usize) += 1; }
     events.into_iter().map(|(action, label)| {
-        let label = if counts[&label] > 1 { format!("{label} · {action}") } else { label };
+        let label = if counts[&label] > 1 { format!("{label} | {action}") } else { label };
         (label, format!("bind {action}"))
     }).collect()
 }
 
 pub(crate) fn items(app: &App, kind: &ListKind) -> Rows {
     let devices = configurations(app);
-    let connected = app.controllers.as_ref().map(|c| c.connected()).unwrap_or_default();
+    let connected = app.input.controllers.as_ref().map(|c| c.connected()).unwrap_or_default();
     let mut out = Vec::new();
     match kind {
         ListKind::ControllerDevices(tab) => match (*tab).min(COMMON_TABS.len() - 1) {
@@ -138,6 +192,8 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Rows {
                 out.push(("Steering".into(), HEADING.into()));
                 out.extend([
                     crate::game_lists::slider_row(app, "ctrl_deadzone", "Dead zone", "Ignore movement around the centre or at pedal rest", &|v| format!("{:.0} %", v * 100.0)),
+                    crate::game_lists::switch_row(app, "arrows_switch_cams", "Arrows switch the cameras", "With a wheel, Left/Right change the interior camera as without one, instead of turning the head"),
+                    crate::game_lists::switch_row(app, "ctrl_background", "Keep driving in the background", "The wheel, the pedals and the buttons go on working while another window has the focus"),
                     crate::game_lists::slider_row(app, "wheel_range", "Wheel rotation", "Your wheel's rotation from lock to lock", &|v| format!("{v:.0}°")),
                     crate::game_lists::slider_row(app, "wheel_lock", "Full lock at", "Rotation for the bus's full lock", &|v| if v < 45.0 { "OMSI".into() } else { format!("{v:.0}°") }),
                 ].into_iter().flatten());
@@ -147,6 +203,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Rows {
                     crate::game_lists::slider_row(app, "pedal_b", "Brake pedal strength", "Pedal response", &|v| format!("x{v}")),
                 ].into_iter().flatten());
             }
+            2 => out = gamepad_rows(app, &connected),
             _ => {
                 out.extend([
                     crate::game_lists::switch_row(app, "ff", "Force feedback and vibration", "Enable steering forces and gamepad rumble"),
@@ -157,7 +214,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Rows {
         },
         ListKind::Controller(name, tab) => {
             let d = index(&devices, name).map(|i| devices[i].clone()).unwrap_or_else(|| DeviceCfg { name: name.clone(), second: "0".into(), ..Default::default() });
-            let live = connected.iter().find(|c| crate::controllers::names_match(&c.name, name));
+            let live = crate::controllers::find_connected(&connected, name);
             match (*tab).min(DEVICE_TABS.len() - 1) {
                 0 => {
                     out.push((crate::game_lists::row("Connection", 'i', if live.is_some() { "Connected" } else { "Disconnected" }, "Successful changes are saved and applied immediately", None), "noop".into()));
@@ -171,8 +228,8 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Rows {
                 2 => out = button_rows(&d, &crate::describe::names(&app.args.root, &app.settings.language)),
                 _ => {
                     let ff = d.ff_scale.unwrap_or((1.0, 1.0));
-                    out.push(row("Steering force", &format!("{:.0} %", ff.0 * 100.0), "Left/right adjusts in steps of 5 % (0–200 %)", "force".into()));
-                    out.push(row("Vibration", &format!("{:.0} %", ff.1 * 100.0), "Left/right adjusts in steps of 5 % (0–200 %)", "vibration".into()));
+                    out.push(row("Steering force", &format!("{:.0} %", ff.0 * 100.0), "Left/right adjusts in steps of 5 % (0-200 %)", "force".into()));
+                    out.push(row("Vibration", &format!("{:.0} %", ff.1 * 100.0), "Left/right adjusts in steps of 5 % (0-200 %)", "vibration".into()));
                     let invert = d.ff_invert.unwrap_or(app.settings.ff_invert);
                     out.push((crate::game_lists::row("Invert force feedback", 's', if invert { "on" } else { "off" }, "Motor direction for this device", None), "force_invert".into()));
                 }
@@ -180,7 +237,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Rows {
         }
         ListKind::ControllerAxis(name, a) if *a < AXES.len() => {
             let d = index(&devices, name).map(|i| devices[i].clone()).unwrap_or_default();
-            let live = connected.iter().find(|c| crate::controllers::names_match(&c.name, name))
+            let live = crate::controllers::find_connected(&connected, name)
                 .and_then(|c| c.axes.iter().find(|(k, _)| k == a)).map(|(_, v)| format!("{v:+.2}")).unwrap_or_else(|| "Disconnected".into());
             out.push((crate::game_lists::row("Live reading", 'i', &live, "Move the wheel, pedal or stick to identify this axis", None), "noop".into()));
             let function = (Func::code(d.axes[*a].map(|x| x.0)) + 1) as usize;
@@ -193,7 +250,7 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Rows {
         }
         ListKind::ControllerButtons(name) => {
             let d = index(&devices, name).map(|i| devices[i].clone()).unwrap_or_default();
-            let live = connected.iter().find(|c| crate::controllers::names_match(&c.name, name));
+            let live = crate::controllers::find_connected(&connected, name);
             let count = d.buttons.len().max(live.map(|c| c.buttons).unwrap_or(0))
                 .max(d.latching.iter().max().map(|b| b + 1).unwrap_or(0)).max(32).min(crate::controllers::HAT_BUTTONS + 16);
             let names = crate::describe::names(&app.args.root, &app.settings.language);
@@ -210,7 +267,14 @@ pub(crate) fn items(app: &App, kind: &ListKind) -> Rows {
             let names = crate::describe::names(&app.args.root, &app.settings.language);
             let value = if action.is_empty() { "Unassigned".into() } else { names.control(action) };
             out.push(crate::game_lists::opens(&format!("Action: {value}"), "Choose an OMSI event or game action", "choose_action"));
+            for (i, (_, a)) in d.more.iter().enumerate().filter(|(_, (x, _))| x == b) {
+                out.push(crate::game_lists::button(&format!("Also: {}", names.control(a)), "Remove", "The same press does this as well", &format!("unbind_more {i}")));
+            }
+            if !action.is_empty() {
+                out.push(crate::game_lists::opens("Add another action", "One press does several things: every door at once, a light with its switch", "add_action"));
+            }
             out.push((crate::game_lists::row("Latching switch", 's', if d.latching.contains(b) { "on" } else { "off" }, "Switch back when a physical switch is released", None), format!("latching {b}")));
+            out.push((crate::game_lists::row("Continuous", 's', if d.continuous(*b) { "on" } else { "off" }, "Held down, the action repeats until the button is released, as OMSI's continuous fire", None), format!("continuous {b}")));
             out.push(crate::game_lists::button("Clear assignment", "Clear", "Leave this button without an action", "bind "));
         }
         ListKind::ControllerCapture(name) => {
@@ -252,9 +316,9 @@ fn switched(now: bool, mv: Move) -> bool {
 
 fn save(app: &mut App, devices: Vec<DeviceCfg>) {
     match crate::controllers::save_cfg(&devices) {
-        Ok(()) => {
-            if let Some(c) = app.controllers.as_mut() { c.install_cfg(devices); }
-            app.last_ctl_steer = None;
+        Ok(_) => {
+            if let Some(c) = app.input.controllers.as_mut() { c.install_cfg(devices); }
+            app.input.last_ctl_steer = None;
             app.service_msg = Some(("Controller configuration saved and applied".into(), 3.0));
         }
         Err(e) => app.service_msg = Some((format!("Controller configuration was not saved: {e}"), 6.0)),
@@ -263,9 +327,14 @@ fn save(app: &mut App, devices: Vec<DeviceCfg>) {
 
 pub(crate) fn run(app: &mut App, kind: &ListKind, action: &str, mv: Move) -> Option<ListKind> {
     let (verb, arg) = action.split_once(' ').unwrap_or((action, ""));
-    // [ROLLBACK declutter-126] the page of the keys and controllers is the Options' Controls tab
-    if action == "back" { return parent(kind).map(|p| if p == ListKind::Controls { ListKind::Options(crate::game_lists::options_tab(app, "Controls")) } else { p }); }
+    if action == "back" { return parent(kind); }
     if let ListKind::ControllerDevices(_) = kind {
+        if verb == "pad_type" {
+            let to = step(PAD_TYPES.iter().position(|t| *t == app.settings.pad_type).unwrap_or(0), PAD_TYPES.len(), mv);
+            app.settings.pad_type = PAD_TYPES[to].into();
+            crate::game_lists::remember_setting("pad_type", PAD_TYPES[to]);
+            return Some(kind.clone());
+        }
         if crate::game_lists::option_do(app, verb, arg, mv) { return Some(kind.clone()); }
         if !matches!(mv, Move::Next) { return Some(kind.clone()); }
         return Some(match verb {
@@ -273,8 +342,8 @@ pub(crate) fn run(app: &mut App, kind: &ListKind, action: &str, mv: Move) -> Opt
             "reload_controllers" => {
                 match crate::controllers::read_cfg_checked(&app.args.root) {
                     Ok(devices) => {
-                        if let Some(c) = app.controllers.as_mut() { c.install_cfg(devices); }
-                        app.last_ctl_steer = None;
+                        if let Some(c) = app.input.controllers.as_mut() { c.install_cfg(devices); }
+                        app.input.last_ctl_steer = None;
                         app.service_msg = Some(("Saved controller mappings reloaded".into(), 3.0));
                     }
                     Err(e) => app.service_msg = Some((format!("Controller mappings were not reloaded: {e}"), 6.0)),
@@ -299,7 +368,8 @@ pub(crate) fn run(app: &mut App, kind: &ListKind, action: &str, mv: Move) -> Opt
                 if a < AXES.len() { return Some(ListKind::ControllerAxis(name.clone(), a)); }
             },
             "button_numbers" => return Some(ListKind::ControllerButtons(name.clone())),
-            "choose_action" => if let Some(b) = button {
+            "choose_action" | "add_action" => if let Some(b) = button {
+                app.menus.ctrl_add_action = verb == "add_action";
                 return Some(ListKind::ControllerButton(name.clone(), b));
             },
             "capture_button" => return Some(ListKind::ControllerCapture(name.clone())),
@@ -348,6 +418,14 @@ pub(crate) fn run(app: &mut App, kind: &ListKind, action: &str, mv: Move) -> Opt
             d.ff_scale = Some(ff);
         }
         "force_invert" => d.ff_invert = Some(switched(d.ff_invert.unwrap_or(app.settings.ff_invert), mv)),
+        "continuous" => if let Some(b) = arg.parse::<usize>().ok().filter(|b| *b < crate::controllers::HAT_BUTTONS + 16) {
+            let on = switched(d.continuous(b), mv);
+            d.buttons.resize(d.buttons.len().max(b + 1), (String::new(), "0".into()));
+            d.buttons[b].1 = if on { "1" } else { "0" }.into();
+        } else { return Some(kind.clone()); },
+        "unbind_more" if matches!(mv, Move::Next) => if let Some(i) = arg.parse::<usize>().ok().filter(|i| *i < d.more.len()) {
+            d.more.remove(i);
+        } else { return Some(kind.clone()); },
         "latching" => if let Some(b) = arg.parse::<usize>().ok().filter(|b| *b < crate::controllers::HAT_BUTTONS + 16) {
             let on = switched(d.latching.contains(&b), mv);
             d.latching.retain(|x| *x != b);
@@ -357,7 +435,12 @@ pub(crate) fn run(app: &mut App, kind: &ListKind, action: &str, mv: Move) -> Opt
             if let Some(b) = button {
                 if b >= crate::controllers::HAT_BUTTONS + 16 { return Some(kind.clone()); }
                 d.buttons.resize(d.buttons.len().max(b + 1), (String::new(), "0".into()));
-                d.buttons[b].0 = arg.to_string();
+                if !(std::mem::take(&mut app.menus.ctrl_add_action) && matches!(kind, ListKind::ControllerButton(..))) {
+                    d.buttons[b].0 = arg.to_string();
+                    d.more.retain(|(x, a)| *x != b || (!arg.is_empty() && !a.eq_ignore_ascii_case(arg)));
+                } else if !arg.is_empty() && !d.actions_of(b).iter().any(|a| a.eq_ignore_ascii_case(arg)) {
+                    d.more.push((b, arg.to_string()));
+                }
                 save(app, devices);
                 return Some(ListKind::ControllerButtonSettings(name.clone(), b));
             }
@@ -371,7 +454,8 @@ pub(crate) fn run(app: &mut App, kind: &ListKind, action: &str, mv: Move) -> Opt
 
 /// Called after the existing controller's single poll for this frame.
 pub(crate) fn frame(app: &mut App) {
-    if matches!(app.list_kind, Some(ListKind::ControllerDevices(_) | ListKind::Controller(..) | ListKind::ControllerAxis(..))) {
+    if matches!(app.menus.list_kind, Some(ListKind::ControllerDevices(_) | ListKind::Controller(..) | ListKind::ControllerAxis(..))) {
+        // (a rate limit of the list's refresh, nothing the game goes by)
         thread_local! {
             static LAST_REFRESH: std::cell::RefCell<std::time::Instant> = std::cell::RefCell::new(std::time::Instant::now());
         }
@@ -384,8 +468,8 @@ pub(crate) fn frame(app: &mut App) {
         if refresh { app.refresh_list(); }
         return;
     }
-    let Some(ListKind::ControllerCapture(name)) = app.list_kind.clone() else { return };
-    let pressed = app.controllers.as_ref().and_then(|c| c.raw_buttons.iter().find(|(n, b, down)|
+    let Some(ListKind::ControllerCapture(name)) = app.menus.list_kind.clone() else { return };
+    let pressed = app.input.controllers.as_ref().and_then(|c| c.raw_buttons.iter().find(|(n, b, down)|
         *down && *b < crate::controllers::HAT_BUTTONS + 16 && crate::controllers::names_match(n, &name)).map(|(_, b, _)| *b));
     if let Some(button) = pressed {
         app.open_list(ListKind::ControllerButtonSettings(name, button));
@@ -420,7 +504,7 @@ mod tests {
         assert_eq!(rows.len(), 8);
         assert_eq!(rows.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
             ["edit_axis 0", "edit_axis 1", "edit_axis 2", "edit_axis 3", "edit_axis 4", "edit_axis 5", "edit_axis 6", "edit_axis 7"]);
-        assert!(rows[0].0.starts_with("X axis: Steering · +0.25"));
+        assert!(rows[0].0.starts_with("X axis: Steering | +0.25"));
         assert!(rows[5].0.starts_with("Z rotation: Brake"));
         assert!(axis_rows(&d, None)[0].0.starts_with("X axis: Steering"));
     }
@@ -459,6 +543,6 @@ mod tests {
     fn identically_named_actions_remain_distinguishable_in_the_picker() {
         let rows = action_rows(vec![("horn".into(), "Horn".into()), ("door_front".into(), "Door".into()), ("door_rear".into(), "Door".into())]);
         assert_eq!(rows, vec![("Horn".into(), "bind horn".into()),
-            ("Door · door_front".into(), "bind door_front".into()), ("Door · door_rear".into(), "bind door_rear".into())]);
+            ("Door | door_front".into(), "bind door_front".into()), ("Door | door_rear".into(), "bind door_rear".into())]);
     }
 }

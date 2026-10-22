@@ -13,12 +13,18 @@
 //! * The folder inside the archive that holds OMSI's content folders (`Vehicles`, `maps`,
 //!   `Sceneryobjects` …) becomes the mount's root: archives usually wrap everything in an
 //!   `OMSI 2/` folder next to documentation.
+//!
+//! A *sealed store* (see [`sealed`]) is mounted the same way: files kept on disk only in
+//! encrypted form (the mods a LAN host sent), read decrypted into memory.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
+
+mod sealed;
+pub use sealed::{is_sealed, mount_sealed, random_key, seal, sealed_len, unmount_sealed, unseal, SealKey, SealedFile, SEALED_OVERHEAD};
 
 /// One file inside an archive.
 #[derive(Debug, Clone)]
@@ -131,7 +137,7 @@ impl ZipArchive {
             return Err(bad(format!("{}: central directory out of range", path.display())));
         }
         let cd = archive.read_at(cd_offset, cd_size as usize)?;
-        let mut raw: Vec<(String, ZipEntry, bool)> = Vec::with_capacity(count as usize);
+        let mut raw: Vec<(String, ZipEntry, bool)> = Vec::with_capacity(count.min(cd_size / 46) as usize);
         let mut p = 0usize;
         while p + 46 <= cd.len() && le32(&cd, p) == 0x0201_4b50 {
             let flags = le16(&cd, p + 8);
@@ -191,7 +197,8 @@ impl ZipArchive {
                 continue;
             }
             // the original spelling of every component, for listings
-            let rel: Vec<&str> = name[archive.prefix.len()..].split('/').filter(|c| !c.is_empty() && *c != ".").collect();
+            let Some(rest) = name.get(archive.prefix.len()..).filter(|_| name[..archive.prefix.len()].to_lowercase() == prefix_lower) else { continue };
+            let rel: Vec<&str> = rest.split('/').filter(|c| !c.is_empty() && *c != ".").collect();
             let lower_parts: Vec<&str> = rel_lower.split('/').collect();
             if rel.len() != lower_parts.len() {
                 continue;
@@ -220,7 +227,7 @@ impl ZipArchive {
     /// top of an installation (`Vehicles`, `maps` ...), then those an add-on has inside too
     /// (`Sound`, `Texture`, `Scripts`) - then the shallowest, then the first by name.
     fn content_prefix<'a>(names: impl Iterator<Item = &'a str>) -> String {
-        const SHARED: [&str; 3] = ["Texture", "Sound", "Scripts"];
+        const SHARED: [&str; 3] = ["Texture", "Sounds", "Scripts"];
         let is_content = |c: &str| crate::CONTENT_FOLDERS.iter().any(|f| f.eq_ignore_ascii_case(c));
         // folder (lower case) -> (spelling, lower-case names of its sub-folders)
         let mut children: HashMap<String, (String, Vec<String>)> = HashMap::new();
@@ -406,12 +413,77 @@ pub fn archive_of(path: &Path) -> Option<PathBuf> {
     locate(path).map(|(m, _)| m.path.clone())
 }
 
-/// Read a whole file, from a folder or from a mounted archive.
+/// Files that exist only in memory, by their exact path: the pictures packed into a model
+/// file (a `.glb`'s or an `.fbx`'s embedded textures), put beside it under a name of their
+/// own so that the texture lookup finds them as it finds any file.
+static MEMORY: RwLock<Option<HashMap<PathBuf, Arc<[u8]>>>> = RwLock::new(None);
+
+/// Put a file into memory at `path` (see [`MEMORY`]); a file there before is replaced.
+pub fn put_memory_file(path: PathBuf, bytes: Arc<[u8]>) {
+    MEMORY.write().unwrap().get_or_insert_with(HashMap::new).insert(path, bytes);
+}
+
+fn memory_file(path: &Path) -> Option<Arc<[u8]>> {
+    MEMORY.read().unwrap().as_ref().and_then(|m| m.get(path).cloned())
+}
+
+/// Read a whole file, from a folder, a mounted archive or a sealed store.
 pub fn read(path: &Path) -> io::Result<Vec<u8>> {
-    match locate(path) {
-        Some((m, key)) => m.read(&key),
-        None => std::fs::read(path),
+    if let Some(b) = memory_file(path) {
+        return Ok(b.to_vec());
     }
+    let r = if let Some((m, key)) = sealed::locate(path) {
+        m.read(&key)
+    } else {
+        match locate(path) {
+            Some((m, key)) => m.read(&key),
+            None => read_disk_file(path),
+        }
+    };
+    if r.is_ok() && RECORDING.load(std::sync::atomic::Ordering::Relaxed) {
+        READS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(path.to_path_buf());
+    }
+    r
+}
+
+/// Every file `read` gave out while `record_reads` was on: what a LAN player's own bus
+/// really uses (the variant and paint driven, not its whole pack), to pass on to a server
+/// that lacks it.
+static RECORDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static READS: std::sync::Mutex<Option<std::collections::HashSet<PathBuf>>> = std::sync::Mutex::new(None);
+
+/// Note (or stop noting, and forget) the files `read` gives out.
+pub fn record_reads(on: bool) {
+    RECORDING.store(on, std::sync::atomic::Ordering::Relaxed);
+    if !on {
+        *READS.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+/// The files read since `record_reads` was switched on.
+pub fn reads() -> Vec<PathBuf> {
+    READS.lock().unwrap_or_else(|e| e.into_inner()).iter().flatten().cloned().collect()
+}
+
+fn read_disk_file(path: &Path) -> io::Result<Vec<u8>> {
+    let regular = |md: std::fs::Metadata| {
+        if !md.is_file() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{}: not a regular file", path.display())));
+        }
+        if md.len() > MAX_ENTRY {
+            return Err(bad(format!("{}: too large ({} bytes)", path.display(), md.len())));
+        }
+        Ok(md.len())
+    };
+    regular(std::fs::metadata(path)?)?;
+    let file = std::fs::File::open(path)?;
+    let len = regular(file.metadata()?)?;
+    let mut out = Vec::with_capacity(len as usize);
+    file.take(MAX_ENTRY + 1).read_to_end(&mut out)?;
+    if out.len() as u64 > MAX_ENTRY {
+        return Err(bad(format!("{}: too large", path.display())));
+    }
+    Ok(out)
 }
 
 /// Read a text file with OMSI's encoding rules.
@@ -420,6 +492,12 @@ pub fn read_text(path: &Path) -> io::Result<String> {
 }
 
 pub fn exists(path: &Path) -> bool {
+    if memory_file(path).is_some() {
+        return true;
+    }
+    if let Some((m, key)) = sealed::locate(path) {
+        return m.is_file(&key) || m.is_dir(&key);
+    }
     match locate(path) {
         Some((m, key)) => key.is_empty() || m.is_file(&key) || m.is_dir(&key),
         None => path.exists(),
@@ -427,6 +505,12 @@ pub fn exists(path: &Path) -> bool {
 }
 
 pub fn is_file(path: &Path) -> bool {
+    if memory_file(path).is_some() {
+        return true;
+    }
+    if let Some((m, key)) = sealed::locate(path) {
+        return m.is_file(&key);
+    }
     match locate(path) {
         Some((m, key)) => m.is_file(&key),
         None => path.is_file(),
@@ -434,6 +518,9 @@ pub fn is_file(path: &Path) -> bool {
 }
 
 pub fn is_dir(path: &Path) -> bool {
+    if let Some((m, key)) = sealed::locate(path) {
+        return m.is_dir(&key);
+    }
     match locate(path) {
         Some((m, key)) => key.is_empty() || m.is_dir(&key),
         None => path.is_dir(),
@@ -442,6 +529,9 @@ pub fn is_dir(path: &Path) -> bool {
 
 /// Names in a folder with a flag for sub-folders; `None` when it is not a folder.
 pub fn list_dir(path: &Path) -> Option<Vec<(OsString, bool)>> {
+    if let Some((m, key)) = sealed::locate(path) {
+        return m.list(&key);
+    }
     match locate(path) {
         Some((m, key)) => m.dirs.get(&key).map(|l| l.iter().map(|(n, d)| (OsString::from(n), *d)).collect()),
         None => {
@@ -460,6 +550,21 @@ pub fn list_dir(path: &Path) -> Option<Vec<(OsString, bool)>> {
                     .collect(),
             )
         }
+    }
+}
+
+/// The size of a file (a folder's, an archive's or a sealed store's); `None` when it is no
+/// file.
+pub fn file_size(path: &Path) -> Option<u64> {
+    if let Some(b) = memory_file(path) {
+        return Some(b.len() as u64);
+    }
+    if let Some((m, key)) = sealed::locate(path) {
+        return m.size(&key);
+    }
+    match locate(path) {
+        Some((m, key)) => m.entries.get(&key).map(|e| e.size),
+        None => std::fs::metadata(path).ok().filter(|md| md.is_file()).map(|md| md.len()),
     }
 }
 
@@ -489,7 +594,7 @@ pub fn mount_dir_zips(dir: &Path) -> Vec<PathBuf> {
 /// Mount every archive listed in `OMSI_CONTENT_ZIP` (separated like `PATH`) as a content
 /// root. Returns the mount points.
 pub fn mount_env_zips() -> Vec<PathBuf> {
-    let Some(v) = std::env::var_os("OMSI_CONTENT_ZIP") else { return Vec::new() };
+    let Some(v) = crate::flags::OMSI_CONTENT_ZIP.live_os() else { return Vec::new() };
     let mut out = Vec::new();
     for p in std::env::split_paths(&v) {
         if p.as_os_str().is_empty() {
@@ -507,6 +612,16 @@ pub fn mount_env_zips() -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn a_memory_file_reads_like_one_on_disk() {
+        let p = std::env::temp_dir().join("omsi-vfs-memory-test").join("bus.glb.tex0.png");
+        assert!(!is_file(&p));
+        put_memory_file(p.clone(), Arc::from(&b"picture"[..]));
+        assert!(is_file(&p) && exists(&p));
+        assert_eq!(read(&p).unwrap(), b"picture");
+        assert_eq!(file_size(&p), Some(7));
+    }
 
     /// A small archive with a wrapper folder, a stored and a deflated entry.
     fn build_zip(path: &Path) {
@@ -655,8 +770,83 @@ mod tests {
     }
 
     #[test]
+    fn a_zip64_entry_count_beyond_the_directory_is_not_reserved() {
+        let dir = std::env::temp_dir().join(format!("omsi-cfg-zip64-count-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip = dir.join("pack.zip");
+        write_zip(&zip, &[("Vehicles/Bus/bus.bus", b"bus".to_vec(), false)]);
+        let mut bytes = std::fs::read(&zip).unwrap();
+        let eocd = bytes.split_off(bytes.len() - 22);
+        let cd_size = le32(&eocd, 12) as u64;
+        let cd_offset = le32(&eocd, 16) as u64;
+        let record_at = bytes.len() as u64;
+        bytes.extend_from_slice(&0x0606_4b50u32.to_le_bytes());
+        bytes.extend_from_slice(&44u64.to_le_bytes());
+        bytes.extend_from_slice(&[45, 0, 45, 0]);
+        bytes.extend_from_slice(&[0; 8]);
+        bytes.extend_from_slice(&(1u64 << 40).to_le_bytes());
+        bytes.extend_from_slice(&(1u64 << 40).to_le_bytes());
+        bytes.extend_from_slice(&cd_size.to_le_bytes());
+        bytes.extend_from_slice(&cd_offset.to_le_bytes());
+        bytes.extend_from_slice(&0x0706_4b50u32.to_le_bytes());
+        bytes.extend_from_slice(&[0; 4]);
+        bytes.extend_from_slice(&record_at.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&eocd);
+        std::fs::write(&zip, bytes).unwrap();
+        let archive = ZipArchive::open(&zip).unwrap();
+        assert!(archive.read("vehicles/bus/bus.bus").is_ok());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_prefix_spelled_with_other_bytes_does_not_split_a_name() {
+        let dir = std::env::temp_dir().join(format!("omsi-cfg-zip-kelvin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip = dir.join("pack.zip");
+        write_zip(&zip, &[("k/Vehicles/a.bus", b"a".to_vec(), false), ("\u{212A}/Vehicles/b.bus", b"b".to_vec(), false)]);
+        let archive = ZipArchive::open(&zip).unwrap();
+        assert_eq!(archive.prefix(), "k/");
+        assert!(archive.read("vehicles/a.bus").is_ok());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn names() {
         assert_eq!(decode_name(&[b'S', b't', b'r', b'a', 0xE1, b'e'], false), "Straße");
         assert_eq!(normalize("a\\B/./c/../D"), "a/b/d");
+    }
+
+    #[test]
+    fn repaint_relative_common_paths_resolve_across_archive_and_installation() {
+        let dir = std::env::temp_dir().join(format!("omsi-repaint-common-{}", std::process::id()));
+        let content = dir.join("content");
+        let install = dir.join("install");
+        let package = "SyntheticCommonCompatibility";
+        let base_rel = format!("Vehicles/{package}/Texture/Repaints");
+        let common_rel = format!("Vehicles/{package}/common");
+        std::fs::create_dir_all(content.join("Archives")).unwrap();
+        std::fs::create_dir_all(install.join(&base_rel)).unwrap();
+        std::fs::create_dir_all(install.join(&common_rel)).unwrap();
+        std::fs::write(install.join(&common_rel).join("Stock.DDS"), b"stock").unwrap();
+        let archive = content.join("Archives/compat.zip");
+        let anchor = format!("{base_rel}/anchor.cti");
+        let texture = format!("{common_rel}/Paint.DDS");
+        write_zip(&archive, &[(anchor.as_str(), b"synthetic".to_vec(), false),
+            (texture.as_str(), b"archive".to_vec(), true)]);
+        crate::add_content_root(content.clone());
+        mount_dir_zips(&content.join("Archives"));
+        crate::add_content_root(install.clone());
+        // Same resolver for a repaint based in an archive or in an installation.
+        for base in [archive.join(&base_rel), install.join(&base_rel)] {
+            let paint = crate::resolve_path(&base, "..\\..\\COMMON\\paint.dds");
+            assert_eq!(read(&paint).unwrap(), b"archive", "{}", paint.display());
+            let stock = crate::resolve_path(&base, "../../common/STOCK.dds");
+            assert_eq!(read(&stock).unwrap(), b"stock", "{}", stock.display());
+        }
+        crate::remove_content_root(&content);
+        crate::remove_content_root(&archive);
+        crate::remove_content_root(&install);
+        std::fs::remove_dir_all(dir).ok();
     }
 }

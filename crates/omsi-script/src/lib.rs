@@ -15,7 +15,7 @@ pub mod vm;
 pub use compile::{compile, CompileInput, Program, ScriptError};
 pub use constfile::{ConstFile, Curve};
 pub use sysvar::SysVar;
-pub use vm::{set_session_seed, Host, NullHost, Stacks, State, Vm};
+pub use vm::{mix_seed, session_seed, set_session_seed, Host, NullHost, Stacks, State, Vm};
 
 /// Identifier of a float variable inside a [`Program`].
 pub type VarId = u32;

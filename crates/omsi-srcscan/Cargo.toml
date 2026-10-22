@@ -1,0 +1,8 @@
+[package]
+name = "omsi-srcscan"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A source scan for the tests that hold declarations against code: which fields of a type its methods (and the functions handed it) reach"
+
+[dependencies]

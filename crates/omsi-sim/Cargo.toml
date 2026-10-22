@@ -14,13 +14,18 @@ omsi-o3d = { path = "../omsi-o3d" }
 omsi-geometry = { path = "../omsi-geometry" }
 omsi-content = { path = "../omsi-content" }
 omsi-scenery = { path = "../omsi-scenery" }
+omsi-map = { path = "../omsi-map" }
+omsi-timetable = { path = "../omsi-timetable" }
+omsi-world = { path = "../omsi-world" }
 glam.workspace = true
 log.workspace = true
 anyhow.workspace = true
 hashbrown.workspace = true
-omsi-texture = { path = "../omsi-texture" }
+rayon.workspace = true
 parking_lot = { workspace = true }
-ab_glyph.workspace = true
+arc-swap.workspace = true
 
 [dev-dependencies]
+# (the tests and examples read pictures with the game's decoder, see `image_decode`)
+omsi-texture = { path = "../omsi-texture" }
 omsi-audio = { path = "../omsi-audio" }

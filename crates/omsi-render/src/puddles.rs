@@ -1,9 +1,18 @@
 //! Bounded screen-space puddles, with a small planar capture of the player's vehicle
-//! for its complete geometry. Both use at most 518400 pixels.
+//! for its complete geometry. Both use at most 518400 pixels (high), 129600 (low).
 
 use super::*;
 
 const MAX_TRACE_PIXELS: f32 = 960.0 * 540.0;
+/// The low quality's ray budget: a quarter of the high one's, at a quarter of the picture.
+const MAX_TRACE_PIXELS_LOW: f32 = 480.0 * 270.0;
+
+/// What a puddle ray may do (`Lighting::puddles`): how far from the eye a wet pixel is
+/// traced (m) and how many screen-space steps a ray takes at most. Low keeps the puddles
+/// near the bus.
+fn reach(low: bool) -> [f32; 4] {
+    if low { [40.0, 24.0, 0.0, 0.0] } else { [100.0, 48.0, 0.0, 0.0] }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -32,6 +41,8 @@ pub(super) struct Uniform {
     vehicle_plane: [f32; 4],
     vehicle_info: [f32; 4],
     vehicle_parts: [VehicleBox; 4],
+    /// x: the farthest wet pixel traced (m), y: the most steps a ray takes (see `reach`).
+    quality: [f32; 4],
 }
 
 pub(super) fn shader_source() -> String {
@@ -155,7 +166,7 @@ impl Pipelines {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: crate::pipeline_cache::get(device).as_ref(),
             })
         };
         let glass_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -193,7 +204,7 @@ impl Pipelines {
                     compilation_options: Default::default(),
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: crate::pipeline_cache::get(device).as_ref(),
             })
         });
         let vehicle_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -274,7 +285,7 @@ impl Pipelines {
                             compilation_options: Default::default(),
                         }),
                         multiview_mask: None,
-                        cache: None,
+                        cache: crate::pipeline_cache::get(device).as_ref(),
                     }));
                 }
             }
@@ -311,7 +322,7 @@ impl Pipelines {
                 compilation_options: Default::default(),
             }),
             multiview_mask: None,
-            cache: None,
+            cache: crate::pipeline_cache::get(device).as_ref(),
         });
         Self {
             trace: pipeline("fs_trace"),
@@ -331,6 +342,8 @@ impl Pipelines {
 
 pub(super) struct Targets {
     size: (u32, u32),
+    /// Made for the low quality (its quarter-size rays).
+    low: bool,
     source_depth: wgpu::Texture,
     hit_depth: wgpu::Texture,
     hit_depth_view: wgpu::TextureView,
@@ -349,8 +362,16 @@ pub(super) struct Targets {
     pub(super) classic_bg: wgpu::BindGroup,
 }
 
-fn trace_size(w: u32, h: u32) -> (u32, u32) {
-    let scale = 0.5_f32.min((MAX_TRACE_PIXELS / (w.max(1) as f32 * h.max(1) as f32)).sqrt());
+/// How many picture pixels one ray stands for, each way (2 at half size; 4 on Low, or on
+/// High past the budget): the wet pixel looked for among them (see `probe_taps`).
+fn footprint(w: u32, h: u32, low: bool) -> f32 {
+    let (tw, th) = trace_size(w, h, low);
+    (w as f32 / tw as f32).max(h as f32 / th as f32).ceil().clamp(1.0, 8.0)
+}
+
+fn trace_size(w: u32, h: u32, low: bool) -> (u32, u32) {
+    let (half, budget) = if low { (0.25_f32, MAX_TRACE_PIXELS_LOW) } else { (0.5, MAX_TRACE_PIXELS) };
+    let scale = half.min((budget / (w.max(1) as f32 * h.max(1) as f32)).sqrt());
     (
         ((w as f32 * scale).floor() as u32).max(1),
         ((h as f32 * scale).floor() as u32).max(1),
@@ -358,10 +379,10 @@ fn trace_size(w: u32, h: u32) -> (u32, u32) {
 }
 
 impl Targets {
-    fn new(r: &Renderer, hdr: &HdrTargets, w: u32, h: u32) -> Self {
+    fn new(r: &Renderer, hdr: &HdrTargets, w: u32, h: u32, low: bool) -> Self {
         let pipelines = r.puddles.as_ref().unwrap();
-        let size = trace_size(w, h);
-        let source_depth = r.ao.as_ref().unwrap().depth_view.texture().clone();
+        let size = trace_size(w, h, low);
+        let source_depth = r.targets.ao.as_ref().unwrap().depth_view.texture().clone();
         let hit_depth = r.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("puddle hit depth including glass"),
             size: wgpu::Extent3d {
@@ -437,13 +458,13 @@ impl Targets {
                     },
                     binding(1, &hdr.view),
                     binding(2, &hdr.mask),
-                    binding(3, &r.ao.as_ref().unwrap().depth_view),
+                    binding(3, &r.targets.ao.as_ref().unwrap().depth_view),
                     binding(4, ray_view),
                     wgpu::BindGroupEntry {
                         binding: 5,
-                        resource: wgpu::BindingResource::Sampler(&r.post_sampler),
+                        resource: wgpu::BindingResource::Sampler(&r.tone.post_sampler),
                     },
-                    binding(6, &r.probe.as_ref().unwrap().view),
+                    binding(6, &r.tone.probe.as_ref().unwrap().view),
                     binding(7, &hit_depth_view),
                     binding(8, &vehicle_view),
                 ],
@@ -454,33 +475,35 @@ impl Targets {
         let blur_x_bg = group(&trace);
         let blur_y_bg = group(&blur);
         let resolve_bg = group(&filtered);
-        let post_group = |base, adapt| {
+        let post_group = |base, adapt, screen_mask| {
             r.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("post with puddle reflections"),
-                layout: &r.post_layout,
+                layout: &r.tone.post_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: r.post_buf.as_entire_binding(),
+                        resource: r.tone.post_buf.as_entire_binding(),
                     },
                     binding(1, &view),
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&r.post_sampler),
+                        resource: wgpu::BindingResource::Sampler(&r.tone.post_sampler),
                     },
                     binding(3, base),
                     binding(4, adapt),
+                    binding(5, screen_mask),
                 ],
             })
         };
-        let down_bg = post_group(&hdr.mask, &r.white_texture.view);
+        let down_bg = post_group(&hdr.mask, &r.white_texture.view, &r.black_texture.view);
         let tonemap_bg = [
-            post_group(&hdr.up[0], &r.adapt_views[0]),
-            post_group(&hdr.up[0], &r.adapt_views[1]),
+            post_group(&hdr.up[0], &r.tone.adapt_views[0], &hdr.mask),
+            post_group(&hdr.up[0], &r.tone.adapt_views[1], &hdr.mask),
         ];
         let classic_bg = r.picture_group(&view);
         Self {
             size,
+            low,
             source_depth,
             hit_depth,
             hit_depth_view,
@@ -514,29 +537,33 @@ impl Renderer {
         ro: DVec3,
     ) -> bool {
         if self.puddles.is_none()
-            || self.ao.is_none()
-            || self.probe.is_none()
-            || (cu.post[0] > 0.5 && self.sky_state.is_none())
+            || self.targets.ao.is_none()
+            || self.tone.probe.is_none()
+            || (cu.post[0] > 0.5 && self.sky.sky_state.is_none())
         {
             return false;
         }
-        let Some(hdr) = self.hdr_targets.get(&(w, h)) else {
+        let Some(hdr) = self.targets.hdr_targets.get(&(w, h)) else {
             return false;
         };
         // A previously used size can outlive the AO depth after a resize/another view.
         // Rebind the current receiver texture instead of tracing against an old frame.
+        let low = lighting.puddles == 1;
         if hdr
             .puddles
             .as_ref()
-            .is_none_or(|t| t.source_depth != *self.ao.as_ref().unwrap().depth_view.texture())
+            .is_none_or(|t| t.source_depth != *self.targets.ao.as_ref().unwrap().depth_view.texture() || t.low != low)
         {
-            let targets = Targets::new(self, hdr, w, h);
+            let targets = Targets::new(self, hdr, w, h, low);
             log::info!(
-                "puddle reflections: {}x{} rays, at most 48 steps; resolve {w}x{h}",
+                "puddle reflections ({}): {}x{} rays, at most {} steps within {} m; resolve {w}x{h}",
+                if low { "low" } else { "high" },
                 targets.size.0,
-                targets.size.1
+                targets.size.1,
+                reach(low)[1],
+                reach(low)[0]
             );
-            self.hdr_targets.get_mut(&(w, h)).unwrap().puddles = Some(targets);
+            self.targets.hdr_targets.get_mut(&(w, h)).unwrap().puddles = Some(targets);
         }
         let vp = Mat4::from_cols_array_2d(&cu.view_proj);
         let proj = projection.unwrap_or_else(|| {
@@ -544,7 +571,7 @@ impl Renderer {
         });
         let enhanced = cu.post[0] > 0.5;
         let surround = if enhanced {
-            let st = self.sky_state.as_ref().unwrap();
+            let st = self.sky.sky_state.as_ref().unwrap();
             [Vec3::X, -Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Z, -Vec3::Z]
                 .into_iter()
                 .map(|n| atmosphere::sh_irradiance(&st.sh, n))
@@ -555,11 +582,12 @@ impl Renderer {
             lighting.secondary * 0.5 + lighting.sun_color * lighting.sun_intensity * 0.35
         };
         let pre = if enhanced {
-            self.exposure.unwrap_or(0.0).exp()
+            self.tone.exposure.unwrap_or(0.0).exp()
         } else {
             1.0
         };
-        let origins = vehicle_origins(lighting, camera);
+        // (low: no capture of the player's vehicle - the screen-space rays still find it)
+        let origins = if low { Vec::new() } else { vehicle_origins(lighting, camera) };
         let mut parts = [<VehicleBox as bytemuck::Zeroable>::zeroed(); 4];
         for (part, (o, h, bb)) in parts
             .iter_mut()
@@ -590,18 +618,14 @@ impl Renderer {
                 PROBE_MIPS as f32,
             ],
             sky: (surround * pre)
-                .extend(self.probe.as_ref().unwrap().scale * pre)
+                .extend(self.tone.probe.as_ref().unwrap().scale * pre)
                 .to_array(),
             projection_trace: [
                 proj.z_axis.z,
                 proj.w_axis.z,
-                omsi_cfg::env::var("OMSI_DEBUG_PUDDLES")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
+                omsi_cfg::flags::OMSI_DEBUG_PUDDLES.parse()
                     .unwrap_or(0.0),
-                omsi_cfg::env::var("OMSI_PUDDLE_THICKNESS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
+                omsi_cfg::flags::OMSI_PUDDLE_THICKNESS.parse()
                     .unwrap_or(0.12),
             ],
             vehicle_plane: plane,
@@ -618,6 +642,11 @@ impl Renderer {
                 },
             ],
             vehicle_parts: parts,
+            quality: {
+                let mut q = reach(low);
+                q[2] = footprint(w, h, low);
+                q
+            },
         };
         self.queue.write_buffer(
             &self.puddles.as_ref().unwrap().vehicle_params,
@@ -646,10 +675,11 @@ impl Renderer {
         timed: &mut Vec<&'static str>,
     ) {
         let pipelines = self.puddles.as_ref().unwrap();
-        let targets = self.hdr_targets[&(w, h)].puddles.as_ref().unwrap();
+        let targets = self.targets.hdr_targets[&(w, h)].puddles.as_ref().unwrap();
         // Select only this vehicle's existing draw entries. AI instances can share meshes
         // and batches with it; selecting a mesh alone would reflect all of them at one height.
-        let origins = vehicle_origins(lighting, camera);
+        // (low: the capture is only cleared, see `prepare_puddle_reflections`)
+        let origins = if lighting.puddles == 1 { Vec::new() } else { vehicle_origins(lighting, camera) };
         let vehicle_batches = player_vehicle_batches(scene, batches, draw_list, &origins);
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -677,7 +707,7 @@ impl Renderer {
             });
             pass.set_bind_group(0, scene.camera_bind_group.as_ref().unwrap(), &[]);
             pass.set_bind_group(2, &pipelines.vehicle_bg, &[]);
-            if omsi_cfg::env::var_os("OMSI_NO_PUDDLE_VEHICLE").is_none() {
+            if !omsi_cfg::flags::OMSI_NO_PUDDLE_VEHICLE.is_set() {
                 if let Some(first) = vehicle_batches.first() {
                     pass.set_bind_group(
                         1,
@@ -707,7 +737,7 @@ impl Renderer {
                 depth_or_array_layers: 1,
             },
         );
-        if omsi_cfg::env::var_os("OMSI_NO_PUDDLE_GLASS_DEPTH").is_none()
+        if !omsi_cfg::flags::OMSI_NO_PUDDLE_GLASS_DEPTH.is_set()
             && batches
                 .iter()
                 .any(|b| reflection_glass(&scene.materials[b.material as usize].uniform))
@@ -784,7 +814,7 @@ fn reflection_plane(point: DVec3, normal: Vec3, origin: DVec3) -> glam::Vec4 {
 
 fn vehicle_origins(lighting: &Lighting, camera: &Camera) -> Vec<DVec3> {
     if lighting.puddle_ground.is_none()
-        || omsi_cfg::env::var_os("OMSI_NO_PUDDLE_VEHICLE").is_some()
+        || omsi_cfg::flags::OMSI_NO_PUDDLE_VEHICLE.is_set()
         || !lighting
             .inside
             .is_some_and(|(o, _, _)| o.distance(camera.position) < 60.0)
@@ -806,6 +836,11 @@ fn player_vehicle_batches(
     list: &[u32],
     origins: &[DVec3],
 ) -> Vec<Batch> {
+    // (no vehicle to reflect - dry ground under it, or the camera away from it: nothing to
+    // look for among the whole scene's instances and every entry the frame draws)
+    if origins.is_empty() {
+        return Vec::new();
+    }
     let entries: std::collections::HashSet<u32> = scene
         .instances
         .iter()
@@ -827,10 +862,15 @@ fn selected_entry_batches(
     entries: &std::collections::HashSet<u32>,
 ) -> Vec<Batch> {
     let mut out = Vec::new();
+    // (the few vehicles' entries lie close together: the rest of the frame's thousands are
+    // told apart by two comparisons, not looked up)
+    let lo = entries.iter().copied().min().unwrap_or(u32::MAX);
+    let hi = entries.iter().copied().max().unwrap_or(0);
     for b in batches {
         let mut start = None;
         for index in b.instances.clone() {
-            if entries.contains(&list[index as usize]) {
+            let e = list[index as usize];
+            if e >= lo && e <= hi && entries.contains(&e) {
                 start.get_or_insert(index);
             } else if let Some(first) = start.take() {
                 out.push(Batch {
@@ -955,10 +995,10 @@ mod tests {
             for size in [64, 48, 64] {
                 r.render_to_image(&mut scene, size, size, &camera, &lighting)
                     .unwrap();
-                let targets = r.hdr_targets[&(size, size)].puddles.as_ref().unwrap();
+                let targets = r.targets.hdr_targets[&(size, size)].puddles.as_ref().unwrap();
                 assert_eq!(
                     targets.source_depth,
-                    *r.ao.as_ref().unwrap().depth_view.texture()
+                    *r.targets.ao.as_ref().unwrap().depth_view.texture()
                 );
                 // Read both textures below through an immutable renderer borrow.
                 let receiver = depth_at_centre(&r, &targets.source_depth, size);
@@ -1037,13 +1077,13 @@ mod tests {
     }
 
     fn refraction_source(r: &Renderer, enhanced: bool) -> Vec<f32> {
-        let texture = r.glass_picture.as_ref().unwrap().texture();
+        let texture = r.targets.glass_picture.as_ref().unwrap().texture();
         let bytes = r.read_texture(texture, wgpu::TextureAspect::All).unwrap();
         if texture.format() != HDR_FORMAT {
             return bytes.into_iter().map(|v| v as f32 / 255.0).collect();
         }
         let pre = if enhanced {
-            r.exposure.unwrap().exp()
+            r.tone.exposure.unwrap().exp()
         } else {
             1.0
         };
@@ -1303,11 +1343,68 @@ mod tests {
             (7680, 4320),
             (2160, 3840),
         ] {
-            let (tw, th) = trace_size(w, h);
+            let (tw, th) = trace_size(w, h, false);
             assert!(tw >= 1 && th >= 1 && tw <= w && th <= h);
             assert!(tw * th <= MAX_TRACE_PIXELS as u32);
             if w >= 2 && h >= 2 {
                 assert!(tw <= w / 2 && th <= h / 2);
+            }
+            // the low quality: at most a quarter of the picture each way and of the budget
+            let (lw, lh) = trace_size(w, h, true);
+            assert!(lw >= 1 && lh >= 1 && lw <= tw && lh <= th);
+            assert!(lw * lh <= MAX_TRACE_PIXELS_LOW as u32);
+            if w >= 4 && h >= 4 {
+                assert!(lw <= w / 4 && lh <= h / 4);
+            }
+        }
+    }
+
+    /// Where `fs_trace` looks for a wet pixel around a ray's centre, one way (the shader's
+    /// sum, in i32): at most 3 looks, spread over the `span` pixels the ray stands for.
+    fn probe_taps(span: i32) -> Vec<i32> {
+        let span = span.clamp(1, 8);
+        let taps = span.min(3);
+        (0..taps).map(|x| ((2 * x + 1) * span) / (2 * taps) - span / 2).collect()
+    }
+
+    /// The looks for a wet pixel: the same 2x2 at half size as before, at most 3x3 spread
+    /// over the pixels otherwise - so the looks per frame do not grow with the picture, and
+    /// Low stays below High.
+    #[test]
+    fn the_wet_probe_is_bounded_and_spread() {
+        assert_eq!(probe_taps(2), [-1, 0]);
+        assert_eq!(probe_taps(4), [-2, 0, 1]);
+        assert_eq!(probe_taps(8), [-3, 0, 2]);
+        for span in 1..=8 {
+            let t = probe_taps(span);
+            assert!(t.len() <= 3 && t.iter().all(|&o| o >= -(span / 2) && o < span - span / 2), "{span}: {t:?}");
+        }
+        for (w, h) in [(1920, 1080), (2560, 1440), (3840, 2160)] {
+            let looks = |low: bool| {
+                let (tw, th) = trace_size(w, h, low);
+                let n = probe_taps(footprint(w, h, low) as i32).len() as u64;
+                tw as u64 * th as u64 * n * n
+            };
+            assert!(looks(true) < looks(false), "{w}x{h}: low {} high {}", looks(true), looks(false));
+            assert!(looks(false) <= MAX_TRACE_PIXELS as u64 * 9);
+        }
+    }
+
+    /// The pixels a ray stands for: 2 each way at half size, 4 on Low - and more past the
+    /// budget.
+    #[test]
+    fn a_ray_looks_at_all_its_pixels() {
+        assert_eq!(footprint(1920, 1080, false), 2.0);
+        assert_eq!(footprint(1920, 1080, true), 4.0);
+        assert_eq!(footprint(3840, 2160, false), 4.0);
+        assert_eq!(footprint(3840, 2160, true), 8.0);
+        for (w, h) in [(1, 1), (1279, 719), (2160, 3840), (7680, 4320)] {
+            for low in [false, true] {
+                let (tw, th) = trace_size(w, h, low);
+                let f = footprint(w, h, low);
+                assert!(f >= 1.0 && f <= 8.0);
+                // (the pixels looked at cover the picture, up to the 8x8 cap)
+                assert!((tw as f32 * f >= w as f32 && th as f32 * f >= h as f32) || f == 8.0, "{w}x{h} {low}");
             }
         }
     }

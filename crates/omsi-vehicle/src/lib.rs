@@ -1,6 +1,7 @@
 //! Vehicles.
 
 pub mod cabin;
+pub mod cam_approach;
 pub mod hof;
 pub mod paths;
 pub mod sound;

@@ -2,7 +2,8 @@
 
 use super::*;
 
-/// The map's season for these arguments (kind, texture folder): `--season`, else the date
+/// The map's season for these arguments (kind, texture folder): `--season` (with its phase),
+/// else the date
 /// as the map's season table has it; a snow weather puts the map into its snow textures
 /// whatever the calendar says - with snow on the road (`[snowOnRoad]`) into the snowy
 /// roads of `WinterSnowfall` too (see `omsi_texture::season_chain`).
@@ -15,14 +16,9 @@ pub(crate) fn season_folder(args: &Args, global: &omsi_map::GlobalCfg) -> (i32, 
 /// at midnight, the weather changes).
 pub(crate) fn season_folder_on(args: &Args, global: &omsi_map::GlobalCfg, day_of_year: i32, snow: bool, snow_on_road: bool) -> (i32, Option<String>) {
     let mut kind = global.season_kind(day_of_year);
-    if let Some(sn) = args.season.as_deref() {
-        kind = match sn.to_ascii_lowercase().as_str() {
-            "spring" | "fruehling" => 1,
-            "autumn" | "fall" | "herbst" => 2,
-            "winter" => 3,
-            "summer" | "sommer" => 0,
-            _ => kind,
-        };
+    // a chosen season: the look that prevails in its phase (see `season_phase`)
+    if let Some(choice) = args.season.as_deref().and_then(crate::season_phase::SeasonChoice::parse) {
+        kind = choice.kind();
     }
     let mut folder = omsi_map::global::Season::folder(kind).map(|f| f.to_string());
     if snow {
@@ -37,19 +33,30 @@ pub(crate) fn season_folder_on(args: &Args, global: &omsi_map::GlobalCfg, day_of
 pub(crate) fn open_world(args: &Args) -> Result<(World, Camera, DVec3)> {
     let map_cfg = omsi_cfg::resolve_path(&args.root, &args.map);
     let date = start_clock(args).date_code();
-    let world = match crate::duty_start::take_preopened(&map_cfg, date) {
+    let world = match args.preopened.take(&map_cfg, date) {
         Some(w) => w,
         None => World::open(&args.root, &map_cfg, date)?,
     };
     *world.start_clock.lock() = start_clock(args);
+    // the session's settings the world's loading reads, and whether its weather lies as snow
+    // (the panes of the vehicles that go onto the GPU wear it)
+    args.session_settings.apply_to(&world);
     {
-        let (kind, folder) = season_folder(args, &world.global);
+        let weather = load_weather(args);
+        world.settings.set_snow(weather.snow);
+        let (kind, folder) = season_folder_on(args, &world.global, start_clock(args).day_of_year, weather.snow, weather.snow_on_road);
         log::info!(
             "season: day {} -> kind {kind} (texture folder {:?})",
             start_clock(args).day_of_year,
             folder
         );
         omsi_texture::set_season_folder(folder);
+        // the plants of a phase between two looks (none by date: the map's own table)
+        let mix = args.season.as_deref().and_then(crate::season_phase::SeasonChoice::parse).and_then(|c| c.mix());
+        if let Some(m) = &mix {
+            log::info!("season: plants mixed between {:?} and {:?}, {:.0} % in the second", m.from, m.to, m.share * 100.0);
+        }
+        omsi_texture::set_season_mix(mix);
     }
     let camera = match &args.cam {
         Some(c) => parse_cam(c)?,
@@ -136,7 +143,7 @@ pub(crate) fn load_world(args: &Args, renderer: &Renderer, scene: &mut Scene) ->
     // the start area unloaded, the far tiles unloaded and the start area loaded again, with
     // the per-draw buffers uploaded in between as a window's frames do - the picture then
     // shows the start area drawn from recycled GPU slots, as after a drive away and back.
-    let churn = omsi_cfg::env::var("OMSI_CHURN").ok().and_then(|v| {
+    let churn = omsi_cfg::flags::OMSI_CHURN.var().and_then(|v| {
         let (a, b) = v.split_once(',')?;
         Some((a.trim().parse::<f64>().ok()?, b.trim().parse::<f64>().ok()?))
     });

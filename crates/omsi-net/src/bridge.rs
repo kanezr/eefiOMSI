@@ -127,8 +127,8 @@ impl Bridge {
     /// joining games; a client posts its own and learns the host's. `local` lists this
     /// machine's own addresses (the LAN ones) with the session's port. Set
     /// `OMSI_NO_BRIDGE=1` to leave the internet alone (tests, a LAN party).
-    pub fn start(host: bool, session: u64, local: Vec<SocketAddr>, port: u16) -> Option<Bridge> {
-        if cfg!(test) || std::env::var_os("OMSI_NO_BRIDGE").is_some() {
+    pub fn start(host: bool, session: u64, key: Option<Arc<crate::hostkey::HostKey>>, local: Vec<SocketAddr>, port: u16) -> Option<Bridge> {
+        if cfg!(test) || omsi_cfg::flags::OMSI_NO_BRIDGE.live_os().is_some() {
             return None;
         }
         let shared = Arc::new(Mutex::new(Shared::default()));
@@ -143,7 +143,7 @@ impl Bridge {
                     g.mapping = Some(mapping);
                 }
             }
-            relay_loop(host, session, local, &sh, &st);
+            relay_loop(host, session, key.as_deref(), local, &sh, &st);
         });
         if spawned.is_err() {
             return None;
@@ -263,7 +263,7 @@ fn parse_mapped(d: &[u8]) -> Option<SocketAddr> {
 }
 
 /// The relay side, on its own thread: post our addresses, read the other side's.
-fn relay_loop(host: bool, session: u64, local: Vec<SocketAddr>, sh: &Arc<Mutex<Shared>>, stop: &std::sync::atomic::AtomicBool) {
+fn relay_loop(host: bool, session: u64, key: Option<&crate::hostkey::HostKey>, local: Vec<SocketAddr>, sh: &Arc<Mutex<Shared>>, stop: &std::sync::atomic::AtomicBool) {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(5))
         .timeout_read(Duration::from_secs(8))
@@ -313,11 +313,7 @@ fn relay_loop(host: bool, session: u64, local: Vec<SocketAddr>, sh: &Arc<Mutex<S
         addrs.dedup();
         // (the player's nonce is its identity towards the host and never leaves the
         // session: anyone reading the topic could otherwise take its place)
-        let text = format!(
-            "{} - {}",
-            if host { "H" } else { "C" },
-            addrs.iter().take(8).map(|a| a.to_string()).collect::<Vec<_>>().join(",")
-        );
+        let text = addrs.iter().take(8).map(|a| a.to_string()).collect::<Vec<_>>().join(",");
         let due = match &last_post {
             None => true,
             Some((t, prev)) => *prev != text || t.elapsed() > Duration::from_secs(if host { 900 } else { 10 }),
@@ -326,7 +322,12 @@ fn relay_loop(host: bool, session: u64, local: Vec<SocketAddr>, sh: &Arc<Mutex<S
         let ready = host || public.is_some() || started.elapsed() > Duration::from_secs(3);
         let waiting = last_poll.is_some_and(|t| t.elapsed() < backoff);
         if due && ready && !addrs.is_empty() && !waiting {
-            match agent.post(&format!("{RELAY}/{mine}")).set("Cache", "yes").send_string(&signed(session, &text)) {
+            let post = match (host, key) {
+                (true, Some(k)) => k.seal("relay", &format!("H {} {text}", crate::hostkey::now())),
+                (true, None) => String::new(),
+                (false, _) => signed(session, &format!("C - {text}")),
+            };
+            match if post.is_empty() { Ok(()) } else { agent.post(&format!("{RELAY}/{mine}")).set("Cache", "yes").send_string(&post).map(|_| ()) } {
                 Ok(_) => last_post = Some((Instant::now(), text.clone())),
                 Err(e) => {
                     sh.lock().unwrap_or_else(|e| e.into_inner()).note = format!("relay unreachable ({e})");
@@ -366,10 +367,7 @@ fn relay_loop(host: bool, session: u64, local: Vec<SocketAddr>, sh: &Arc<Mutex<S
                     }
                     since = id;
                 }
-                let Some(msg) = verified(session, &msg).map(str::to_string) else { continue };
-                let mut parts = msg.splitn(3, ' ');
-                let (kind, _nonce, list) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-                let found: Vec<SocketAddr> = list.split(',').filter_map(|a| a.trim().parse().ok()).take(8).collect();
+                let Some((kind, found)) = relay_post(host, session, &msg, crate::hostkey::now()) else { continue };
                 let mut s = sh.lock().unwrap_or_else(|e| e.into_inner());
                 if host && kind == "C" {
                     if s.punch.len() < MAX_PUNCH {
@@ -394,6 +392,21 @@ fn relay_loop(host: bool, session: u64, local: Vec<SocketAddr>, sh: &Arc<Mutex<S
     }
 }
 
+fn relay_post(host: bool, session: u64, msg: &str, now: u64) -> Option<(&'static str, Vec<SocketAddr>)> {
+    let (kind, list) = if host {
+        let text = verified(session, msg)?;
+        ("C", text.strip_prefix("C ")?.split_once(' ')?.1)
+    } else {
+        let text = crate::hostkey::opened(session, "relay", msg)?;
+        let (at, list) = text.strip_prefix("H ")?.split_once(' ')?;
+        if !crate::hostkey::fresh(at.parse().ok()?, now, crate::hostkey::MAX_AGE) {
+            return None;
+        }
+        ("H", list)
+    };
+    Some((kind, list.split(',').filter_map(|a| a.trim().parse().ok()).take(8).collect()))
+}
+
 /// The wait after the relay refused or failed: 10 s, doubled each time up to 5 minutes.
 fn refused(was: Duration) -> Duration {
     (was * 2).clamp(Duration::from_secs(10), Duration::from_secs(300))
@@ -401,13 +414,14 @@ fn refused(was: Duration) -> Duration {
 
 /// Host: tell joining games of `session` the WebSocket address its session is also reached
 /// at (a Cloudflare tunnel, see `ws`): for players whose routers cannot be punched through.
-/// Posted under the session's topic as `W <url>`; call again every minute or so.
-pub fn post_tunnel(session: u64, url: &str) {
-    if cfg!(test) || std::env::var_os("OMSI_NO_BRIDGE").is_some() {
+/// Posted under the session's topic as `W <time> <url>`, signed with the host's key; call again every minute or so.
+pub fn post_tunnel(key: &crate::hostkey::HostKey, url: &str) {
+    if cfg!(test) || omsi_cfg::flags::OMSI_NO_BRIDGE.live_os().is_some() {
         return;
     }
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(6)).user_agent("openOMSI").build();
-    if let Err(e) = agent.post(&format!("{RELAY}/{}", topic(session))).set("Cache", "yes").send_string(&signed(session, &format!("W 0 {url}"))) {
+    let post = key.seal("relay", &format!("W {} {url}", crate::hostkey::now()));
+    if let Err(e) = agent.post(&format!("{RELAY}/{}", topic(key.session()))).set("Cache", "yes").send_string(&post) {
         log::warn!("LAN bridge: the tunnel address could not be posted: {e}");
     }
 }
@@ -415,16 +429,25 @@ pub fn post_tunnel(session: u64, url: &str) {
 /// Joining game: the WebSocket address the host of `session` posted last (see
 /// `post_tunnel`), if any within the last hours.
 pub fn lookup_tunnel(session: u64) -> Option<String> {
-    if cfg!(test) || std::env::var_os("OMSI_NO_BRIDGE").is_some() {
+    if cfg!(test) || omsi_cfg::flags::OMSI_NO_BRIDGE.live_os().is_some() {
         return None;
     }
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(8)).user_agent("openOMSI").build();
     let body = agent.get(&format!("{RELAY}/{}/json?poll=1&since=6h", topic(session))).call().ok()?.into_string().ok()?;
+    tunnel_of(session, &body, crate::hostkey::now())
+}
+
+fn tunnel_of(session: u64, body: &str, now: u64) -> Option<String> {
     body.lines()
         .filter_map(|l| json_field(l, "message"))
-        .filter_map(|m| verified(session, &m).and_then(|t| t.strip_prefix("W 0 ")).map(|u| u.trim().to_string()))
-        .filter(|u| u.starts_with("https://") && u.len() < 300)
-        .last()
+        .filter_map(|m| {
+            let (at, url) = crate::hostkey::opened(session, "relay", &m)?.strip_prefix("W ")?.split_once(' ')?;
+            let at: u64 = at.parse().ok()?;
+            let url = url.trim();
+            (crate::hostkey::fresh(at, now, crate::hostkey::MAX_AGE) && url.starts_with("https://") && url.len() < 300 && !url.contains(char::is_whitespace)).then(|| (at, url.to_string()))
+        })
+        .max_by_key(|(at, _)| *at)
+        .map(|(_, u)| u)
 }
 
 /// A string field of a flat JSON object (the relay's answers need no more than this).
@@ -466,12 +489,29 @@ fn upnp_forward(port: u16) -> Option<(SocketAddr, Mapping)> {
     let search = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n";
     sock.send_to(search.as_bytes(), "239.255.255.250:1900").ok()?;
     let mut buf = [0u8; 2048];
-    let (n, router) = sock.recv_from(&mut buf).ok()?;
-    let reply = String::from_utf8_lossy(&buf[..n]).to_string();
-    let location = reply.lines().find_map(|l| {
-        let (k, v) = l.split_once(':')?;
-        k.trim().eq_ignore_ascii_case("location").then(|| v.trim().to_string())
-    })?;
+    let gateway = default_gateway();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let (router, location) = loop {
+        if Instant::now() > deadline {
+            return None;
+        }
+        let (n, from) = sock.recv_from(&mut buf).ok()?;
+        let reply = String::from_utf8_lossy(&buf[..n]).to_string();
+        let location = reply.lines().find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.trim().eq_ignore_ascii_case("location").then(|| v.trim().to_string())
+        });
+        if let (SocketAddr::V4(f), Some(loc)) = (from, location) {
+            if router_ip(*f.ip()) && gateway.is_none_or(|g| g == *f.ip()) && http_host(&loc) == Some(*f.ip()) {
+                break (from, loc);
+            }
+        }
+        log::info!("LAN bridge: an answer to the router search from {from} was not taken");
+    };
+    let router_v4 = match router {
+        SocketAddr::V4(v) => *v.ip(),
+        SocketAddr::V6(_) => return None,
+    };
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(4)).build();
     let desc = agent.get(&location).call().ok()?.into_string().ok()?;
     // the WAN connection service and its control address
@@ -489,7 +529,11 @@ fn upnp_forward(port: u16) -> Option<(SocketAddr, Mapping)> {
         let end = location[after..].find('/').map(|i| i + after).unwrap_or(location.len());
         location[..end].to_string()
     };
-    let url = if control.starts_with("http") { control } else { format!("{base}{}{control}", if control.starts_with('/') { "" } else { "/" }) };
+    let url = if control.contains("://") { control } else { format!("{base}{}{control}", if control.starts_with('/') { "" } else { "/" }) };
+    if http_host(&url) != Some(router_v4) {
+        log::info!("LAN bridge: the router's control address {url:?} is not the router's own; no forwarding asked");
+        return None;
+    }
     // our address towards the router
     let probe = UdpSocket::bind(("0.0.0.0", 0)).ok()?;
     probe.connect(router).ok()?;
@@ -524,11 +568,66 @@ fn upnp_forward(port: u16) -> Option<(SocketAddr, Mapping)> {
     let b = ext[a..].find('<')? + a;
     let ip: Ipv4Addr = ext[a..b].trim().parse().ok()?;
     // a router behind another (carrier NAT) forwards to an address nobody outside reaches
-    if ip.is_private() || ip.is_loopback() || ip.octets()[0] == 100 {
+    if !public_ipv4(ip) {
         upnp_remove(&mapping);
         return None;
     }
     Some((SocketAddr::V4(SocketAddrV4::new(ip, port)), mapping))
+}
+
+fn default_gateway() -> Option<Ipv4Addr> {
+    let found = gateway_of_system();
+    found.filter(|g| router_ip(*g))
+}
+
+#[cfg(target_os = "linux")]
+fn gateway_of_system() -> Option<Ipv4Addr> {
+    let table = std::fs::read_to_string("/proc/net/route").ok()?;
+    table.lines().skip(1).find_map(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        (f.len() > 2 && f[1] == "00000000").then(|| u32::from_str_radix(f[2], 16).ok().map(|g| Ipv4Addr::from(g.swap_bytes())))?
+    })
+}
+
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+fn gateway_of_system() -> Option<Ipv4Addr> {
+    let out = std::process::Command::new("route").args(["-n", "get", "default"]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).lines().find_map(|l| l.trim().strip_prefix("gateway:").and_then(|g| g.trim().parse().ok()))
+}
+
+#[cfg(windows)]
+fn gateway_of_system() -> Option<Ipv4Addr> {
+    use std::os::windows::process::CommandExt;
+    let out = std::process::Command::new("route").args(["print", "-4", "0.0.0.0"]).creation_flags(0x0800_0000).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).lines().find_map(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        (f.len() >= 3 && f[0] == "0.0.0.0" && f[1] == "0.0.0.0").then(|| f[2].parse().ok())?
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd", windows)))]
+fn gateway_of_system() -> Option<Ipv4Addr> {
+    None
+}
+
+fn router_ip(ip: Ipv4Addr) -> bool {
+    (ip.is_private() || ip.is_link_local()) && !ip.is_loopback()
+}
+
+fn http_host(url: &str) -> Option<Ipv4Addr> {
+    let rest = url.trim().strip_prefix("http://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let host = match authority.rsplit_once(':') {
+        Some((h, p)) if p.parse::<u16>().is_ok() => h,
+        _ => authority,
+    };
+    let ip: Ipv4Addr = host.parse().ok()?;
+    router_ip(ip).then_some(ip)
+}
+
+fn public_ipv4(ip: Ipv4Addr) -> bool {
+    let [a, b, _, _] = ip.octets();
+    !(ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() || ip.is_documentation() || a == 0 || a >= 240 || (a == 100 && (64..128).contains(&b)))
 }
 
 /// Take a port forwarding back (UDP and TCP), briefly: the game is ending.
@@ -567,6 +666,24 @@ mod tests {
     }
 
     #[test]
+    fn only_the_router_itself_is_asked_for_a_forwarding() {
+        let r: Ipv4Addr = "192.168.1.1".parse().unwrap();
+        assert!(router_ip(r));
+        assert_eq!(http_host("http://192.168.1.1:5000/rootDesc.xml"), Some(r));
+        assert_eq!(http_host("http://192.168.1.1/ctl/IPConn"), Some(r));
+        assert_eq!(http_host("http://127.0.0.1:8080/admin"), None);
+        assert_eq!(http_host("http://203.0.113.9/desc.xml"), None);
+        assert_eq!(http_host("https://192.168.1.1/desc.xml"), None);
+        assert_eq!(http_host("http://evil@192.168.1.1/desc.xml"), None);
+        assert_eq!(http_host("http://router.lan/desc.xml"), None);
+        assert_eq!(http_host("file:///etc/passwd"), None);
+        assert!(public_ipv4("81.2.3.4".parse().unwrap()));
+        for bad in ["10.0.0.1", "127.0.0.1", "100.64.1.1", "0.0.0.0", "255.255.255.255", "224.0.0.1", "169.254.1.1", "203.0.113.5"] {
+            assert!(!public_ipv4(bad.parse().unwrap()), "{bad}");
+        }
+    }
+
+    #[test]
     fn relay_lines_are_read() {
         let l = r#"{"id":"abc123","time":1,"event":"message","topic":"t","message":"H 00000000000000ff 1.2.3.4:27015,192.168.1.2:27015"}"#;
         assert_eq!(json_field(l, "id").as_deref(), Some("abc123"));
@@ -601,5 +718,43 @@ mod relay_tests {
         assert_eq!(verified(0xABCDEF, "W 0 https://evil.example"), None);
         // the topic tells nothing of the session id
         assert!(!topic(0xABCDEF).contains("abcdef"));
+    }
+
+    fn relay_line(msg: &str) -> String {
+        format!("{{\"id\":\"x\",\"event\":\"message\",\"message\":\"{msg}\"}}")
+    }
+
+    #[test]
+    fn only_the_host_key_of_the_code_announces_the_host() {
+        let key = crate::hostkey::HostKey::generate().unwrap();
+        let other = crate::hostkey::HostKey::generate().unwrap();
+        let s = key.session();
+        let real = key.seal("relay", "H 1000 1.2.3.4:27015");
+        assert_eq!(relay_post(false, s, &real, 1000), Some(("H", vec!["1.2.3.4:27015".parse().unwrap()])));
+        assert!(relay_post(false, s, &real, 1000 + 7300).is_some());
+        assert_eq!(relay_post(false, s, &real, 1000 + 25 * 3600), None);
+        assert_eq!(relay_post(false, s, &other.seal("relay", "H 1000 6.6.6.6:27015"), 1000), None);
+        assert_eq!(relay_post(false, s, &signed(s, "H - 6.6.6.6:27015"), 1000), None);
+        assert_eq!(relay_post(true, s, &real, 1000), None);
+        assert_eq!(relay_post(true, s, &signed(s, "C - 5.6.7.8:4000"), 1000), Some(("C", vec!["5.6.7.8:4000".parse().unwrap()])));
+    }
+
+    #[test]
+    fn a_tunnel_is_taken_only_from_the_host_key_and_the_newest_wins() {
+        let key = crate::hostkey::HostKey::generate().unwrap();
+        let other = crate::hostkey::HostKey::generate().unwrap();
+        let s = key.session();
+        let body = [
+            relay_line(&key.seal("relay", "W 1000 https://old.trycloudflare.com")),
+            relay_line(&key.seal("relay", "W 2000 https://new.trycloudflare.com")),
+            relay_line(&other.seal("relay", "W 3000 https://evil.trycloudflare.com")),
+            relay_line(&signed(s, "W 0 https://evil2.trycloudflare.com")),
+            relay_line(&key.seal("relay", "W 1500 http://plain.example")),
+        ]
+        .join("\n");
+        assert_eq!(tunnel_of(s, &body, 2100).as_deref(), Some("https://new.trycloudflare.com"));
+        assert_eq!(tunnel_of(s, &body, 2000 + 2 * 3600).as_deref(), Some("https://new.trycloudflare.com"));
+        assert_eq!(tunnel_of(s, &body, 2000 + 25 * 3600), None);
+        assert_eq!(tunnel_of(other.session(), &body, 3000).as_deref(), Some("https://evil.trycloudflare.com"));
     }
 }

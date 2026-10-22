@@ -23,21 +23,9 @@ pub(crate) fn run_export(args: &Args, out: &PathBuf) -> Result<()> {
     export::export_glb(&args.root, &vt, &vehicle, scheme, out)
 }
 
-/// [ROLLBACK fuelreach-69] How near (m) to a `[petrolstation]` object's box the vehicle's may be
-/// for the pump, the wash and the repair to count it as there: a pump or a charger often stands
-/// a little beside the box, and the bus had to be driven into the object.
-pub(crate) const PETROL_REACH: f64 = 5.0;
-
-/// [ROLLBACK petrol-93] The `skip_petrol_check` setting, set each frame by the game.
-pub(crate) static SKIP_PETROL_CHECK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Does the vehicle's box overlap (or come within `PETROL_REACH` of) one of the loaded `[petrolstation]` objects? That is
-/// OMSI's test for the pump, the wash and a repair without travel time.
+/// Does the vehicle's box overlap one of the loaded `[petrolstation]` or `[depot]` objects?
+/// That is OMSI's test for the pump, the wash and a repair without travel time.
 pub(crate) fn at_petrol_station(world: &World, v: &omsi_sim::VehicleInstance) -> bool {
-    // [ROLLBACK petrol-93] the `skip_petrol_check` setting: the pump and the wash work anywhere
-    if SKIP_PETROL_CHECK.load(std::sync::atomic::Ordering::Relaxed) {
-        return true;
-    }
     let f = crate::lan::footprint_of(v, [2.5, 11.5, 3.0, 0.0, 0.0, 1.5]);
     let me = omsi_sim::collision::Obb {
         center: glam::DVec2::new(f.x, f.y),
@@ -50,48 +38,14 @@ pub(crate) fn at_petrol_station(world: &World, v: &omsi_sim::VehicleInstance) ->
         pole: None,
         id: -1,
     };
-    let stations = world.petrol_stations.lock();
-    if omsi_cfg::env::var_os("OMSI_DEBUG_SERVICES").is_some() {
+    let data = world.data.peek();
+    let stations = &data.lists.petrol_stations;
+    if omsi_cfg::flags::OMSI_DEBUG_SERVICES.is_set() {
         for p in stations.iter() {
             log::info!("petrol station box at ({:.1}, {:.1}) {:.1} x {:.1} m: bus {:.1} m away", p.center.x, p.center.y, p.half.x * 2.0, p.half.y * 2.0, me.separation(p));
         }
     }
-    // [ROLLBACK fuelreach-69] within `PETROL_REACH` of the box, not only inside it
-    stations.iter().any(|p| me.separation(p) < PETROL_REACH)
-}
-
-/// One frame of the fuel pump (Omsi.exe 0x6fefbc / 0x7d5120). The pump is a switch: the menu
-/// button flips it, and every frame it is on - and the bus stands in the box of a
-/// `[petrolstation]` (0x7d4fb4 works that out each frame) - the bus's `veh_tank` trigger runs
-/// once. Leaving the station, or a bus without the trigger, switches it off by itself; the
-/// script itself decides when the tank is full (the original never stops it either).
-pub(crate) fn pump_frame(
-    pump: &mut bool,
-    world: Option<&World>,
-    v: &mut omsi_sim::VehicleInstance,
-    dt: f32,
-    msg: &mut Option<(String, f32)>,
-) {
-    if !*pump {
-        return;
-    }
-    let Some(world) = world else {
-        *pump = false;
-        return;
-    };
-    if !at_petrol_station(world, v) {
-        *pump = false;
-        *msg = Some((omsi_ui::tr("Refuelling stopped: the vehicle left the petrol station").into_owned(), 4.0));
-        return;
-    }
-    if !v.pump_frame(dt.clamp(0.0, 0.25)) {
-        *pump = false;
-        *msg = Some((omsi_ui::tr("This vehicle has no fuel pump handling (veh_tank)").into_owned(), 4.0));
-        return;
-    }
-    if let Some(c) = v.var("engine_tank_content") {
-        *msg = Some((format!("{}: {c:.0} l", omsi_ui::tr("Refuelling")), 1.0));
-    }
+    stations.iter().any(|p| me.separation(p) < 0.0)
 }
 
 /// The depot services: the fuel pump, the bus wash and the workshop. OMSI offers them

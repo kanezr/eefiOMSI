@@ -44,9 +44,22 @@ fn vs_main(v: VIn) -> VOut {
         // the larger of the width in metres and in pixels at this depth
         let mpp = max(c.w, 0.01) * u.params.z;
         let w = max(v.width.x, v.width.y * mpp);
-        let wp = v.pos + vec3<f32>(v.ext * w, 0.0);
+        // solid shapes stand `target_size.z` times as tall; a shadow's corner is moved by its
+        // offset (in `uv`) as far
+        let k = u.target_size.z;
+        var base = v.pos;
+        if (v.mode.x > 1.5 && v.mode.x < 2.5) {
+            base = vec3<f32>(v.pos.xy, v.pos.z * k);
+        } else if (v.mode.x > 2.5) {
+            base = vec3<f32>(v.pos.xy + v.uv * k, v.pos.z);
+        }
+        let wp = base + vec3<f32>(v.ext * w, 0.0);
         o.clip = u.view_proj * vec4<f32>(wp, 1.0);
-        o.clip.z = 0.5 * o.clip.w;
+        // mode 1: flat on the map (no depth); 2: a solid shape at its own depth; 3: a shadow
+        // on the ground (the stencil keeps two shadows from darkening it twice)
+        if (v.mode.x < 1.5 || v.mode.x > 2.5) {
+            o.clip.z = 0.5 * o.clip.w;
+        }
     }
     o.uv = v.uv;
     o.color = vec4<f32>(to_linear(v.color.rgb), v.color.a);

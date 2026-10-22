@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Increment when the cached catalog format or the logic that derives it changes.
-const INDEX_VERSION: u32 = 3;
+const INDEX_VERSION: u32 = 4;
 
 /// Modification time of `p`; a path inside an archive used in place has the archive's.
 pub fn mtime_ns(p: &Path) -> u64 {
@@ -121,10 +121,13 @@ fn with_store<R>(f: impl FnOnce(&mut Store) -> R) -> R {
 pub fn cached<T: Serialize + DeserializeOwned>(key: &str, stamp: u64, make: impl FnOnce() -> (T, Vec<PathBuf>)) -> T {
     // (the files looked at and the value read outside the lock: the lists are read by
     // several threads at once)
-    let entry = with_store(|s| s.entries.get(key).map(|e| (e.stamp, e.deps.clone(), e.value.clone())));
-    if let Some((full, deps, value)) = entry {
+    let entry = with_store(|s| s.entries.get(key).map(|e| (e.stamp, e.deps.clone())));
+    if let Some((full, deps)) = entry {
         if combine(stamp, deps_stamp(&deps)) == full {
-            if let Ok(v) = serde_json::from_value::<T>(value) {
+            // (read from the cached value itself: it was copied out whole first - a deep copy
+            // of a map's or a vehicle folder's tree for every list asked for - and read then)
+            let v = with_store(|s| s.entries.get(key).filter(|e| e.stamp == full).and_then(|e| T::deserialize(&e.value).ok()));
+            if let Some(v) = v {
                 return v;
             }
         }
@@ -194,14 +197,14 @@ pub fn content_stamp(bases: &[PathBuf], inbox: Option<&Path>) -> String {
             }
         }
     }
-    with_store(|s| {
-        let mut deps: Vec<&PathBuf> = s.entries.values().flat_map(|e| e.deps.iter()).collect();
-        deps.sort();
-        deps.dedup();
-        for d in deps {
-            mtime_ns(d).hash(&mut h);
-        }
-    });
+    // (the folders listed under the lock, looked at after it: thousands of them were
+    // looked at with the lock held, and every list asked for meanwhile waited)
+    let mut deps: Vec<PathBuf> = with_store(|s| s.entries.values().flat_map(|e| e.deps.iter().cloned()).collect());
+    deps.sort();
+    deps.dedup();
+    for d in &deps {
+        mtime_ns(d).hash(&mut h);
+    }
     if let Some(i) = inbox {
         folder_stamp(&[i.to_path_buf(), i.join(crate::install::WAITING)]).hash(&mut h);
     }

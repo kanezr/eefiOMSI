@@ -1,0 +1,22 @@
+[package]
+name = "omsi-soundscape"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "openOMSI's sounds of the world on top of omsi-audio: the soundscape's recordings, places and rules, the ambience's one-shots and the bus radio"
+
+[dependencies]
+omsi-audio = { path = "../omsi-audio" }
+omsi-cfg = { path = "../omsi-cfg" }
+omsi-geometry = { path = "../omsi-geometry" }
+omsi-map = { path = "../omsi-map" }
+omsi-platform = { path = "../omsi-platform" }
+omsi-scenery = { path = "../omsi-scenery" }
+omsi-sim = { path = "../omsi-sim" }
+omsi-vehicle = { path = "../omsi-vehicle" }
+anyhow.workspace = true
+glam.workspace = true
+hashbrown.workspace = true
+log.workspace = true
+serde_json.workspace = true
+sha2.workspace = true

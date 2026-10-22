@@ -1,6 +1,7 @@
 //! Tests of the session (they open UDP sockets on the loopback).
 
 use super::*;
+mod bus_info;
 
 fn pose(x: f64) -> Pose {
     Pose {
@@ -77,8 +78,8 @@ fn info_carries_the_freetex_pictures_and_an_older_info_has_none() {
     assert_eq!(q.freetex, p.freetex);
     assert_eq!(q.texts, p.texts);
     // an older game's INFO ends with the figure: no pictures, everything else as before
-    let older = text.rsplit_once('|').unwrap().0;
-    let q = Pose::decode_info(&older.split('|').collect::<Vec<_>>()).unwrap();
+    let older: Vec<&str> = text.split('|').take(14).collect();
+    let q = Pose::decode_info(&older).unwrap();
     assert!(q.freetex.is_empty());
     assert_eq!(q.texts, p.texts);
     // and with everything else at its longest the INFO still fits one datagram
@@ -86,6 +87,15 @@ fn info_carries_the_freetex_pictures_and_an_older_info_has_none() {
     p.bus = format!("Vehicles/{}/{}.bus", "Ü".repeat(60), "b".repeat(120));
     p.texts = (0..MAX_TEXTS).map(|k| format!("{k}ß{}", "ñ".repeat(40))).collect();
     assert!(p.encode_info().len() <= MAX_DATAGRAM);
+}
+
+#[test]
+fn info_drops_freetex_pictures_that_leave_the_vehicle() {
+    let mut p = pose(1.5);
+    p.freetex = vec![r"\\attacker.example\s\x.bmp".into(), r"..\..\Anzeigen\17.tga".into(), "C:/x.bmp".into()];
+    let text = p.encode_info();
+    let q = Pose::decode_info(&text.split('|').collect::<Vec<_>>()).unwrap();
+    assert_eq!(q.freetex, vec![String::new(), r"..\..\Anzeigen\17.tga".to_string(), String::new()]);
 }
 
 #[test]
@@ -269,6 +279,18 @@ fn addresses_are_told_apart() {
             (ip("172.29.160.1"), AddrKind::Virtual, Some(ip("172.29.175.255"))),
         ]
     );
+}
+
+#[test]
+fn only_nearby_games_hear_where_the_host_is() {
+    let at = |s: &str| s.parse::<SocketAddr>().unwrap();
+    assert!(addrs::is_local_peer(at("127.0.0.1:5000")));
+    assert!(addrs::is_local_peer(at("192.168.1.20:5000")));
+    assert!(addrs::is_local_peer(at("100.74.245.63:5000")));
+    assert!(!addrs::is_local_peer(at("[2001:db8::1]:5000")));
+    let far = at("198.51.100.77:5000");
+    let near = addrs::local_addresses().iter().any(|l| l.ip.octets()[..3] == [198, 51, 100]);
+    assert_eq!(addrs::is_local_peer(far), near);
 }
 
 #[test]
@@ -493,9 +515,225 @@ fn find(s: &LanSession, x: f64) -> Option<&Peer> {
 }
 
 #[test]
+fn animation_snapshots_keep_owner_timestamps_when_relayed_between_clients() {
+    let mut host = LanSession::host(0, "host", world("m"), true).unwrap();
+    let addr = SocketAddr::from(([127, 0, 0, 1], host.local_addr().unwrap().port()));
+    let mut a = LanSession::join_addr(vec![addr], None, "a", world("m")).unwrap();
+    let mut b = LanSession::join_addr(vec![addr], None, "b", world("m")).unwrap();
+    let poses = [pose(100.0), pose(200.0), pose(300.0)];
+    pump(&mut [&mut host, &mut a, &mut b], &poses, 150, |s| {
+        find(s[2], 200.0).is_some() && find(s[1], 100.0).is_some()
+    });
+    assert!(a.connected && b.connected);
+    a.frame_ms = Some(1234.0);
+    host.frame_ms = Some(5678.0);
+    a.send_animation_vars(99, &[(5, 0.25)], 0.1);
+    host.send_animation_vars(99, &[(5, 0.75)], 0.1);
+    let mut received = [false; 3];
+    for _ in 0..30 {
+        host.tick(0.01, &poses[0]);
+        a.tick(0.01, &poses[1]);
+        b.tick(0.01, &poses[2]);
+        let client_id = a.my_id;
+        let host_id = host.my_id;
+        for (slot, session, owner, ms, value) in [
+            (0, &mut host, client_id, 1234, 0.25),
+            (1, &mut a, host_id, 5678, 0.75),
+            (2, &mut b, client_id, 1234, 0.25),
+        ] {
+            for state in session.take_vars() {
+                if state.id == owner && state.sent_ms == ms {
+                    assert_eq!(state.floats, vec![(5, value)]);
+                    received[slot] = true;
+                }
+            }
+        }
+        if received.iter().all(|got| *got) { break; }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(received, [true; 3], "host, direct client and relayed client must get the owner's frame clock");
+}
+
+#[test]
+fn animation_snapshots_have_their_own_budget_and_validate_the_sender() {
+    let mut host = LanSession::host(0, "host", world("m"), true).unwrap();
+    let from: SocketAddr = "127.0.0.1:29001".parse().unwrap();
+    let mut peer = Peer::new(Some(from), pose(1.0));
+    peer.states.tokens = 0.0;
+    peer.variables.tokens = 0.0;
+    host.peers.insert(7, peer);
+    let mut sender = vars::AnimationSender::default();
+    let packets = sender.tick(PROTOCOL as u8, 7, 99, 1234, &[(0, 0.5)], 0.1);
+    host.on_vars(&packets[0], "127.0.0.1:29002".parse().unwrap());
+    assert!(host.take_vars().is_empty());
+    host.on_vars(&packets[0], from);
+    let received = host.take_vars();
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].sent_ms, 1234);
+    assert_eq!(received[0].floats, vec![(0, 0.5)]);
+    host.peers.get_mut(&7).unwrap().animations.tokens = 0.0;
+    host.on_vars(&packets[0], from);
+    assert!(host.take_vars().is_empty());
+}
+
+#[test]
+fn variable_recovery_has_its_own_rate_budget_and_checks_the_sender() {
+    let mut host = LanSession::host(0, "host", world("m"), true).unwrap();
+    let from: SocketAddr = "127.0.0.1:29001".parse().unwrap();
+    let mut peer = Peer::new(Some(from), pose(1.0));
+    peer.states.tokens = 0.0;
+    host.peers.insert(7, peer);
+    let mut sender = vars::VarSender::default();
+    let messages = sender.tick(PROTOCOL as u8, 7, 99, &[0], &[42.0], &[], &[], 0.1);
+    host.on_vars(&messages[0], "127.0.0.1:29002".parse().unwrap());
+    assert!(host.take_vars().is_empty(), "a different address cannot send for this peer");
+    host.on_vars(&messages[0], from);
+    let received = host.take_vars();
+    assert_eq!(received.len(), 1, "pose traffic must not starve variables");
+    assert_eq!(received[0].floats, vec![(0, 42.0)]);
+    host.peers.get_mut(&7).unwrap().variables.tokens = 0.0;
+    host.on_vars(&messages[0], from);
+    assert!(host.take_vars().is_empty(), "variable traffic is still rate limited");
+}
+
+#[test]
+fn host_and_clients_exchange_complete_variable_tables() {
+    let mut host = LanSession::host(0, "host", world("m"), true).unwrap();
+    let addr = SocketAddr::from(([127, 0, 0, 1], host.local_addr().unwrap().port()));
+    let mut a = LanSession::join_addr(vec![addr], None, "a", world("m")).unwrap();
+    let mut b = LanSession::join_addr(vec![addr], None, "b", world("m")).unwrap();
+    let poses = [pose(100.0), pose(200.0), pose(300.0)];
+    pump(&mut [&mut host, &mut a, &mut b], &poses, 150, |s| {
+        find(s[2], 200.0).is_some() && find(s[1], 100.0).is_some()
+    });
+    assert!(a.connected && b.connected);
+    let ids: Vec<u16> = (0..600).map(|k| k * 2).collect();
+    let values: Vec<f32> = (0..600).map(|k| k as f32 + 0.5).collect();
+    let string_ids: Vec<u16> = (0..20).collect();
+    let strings: Vec<String> = (0..20).map(|k| format!("{k}:{}", "árvíz".repeat(if k == 19 { 600 } else { 60 }))).collect();
+    let schema = var_schema::Schema { floats: (0..300).map(|i| format!("variable_{i:04}")).collect(), ..Default::default() };
+    let schema_text = schema.encode().unwrap();
+    let mut received_schemas = [false; 3];
+    let mut received = [vars::VarsIn::default(), vars::VarsIn::default(), vars::VarsIn::default()];
+    for _ in 0..30 {
+        host.send_var_schema(schema.table_hash(), &schema_text, 0.1);
+        a.send_var_schema(schema.table_hash(), &schema_text, 0.1);
+        host.send_vars(99, &ids, &values, &string_ids, &strings, 0.1);
+        a.send_vars(99, &ids, &values, &string_ids, &strings, 0.1);
+        host.tick(0.1, &poses[0]);
+        a.tick(0.1, &poses[1]);
+        b.tick(0.1, &poses[2]);
+        let a_id = a.my_id;
+        let host_id = host.my_id;
+        for (slot, session, owner) in [(0, &mut host, a_id), (1, &mut a, host_id), (2, &mut b, a_id)] {
+            for manifest in session.take_var_schemas() {
+                if manifest.id != owner { continue; }
+                for (_, text) in manifest.strings {
+                    assert_eq!(var_schema::Schema::decode(&text), Some(schema.clone()));
+                    received_schemas[slot] = true;
+                }
+            }
+        }
+        for v in host.take_vars().into_iter().filter(|v| v.id == a.my_id) {
+            assert_eq!(v.table, 99);
+            received[0].floats.extend(v.floats);
+            received[0].strings.extend(v.strings);
+        }
+        for v in a.take_vars().into_iter().filter(|v| v.id == host.my_id) {
+            received[1].floats.extend(v.floats);
+            received[1].strings.extend(v.strings);
+        }
+        for v in b.take_vars().into_iter().filter(|v| v.id == a.my_id) {
+            received[2].floats.extend(v.floats);
+            received[2].strings.extend(v.strings);
+        }
+    }
+    assert_eq!(received_schemas, [true; 3]);
+    for got in received {
+        let floats: std::collections::HashMap<_, _> = got.floats.into_iter().collect();
+        let texts: std::collections::HashMap<_, _> = got.strings.into_iter().collect();
+        for (&id, &value) in ids.iter().zip(&values) {
+            assert_eq!(floats.get(&id), Some(&value));
+        }
+        for (&id, value) in string_ids.iter().zip(&strings) {
+            assert_eq!(texts.get(&id), Some(value));
+        }
+    }
+}
+
+#[test]
+fn clients_receive_ai_script_context_only_from_the_host() {
+    let mut host = LanSession::host(0, "host", world("m"), true).unwrap();
+    let addr = SocketAddr::from(([127, 0, 0, 1], host.local_addr().unwrap().port()));
+    let mut a = LanSession::join_addr(vec![addr], None, "a", world("m")).unwrap();
+    let mut b = LanSession::join_addr(vec![addr], None, "b", world("m")).unwrap();
+    let poses = [pose(100.0), pose(200.0), pose(300.0)];
+    pump(&mut [&mut host, &mut a, &mut b], &poses, 150, |s| s[1].connected && s[2].connected && s[0].peers.len() == 2);
+    let context = ai_context::Context {
+        active: 1.0, line: "042".into(), terminus: 3,
+        stops: (0..100).map(|i| (i, format!("árvíztűrő bus stop {i}"), i as f32 * 60.0, i as f32 * 60.0 + 10.0)).collect(),
+        index: 5, delay: -12.5, system: [42.0; 22],
+    };
+    let mut receiver = ai_context::Receiver::default();
+    let mut received = None;
+    for page in 0..20 {
+        host.send_ai_context(a.my_id, &context.packet(PROTOCOL as u8, 7, page as u32, page).unwrap());
+        a.tick(0.1, &poses[1]);
+        for packet in a.take_ai_contexts() {
+            if let Some((id, value)) = receiver.receive(&packet, PROTOCOL as u8) { assert_eq!(id, 7); received = Some(value); }
+        }
+    }
+    assert_eq!(received, Some(context.clone()));
+    let packet = context.packet(PROTOCOL as u8, 8, 1, 0).unwrap();
+    // A peer cannot publish shared AI state to another peer, or to the host.
+    b.send(&packet, to_client(&a));
+    b.send(&packet, addr);
+    a.tick(0.1, &poses[1]);
+    host.tick(0.1, &poses[0]);
+    assert!(a.take_ai_contexts().is_empty());
+    assert!(host.take_ai_contexts().is_empty());
+}
+
+#[test]
+fn script_textures_initialize_and_update_through_the_host_in_both_directions() {
+    use scripttex::Image;
+    use std::sync::Arc;
+    let mut host = LanSession::host(0, "host", world("m"), true).unwrap();
+    let addr = SocketAddr::from(([127, 0, 0, 1], host.local_addr().unwrap().port()));
+    let mut a = LanSession::join_addr(vec![addr], None, "a", world("m")).unwrap();
+    let mut b = LanSession::join_addr(vec![addr], None, "b", world("m")).unwrap();
+    let poses = [pose(100.0), pose(200.0), pose(300.0)];
+    pump(&mut [&mut host, &mut a, &mut b], &poses, 150, |s| {
+        find(s[2], 200.0).is_some() && find(s[1], 100.0).is_some()
+    });
+    assert!(a.connected && b.connected);
+    let host_image = Image { width: 2, height: 1, mipmaps: false, rgba: Arc::new(vec![1, 2, 3, 4, 5, 6, 7, 8]) };
+    let mut client_image = Image { width: 64, height: 64, mipmaps: true, rgba: Arc::new((0..64 * 64 * 4).map(|k| ((k * 107 + k / 13) % 256) as u8).collect()) };
+    host.set_script_textures(7, vec![Some(host_image.clone())]);
+    a.set_script_textures(8, vec![Some(client_image.clone())]);
+    host.subscribe_script_textures(a.my_id, 8);
+    a.subscribe_script_textures(host.my_id, 7);
+    b.subscribe_script_textures(host.my_id, 7);
+    b.subscribe_script_textures(a.my_id, 8);
+    pump(&mut [&mut host, &mut a, &mut b], &poses, 60, |_| false);
+    assert_eq!(host.take_script_textures()[0].image, client_image);
+    assert_eq!(a.take_script_textures()[0].image, host_image);
+    let received = b.take_script_textures();
+    assert_eq!(received.len(), 2);
+    assert_eq!(received.iter().find(|i| i.owner == a.my_id).unwrap().image, client_image);
+    assert_eq!(received.iter().find(|i| i.owner == host.my_id).unwrap().image, host_image);
+    Arc::make_mut(&mut client_image.rgba)[3] = 123;
+    a.set_script_textures(8, vec![Some(client_image.clone())]);
+    pump(&mut [&mut host, &mut a, &mut b], &poses, 30, |_| false);
+    assert_eq!(host.take_script_textures()[0].image, client_image);
+    assert_eq!(b.take_script_textures()[0].image, client_image);
+    assert!(a.take_script_textures().is_empty(), "unchanged host textures are not resent");
+}
+
+#[test]
 fn host_and_two_clients_exchange_states() {
     let mut host =
-        LanSession::host(27990, "host", world("maps/Grundorf/global.cfg"), true).unwrap();
+        LanSession::host(28100, "host", world("maps/Grundorf/global.cfg"), true).unwrap();
     let port = host.local_addr().unwrap().port();
     let code = host.code().unwrap().encode();
     let mut a = LanSession::join(
@@ -588,7 +826,7 @@ fn a_client_takes_the_hosts_world_and_clock() {
     hw.weather = "Weather/Schmuddelwetter.owt".into();
     hw.season = "winter".into();
     hw.date = "1990-01-15".into();
-    let mut host = LanSession::host(27920, "host", hw.clone(), true).unwrap();
+    let mut host = LanSession::host(28110, "host", hw.clone(), true).unwrap();
     host.set_clock("1990-01-15", 17.5 * 3600.0);
     let port = host.local_addr().unwrap().port();
     let mut c = LanSession::join(
@@ -638,9 +876,44 @@ fn a_client_takes_the_hosts_world_and_clock() {
 }
 
 #[test]
+fn host_weather_changes_are_sent_immediately_in_clock() {
+    let mut host = LanSession::host(27921, "host", world("maps/Grundorf/global.cfg"), true).unwrap();
+    let port = host.local_addr().unwrap().port();
+    let mut client = LanSession::join(
+        &port.to_string(),
+        "client",
+        world("maps/Grundorf/global.cfg"),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    for s in [&mut host, &mut client] {
+        s.heartbeat = 0.05;
+    }
+    pump(&mut [&mut host, &mut client], &[pose(1.0), pose(2.0)], 80, |s| s[1].connected);
+    let _ = client.take_host_clock();
+
+    let custom = "custom:vis=5000;br=0.80;wd=90;ws=4.0;t=22.0;rh=70;p=1013;c=2;cb=120;pt=1;pi=80;wet=0.50;snow=0;snowroad=0";
+    host.clock_acc = 0.0;
+    host.set_weather(custom);
+    assert!(host.clock_acc >= CLOCK_EVERY, "weather change must force the next CLOCK");
+    pump(&mut [&mut host, &mut client], &[pose(1.0), pose(2.0)], 20, |s| s[1].host_clock.is_some());
+    assert_eq!(client.take_host_clock().expect("custom weather clock").world.weather, custom);
+
+    // the same weather again sends nothing new
+    host.clock_acc = 0.0;
+    host.set_weather(custom);
+    assert_eq!(host.clock_acc, 0.0);
+
+    host.set_weather("");
+    assert!(host.clock_acc >= CLOCK_EVERY, "clearing weather must force the next CLOCK");
+    pump(&mut [&mut host, &mut client], &[pose(1.0), pose(2.0)], 20, |s| s[1].host_clock.is_some());
+    assert_eq!(client.take_host_clock().expect("default weather clock").world.weather, "");
+}
+
+#[test]
 fn the_host_lists_the_vehicles_at_a_clients_bus() {
     let mut host =
-        LanSession::host(27980, "host", world("maps/Grundorf/global.cfg"), true).unwrap();
+        LanSession::host(28120, "host", world("maps/Grundorf/global.cfg"), true).unwrap();
     let port = host.local_addr().unwrap().port();
     host.set_local_footprints(vec![
         Footprint {
@@ -687,7 +960,7 @@ fn the_host_lists_the_vehicles_at_a_clients_bus() {
 
 #[test]
 fn the_list_has_the_other_players_boxes() {
-    let mut host = LanSession::host(27950, "host", world("m"), true).unwrap();
+    let mut host = LanSession::host(28130, "host", world("m"), true).unwrap();
     let port = host.local_addr().unwrap().port();
     host.set_local_footprints(vec![]);
     // A drives an articulated bus: an 18 m box whose centre is 3.5 m behind its origin
@@ -738,7 +1011,7 @@ fn the_list_has_the_other_players_boxes() {
 
 #[test]
 fn a_private_line_reaches_one_player_only() {
-    let mut host = LanSession::host(27912, "Server", world("m"), true).unwrap();
+    let mut host = LanSession::host(28140, "Server", world("m"), true).unwrap();
     let port = host.local_addr().unwrap().port();
     let mut a = LanSession::join(
         &port.to_string(),
@@ -793,7 +1066,7 @@ fn a_private_line_reaches_one_player_only() {
 
 #[test]
 fn chat_reaches_everybody_and_floods_do_not() {
-    let mut host = LanSession::host(27910, "Hanna", world("m"), true).unwrap();
+    let mut host = LanSession::host(28150, "Hanna", world("m"), true).unwrap();
     let port = host.local_addr().unwrap().port();
     let mut a = LanSession::join(
         &port.to_string(),
@@ -891,7 +1164,7 @@ fn chat_reaches_everybody_and_floods_do_not() {
 
 #[test]
 fn old_protocol_is_turned_away() {
-    let mut host = LanSession::host(27960, "host", world("m"), true).unwrap();
+    let mut host = LanSession::host(28160, "host", world("m"), true).unwrap();
     let port = host.local_addr().unwrap().port();
     let old = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
     old.set_read_timeout(Some(Duration::from_millis(50)))
@@ -1044,7 +1317,7 @@ fn old_states_do_not_overtake_new_ones() {
 
 #[test]
 fn a_full_session_turns_the_next_player_away() {
-    let mut host = LanSession::host(27940, "host", world("m"), true).unwrap();
+    let mut host = LanSession::host(28170, "host", world("m"), true).unwrap();
     let at = SocketAddr::from((Ipv4Addr::LOCALHOST, host.local_addr().unwrap().port()));
     let hello = format!("HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400||");
     let players: Vec<UdpSocket> = (0..MAX_PEERS).map(|_| raw()).collect();
@@ -1094,7 +1367,7 @@ fn a_full_session_turns_the_next_player_away() {
 
 #[test]
 fn too_many_loading_players_wait() {
-    let mut host = LanSession::host(27900, "host", world("m"), true).unwrap();
+    let mut host = LanSession::host(28180, "host", world("m"), true).unwrap();
     let at = SocketAddr::from((Ipv4Addr::LOCALHOST, host.local_addr().unwrap().port()));
     let hello = format!("HELLO|{PROTOCOL}|-|p|Vehicles/x.bus|m|1989-05-30|32400||");
     let players: Vec<UdpSocket> = (0..MAX_JOINING + 1).map(|_| raw()).collect();
@@ -1238,280 +1511,6 @@ fn a_player_without_a_bus_sends_a_heartbeat() {
     );
 }
 
-#[test]
-fn players_without_a_bus_stay_in_the_session() {
-    let mut host = LanSession::host(27930, "host", world("m"), true).unwrap();
-    let port = host.local_addr().unwrap().port();
-    let mut c =
-        LanSession::join(&port.to_string(), "c", world("m"), Duration::from_secs(1)).unwrap();
-    for s in [&mut host, &mut c] {
-        s.timeout = Duration::from_millis(1000);
-        s.heartbeat = 0.2;
-    }
-    let none = Pose::default();
-    let t0 = Instant::now();
-    let mut last = Instant::now();
-    let mut id = None;
-    while t0.elapsed() < Duration::from_millis(3500) {
-        let dt = last.elapsed().as_secs_f32();
-        last = Instant::now();
-        host.tick(dt, &none);
-        let gone = c.tick(dt, &none);
-        if c.connected {
-            assert_eq!(
-                *id.get_or_insert(c.my_id),
-                c.my_id,
-                "the client was never dropped and let in again"
-            );
-        }
-        if t0.elapsed() > Duration::from_millis(500) {
-            assert!(
-                c.connected,
-                "the client stays connected at {:?}",
-                t0.elapsed()
-            );
-            assert_eq!(
-                host.peer_count(),
-                1,
-                "the host keeps the client at {:?}",
-                t0.elapsed()
-            );
-            assert!(gone.is_empty(), "nobody left: {gone:?}");
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    // the observer's empty state (at 0,0) is not a vehicle a new player must keep clear of
-    assert!(host.peers().all(|p| !p.pose.has_vehicle()));
-    let mut d =
-        LanSession::join(&port.to_string(), "d", world("m"), Duration::from_secs(1)).unwrap();
-    pump(
-        &mut [&mut host, &mut c, &mut d],
-        &[none.clone(), none.clone(), none.clone()],
-        80,
-        |s| s[2].connected,
-    );
-    d.request_near(Footprint {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-        heading: 0.0,
-        length: 12.0,
-        width: 2.5,
-    });
-    pump(
-        &mut [&mut host, &mut c, &mut d],
-        &[none.clone(), none.clone(), none.clone()],
-        80,
-        |s| s[2].near.is_some(),
-    );
-    assert!(d.near.as_ref().expect("near").is_empty());
-}
+mod connections;
 
-#[test]
-fn a_loading_player_is_kept() {
-    let mut host = LanSession::host(27880, "host", world("m"), true).unwrap();
-    host.timeout = Duration::from_millis(200);
-    host.load_timeout = Duration::from_millis(900);
-    let port = host.local_addr().unwrap().port();
-    let mut c =
-        LanSession::join(&port.to_string(), "c", world("m"), Duration::from_secs(1)).unwrap();
-    pump(&mut [&mut host, &mut c], &[pose(0.0), pose(1.0)], 40, |s| {
-        s[1].connected
-    });
-    // the client loads its map: no frames for longer than the plain timeout
-    let quiet = Instant::now();
-    while quiet.elapsed() < Duration::from_millis(500) {
-        host.tick(0.02, &pose(0.0));
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(host.peer_count(), 1, "kept while loading");
-    while quiet.elapsed() < Duration::from_millis(1200) {
-        host.tick(0.02, &pose(0.0));
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(host.peer_count(), 0, "a player who never comes is dropped");
-    assert!(host
-        .take_events()
-        .iter()
-        .any(|e| matches!(e, LanEvent::Notice(n) if n == "c lost the connection")));
-}
-
-#[test]
-fn discovery_finds_a_host() {
-    let mut host = LanSession::host(DEFAULT_PORT + 5, "finder", world("m"), false).unwrap();
-    let h = std::thread::spawn(move || {
-        for _ in 0..40 {
-            host.tick(0.05, &pose(0.0));
-            std::thread::sleep(Duration::from_millis(25));
-        }
-    });
-    let found =
-        LanSession::discover(DEFAULT_PORT, "c", world("m"), Duration::from_secs(2)).unwrap();
-    h.join().unwrap();
-    assert!(found.is_some());
-}
-
-#[test]
-fn a_join_nobody_answers_gives_up_with_a_message() {
-    // an address where nothing answers (TEST-NET-1: never routed)
-    let mut c = LanSession::join("192.0.2.1:27015", "c", world("m"), Duration::from_millis(10))
-        .unwrap();
-    c.join_timeout = Duration::from_millis(400);
-    let t0 = Instant::now();
-    while c.rejected.is_none() && t0.elapsed() < Duration::from_secs(3) {
-        c.tick(0.05, &Pose::default());
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    let why = c.rejected.clone().expect("gave up");
-    assert!(t0.elapsed() < Duration::from_secs(2), "{:?}", t0.elapsed());
-    assert!(why.contains("no answer from 192.0.2.1:27015"), "{why}");
-    assert!(why.contains("firewall"), "{why}");
-    assert!(!c.connected);
-    // and it stops saying hello
-    let sent = c.sent();
-    for _ in 0..30 {
-        c.tick(0.1, &Pose::default());
-    }
-    assert_eq!(c.sent(), sent);
-}
-
-#[test]
-fn a_code_with_a_dead_address_still_joins_by_the_live_one() {
-    let mut host = LanSession::host(27960, "host", world("m"), true).unwrap();
-    let port = host.local_addr().unwrap().port();
-    // the first address leads nowhere (a VPN that is down), the second is the host
-    let code = SessionCode {
-        protocol: PROTOCOL as u8,
-        ips: vec![Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::LOCALHOST],
-        port,
-        session: host.session,
-    };
-    let mut c = LanSession::join(&code.encode(), "c", world("m"), Duration::from_millis(10))
-        .unwrap();
-    assert_eq!(c.candidates.len(), 2);
-    assert_eq!(c.host, None);
-    pump(&mut [&mut host, &mut c], &[pose(1.0), pose(2.0)], 100, |s| {
-        find(s[0], 2.0).is_some() && find(s[1], 1.0).is_some()
-    });
-    assert!(c.connected);
-    assert_eq!(c.host, Some(SocketAddr::from((Ipv4Addr::LOCALHOST, port))));
-    assert_eq!(host.peer_count(), 1);
-}
-
-/// The id a raw socket's hello is welcomed with.
-fn hello_id(s: &UdpSocket, host: &mut LanSession, name: &str, nonce: u64) -> Option<u32> {
-    let port = host.local_addr().unwrap().port();
-    let msg = format!("HELLO|{PROTOCOL}|-|{name}||m|1989-05-30|32400|||{nonce:016x}");
-    let mut buf = [0u8; 1500];
-    for _ in 0..40 {
-        let _ = s.send_to(msg.as_bytes(), ("127.0.0.1", port));
-        host.tick(0.02, &pose(0.0));
-        while let Ok((n, _)) = s.recv_from(&mut buf) {
-            let t = String::from_utf8_lossy(&buf[..n]).to_string();
-            if let Some(rest) = t.strip_prefix("WELCOME|") {
-                return rest.split('|').nth(1).and_then(|x| x.parse().ok());
-            }
-        }
-    }
-    None
-}
-
-#[test]
-fn a_returning_player_is_known_by_its_nonce_not_its_name() {
-    let mut host = LanSession::host(27870, "host", world("m"), true).unwrap();
-    host.timeout = Duration::from_millis(100);
-    host.load_timeout = Duration::from_millis(100);
-    let first = hello_id(&raw(), &mut host, "alice", 0x1234).expect("welcomed");
-    // alice's game goes quiet and is dropped
-    let quiet = Instant::now();
-    while host.peer_count() > 0 && quiet.elapsed() < Duration::from_secs(3) {
-        host.tick(0.02, &pose(0.0));
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(host.peer_count(), 0);
-    // somebody else calling themselves alice gets a number of their own
-    let other = hello_id(&raw(), &mut host, "alice", 0x9999).expect("welcomed");
-    assert_ne!(other, first, "a name alone takes nobody's place");
-    // alice herself (her nonce) comes back to her number
-    let back = hello_id(&raw(), &mut host, "alice", 0x1234).expect("welcomed");
-    assert_eq!(back, first);
-}
-
-/// Ticks a client (a second at a time, so that the slow hello comes round) and a host until
-/// the client is connected.
-fn until_connected(c: &mut LanSession, host: &mut LanSession) -> bool {
-    let t0 = Instant::now();
-    while !c.connected && t0.elapsed() < Duration::from_secs(3) {
-        c.tick(1.0, &Pose::default());
-        host.tick(0.05, &pose(0.0));
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    c.connected
-}
-
-#[test]
-fn a_client_that_gave_up_comes_back_when_the_host_does() {
-    let port = 27993;
-    // nobody hosts yet: the client gives up
-    let mut c = LanSession::join(&format!("127.0.0.1:{port}"), "c", world("m"), Duration::from_millis(10))
-        .unwrap();
-    c.join_timeout = Duration::from_millis(300);
-    let t0 = Instant::now();
-    while c.rejected.is_none() && t0.elapsed() < Duration::from_secs(3) {
-        c.tick(0.05, &Pose::default());
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert!(c.rejected.is_some() && !c.connected);
-    // the host starts: the client's slow hello finds it and the give-up is taken back
-    let mut host = LanSession::host(port, "host", world("m"), false).unwrap();
-    assert!(until_connected(&mut c, &mut host));
-    assert!(c.rejected.is_none());
-    assert_eq!(c.welcomes, 1);
-}
-
-#[test]
-fn reconnect_tries_again_after_the_host_sent_us_away() {
-    let mut host = LanSession::host(27991, "host", world("m"), false).unwrap();
-    let mut c = LanSession::join("127.0.0.1:27991", "c", world("m"), Duration::from_millis(10)).unwrap();
-    assert!(until_connected(&mut c, &mut host));
-    // the host sends us away: we stay out, with its reason
-    host.kick(c.my_id, "test", false);
-    for _ in 0..10 {
-        c.tick(1.0, &Pose::default());
-        host.tick(0.05, &pose(0.0));
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert!(!c.connected);
-    assert!(c.rejected.as_deref().is_some_and(|r| r.contains("test")));
-    // the host's own word: the game ends on it (a lost connection is no such word)
-    assert_eq!(c.turned_away.as_deref(), Some("test"));
-    assert!(c.reconnect());
-    assert!(c.rejected.is_none() && c.turned_away.is_none());
-    assert!(until_connected(&mut c, &mut host));
-    // a host has nothing to reconnect to
-    assert!(!host.reconnect());
-}
-
-#[test]
-fn a_banned_player_hears_why_at_the_door() {
-    let mut host = LanSession::host(27989, "host", world("m"), false).unwrap();
-    let mut c = LanSession::join("127.0.0.1:27989", "c", world("m"), Duration::from_millis(10)).unwrap();
-    assert!(until_connected(&mut c, &mut host));
-    host.kick(c.my_id, "Banni : conduite dangereuse", true);
-    for _ in 0..10 {
-        c.tick(1.0, &Pose::default());
-        host.tick(0.05, &pose(0.0));
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert_eq!(c.turned_away.as_deref(), Some("Banni : conduite dangereuse"));
-    // back again: turned away at the door, with the same reason
-    assert!(c.reconnect());
-    let t0 = Instant::now();
-    while c.turned_away.is_none() && t0.elapsed() < Duration::from_secs(3) {
-        c.tick(1.0, &Pose::default());
-        host.tick(0.05, &pose(0.0));
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    assert!(!c.connected);
-    assert!(c.turned_away.as_deref().is_some_and(|r| r.contains("Banni : conduite dangereuse")), "{:?}", c.turned_away);
-}
+mod lifecycle;

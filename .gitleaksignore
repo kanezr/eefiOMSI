@@ -1,0 +1,3 @@
+# gitleaks fingerprints that are no secret (commit:file:rule:line).
+# The city map's route cache check, `self.city.route.0 != key || ...`, read as an API key.
+88ab9e2213267f972880464b44a72c780bda01b4:crates/omsi-app/src/navigator/city_map.rs:generic-api-key:536

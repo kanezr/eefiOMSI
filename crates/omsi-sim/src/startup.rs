@@ -671,7 +671,7 @@ impl StartUp {
             }
             _ => Vec::new(),
         };
-        if omsi_cfg::env::var_os("OMSI_DEBUG_STARTUP").is_some() {
+        if omsi_cfg::flags::OMSI_DEBUG_STARTUP.is_set() {
             log::info!("start-up {step:?}: candidates {:?}", self.candidates);
         }
     }

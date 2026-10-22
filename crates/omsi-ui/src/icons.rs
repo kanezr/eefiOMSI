@@ -24,6 +24,22 @@ pub fn rasterize(name: &str, size: u32) -> Option<Vec<u8>> {
     Some(pix.pixels().iter().map(|p| p.alpha()).collect())
 }
 
+/// Any SVG (a logo) in its own colours, fitted into `w` x `h` pixels and centred: straight
+/// (not premultiplied) RGBA, as the interface's textures are.
+pub fn rasterize_rgba(src: &str, w: u32, h: u32) -> Option<Vec<u8>> {
+    let opt = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_str(src, &opt).ok()?;
+    let mut pix = resvg::tiny_skia::Pixmap::new(w, h)?;
+    let s = tree.size();
+    let k = (w as f32 / s.width()).min(h as f32 / s.height());
+    let (dx, dy) = ((w as f32 - s.width() * k) * 0.5, (h as f32 - s.height() * k) * 0.5);
+    resvg::render(&tree, resvg::tiny_skia::Transform::from_row(k, 0.0, 0.0, k, dx, dy), &mut pix.as_mut());
+    Some(pix.pixels().iter().flat_map(|p| {
+        let c = p.demultiply();
+        [c.red(), c.green(), c.blue(), c.alpha()]
+    }).collect())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

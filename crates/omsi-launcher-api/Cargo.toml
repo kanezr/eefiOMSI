@@ -1,0 +1,17 @@
+[package]
+name = "omsi-launcher-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The launcher page's commands (desktop launcher and phone web view alike): JSON in, JSON or picture bytes out"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+omsi-launcher-core = { path = "../omsi-launcher-core" }
+omsi-cfg = { path = "../omsi-cfg" }
+omsi-timetable = { path = "../omsi-timetable" }
+# (the version the release was built as: OPENOMSI_VERSION, as the game's)
+omsi-platform = { path = "../omsi-platform" }
+omsi-net = { path = "../omsi-net" }
+omsi-weather = { path = "../omsi-weather" }

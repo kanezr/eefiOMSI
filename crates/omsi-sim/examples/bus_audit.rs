@@ -16,7 +16,7 @@ impl log::Log for Collect {
     }
     fn log(&self, r: &log::Record) {
         // OMSI_DEBUG_IBIS: the typist's reasoning straight to stderr
-        if std::env::var_os("OMSI_DEBUG_IBIS").is_some() && r.level() <= log::Level::Info && r.target().contains("ibis") {
+        if omsi_cfg::flags::OMSI_DEBUG_IBIS.live_os().is_some() && r.level() <= log::Level::Info && r.target().contains("ibis") {
             eprintln!("{}", r.args());
         }
         if self.enabled(r.metadata()) {
@@ -27,7 +27,7 @@ impl log::Log for Collect {
 }
 
 fn original_root() -> Option<PathBuf> {
-    if let Ok(r) = std::env::var("OMSI_ROOT") {
+    if let Ok(r) = omsi_cfg::flags::OMSI_ROOT.live_var() {
         return Some(PathBuf::from(r));
     }
     let home = std::env::var("HOME").ok()?;
@@ -36,8 +36,9 @@ fn original_root() -> Option<PathBuf> {
 }
 
 fn main() {
+    omsi_sim::image_decode::install(decode_picture);
     log::set_logger(&Collect).unwrap();
-    log::set_max_level(if std::env::var_os("OMSI_DEBUG_IBIS").is_some() { log::LevelFilter::Info } else { log::LevelFilter::Warn });
+    log::set_max_level(if omsi_cfg::flags::OMSI_DEBUG_IBIS.live_os().is_some() { log::LevelFilter::Info } else { log::LevelFilter::Warn });
     let a: Vec<String> = std::env::args().collect();
     let content = PathBuf::from(&a[1]);
     let filter = a.get(2).filter(|s| !s.starts_with("--")).map(|s| s.to_ascii_lowercase());
@@ -200,7 +201,7 @@ fn ibis_probe(v: &mut omsi_sim::VehicleInstance, bus: &std::path::Path) -> Strin
     // line and route from its code, the terminus its route leads to
     let code = hof.info_trips.first().map(|t| omsi_cfg::parse_f32(&t.code) as u32);
     // OMSI_AUDIT_LINE=5E types that line instead (number and letter code as a duty does)
-    let own_line = std::env::var("OMSI_AUDIT_LINE").ok();
+    let own_line = omsi_cfg::flags::OMSI_AUDIT_LINE.live_var().ok();
     let line = own_line.as_deref().and_then(|l| l.trim_end_matches(|c: char| c.is_ascii_alphabetic()).parse().ok()).unwrap_or(code.map(|c| c / 100).unwrap_or(0));
     let suffix = match own_line.as_deref().and_then(|l| l.chars().last()).map(|c| c.to_ascii_uppercase()) {
         Some('E') => 10,
@@ -245,4 +246,11 @@ fn ibis_probe(v: &mut omsi_sim::VehicleInstance, bus: &std::path::Path) -> Strin
         Some(Err(e)) => format!("FAILED line {line} destination {}: {}", term.code, e),
         None => "unfinished".into(),
     }
+}
+
+/// The game's picture decoder for the simulation (as omsi-app registers it at start).
+fn decode_picture(path: &std::path::Path) -> Result<omsi_sim::image_decode::DecodedImage, String> {
+    omsi_texture::decode_file(path)
+        .map(|i| omsi_sim::image_decode::DecodedImage { width: i.width, height: i.height, rgba: i.rgba, has_alpha: i.has_alpha })
+        .map_err(|e| e.to_string())
 }

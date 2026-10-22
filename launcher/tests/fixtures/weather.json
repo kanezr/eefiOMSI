@@ -1,0 +1,101 @@
+[
+  {
+    "clouds": "clear",
+    "description": "Clear sky, no fog, no wind; these are the standard conditions for each new situation.",
+    "file": "Weather/#CAVOK.owt",
+    "fog_m": 50000.0,
+    "installed": false,
+    "name": "Best Weather",
+    "precip": "dry",
+    "snow": false,
+    "temp": 15.0
+  },
+  {
+    "clouds": "clear",
+    "description": "Heavy ground fog limits the maximum visibility dangerously!",
+    "file": "Weather/Bodennebel.owt",
+    "fog_m": 75.0,
+    "installed": false,
+    "name": "Ground Fog",
+    "precip": "dry",
+    "snow": false,
+    "temp": 9.0
+  },
+  {
+    "clouds": "clear",
+    "description": "Some fog, some drizzle, some wind.",
+    "file": "Weather/Daemmerungsnebel.owt",
+    "fog_m": 500.0,
+    "installed": false,
+    "name": "Twilight Fog",
+    "precip": "rain 13%",
+    "snow": false,
+    "temp": 15.0
+  },
+  {
+    "clouds": "Cumulus 1",
+    "description": "Very good weather in winter; it is dry, but icy cold!",
+    "file": "Weather/Eiseskälte.owt",
+    "fog_m": 500.0,
+    "installed": false,
+    "name": "Iciness",
+    "precip": "dry",
+    "snow": false,
+    "temp": -16.0
+  },
+  {
+    "clouds": "Overcast 1",
+    "description": "It is gray, rainy and cold...",
+    "file": "Weather/Schmuddelwetter.owt",
+    "fog_m": 200.0,
+    "installed": false,
+    "name": "Rainy",
+    "precip": "rain 68%",
+    "snow": false,
+    "temp": 15.0
+  },
+  {
+    "clouds": "Cumulus 1",
+    "description": "The sun shines, 25°C in the shadow, a light wind from east: Isn't it a nice weather?",
+    "file": "Weather/Sommerlich.owt",
+    "fog_m": 2000.0,
+    "installed": false,
+    "name": "Summerlike",
+    "precip": "dry",
+    "snow": false,
+    "temp": 25.0
+  },
+  {
+    "clouds": "Cumulus 3",
+    "description": "... for a wonderful winter scenery!",
+    "file": "Weather/Starker Schneefall.owt",
+    "fog_m": 50000.0,
+    "installed": false,
+    "name": "Heavy Snowfall",
+    "precip": "snow 73%",
+    "snow": true,
+    "temp": -6.0
+  },
+  {
+    "clouds": "Cumulus 3",
+    "description": "A storm is coming, it is rainy and cold. Not the best weather to wait for the bus...",
+    "file": "Weather/Sturm.owt",
+    "fog_m": 700.0,
+    "installed": false,
+    "name": "Storm",
+    "precip": "rain 52%",
+    "snow": false,
+    "temp": 9.0
+  },
+  {
+    "clouds": "Cumulus 1",
+    "description": "After thawing, the temperature has sunk below the freezing point. Attention: Risk of slickness!",
+    "file": "Weather/Ueberfrierende Naesse.owt",
+    "fog_m": 200.0,
+    "installed": false,
+    "name": "Freezing Wetness",
+    "precip": "dry",
+    "snow": true,
+    "temp": -6.0
+  }
+]

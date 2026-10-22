@@ -172,6 +172,13 @@ pub struct AiBody {
     pub steer: f32,
     steer_cmd: f32,
     last_speed: f32,
+    /// How fast the body's rotation point went along its heading in the last step (m/s):
+    /// the planner's speed, less what held the body back, plus its catching up.
+    pub moved: f32,
+    /// How far ahead the driver looks along the way to steer, as a share of the usual
+    /// (`drive`): 1, or what a corner caught on something is worked free with
+    /// (`ai_traffic::scenery`).
+    pub look_scale: f32,
     /// Longitudinal and lateral acceleration (m/s², forward / right positive).
     pub a_long: f32,
     pub a_lat: f32,
@@ -188,6 +195,8 @@ pub struct AiBody {
     ground_rate: [f32; 3],
     /// Pose for the vehicle: origin, pitch and bank (deg, + = nose up / right side down).
     pub position: DVec3,
+    impact_offset: DVec2,
+    impact_velocity: DVec2,
     pub pitch_deg: f32,
     pub bank_deg: f32,
     /// Per axle (left, right): how far the wheel hangs below its rest position against
@@ -273,7 +282,9 @@ impl AiBody {
             front_long,
             rear_long,
             max_steer,
-            steer_rate: if heavy { 25.0 } else { 40.0 },
+            // (a bus driver turns his wheel briskly too: at 25 deg/s the AI buses came into every
+            // junction turn late and ran over the kerb, half their turning time past the lane's edge)
+            steer_rate: if heavy { 40.0 } else { 45.0 },
             wheels,
             axle_count,
             mass,
@@ -287,6 +298,8 @@ impl AiBody {
             steer: 0.0,
             steer_cmd: 0.0,
             last_speed: 0.0,
+            moved: 0.0,
+            look_scale: 1.0,
             a_long: 0.0,
             a_lat: 0.0,
             yaw_rate: 0.0,
@@ -299,11 +312,24 @@ impl AiBody {
             ground: None,
             ground_rate: [0.0; 3],
             position: DVec3::ZERO,
+            impact_offset: DVec2::ZERO,
+            impact_velocity: DVec2::ZERO,
             pitch_deg: 0.0,
             bank_deg: 0.0,
             suspension: vec![[0.0; 2]; axle_count],
             contact_z: Vec::new(),
         }
+    }
+
+    /// Where the line the body turns about is (world x east, y north) and how far it lies
+    /// along the body from the vehicle's origin (m): the point of the body that follows the
+    /// way's point `rotation_long()` metres along it.
+    pub fn rotation_at(&self) -> DVec2 {
+        self.rear
+    }
+
+    pub fn rotation_long(&self) -> f32 {
+        self.rot_long
     }
 
     /// Put the body onto its way, standing still and straight. `way(d)` is the point `d`
@@ -312,6 +338,8 @@ impl AiBody {
         self.started = false;
         self.ground = None;
         self.contact_z.clear();
+        self.impact_offset = DVec2::ZERO;
+        self.impact_velocity = DVec2::ZERO;
         self.last_speed = speed;
         self.step(0.0, speed, way, ground, contact);
     }
@@ -333,6 +361,56 @@ impl AiBody {
             MotionKind::Rail => self.ride(way),
             MotionKind::Air => self.fly(dt, speed, way),
         }
+        self.settle_collision(dt);
+    }
+
+    /// Give a road vehicle a velocity impulse in world space. Its path-following driver
+    /// recovers after the impact rather than teleporting the body back onto the lane.
+    /// `closing_speed` is how fast the two came together along `direction`, `striker` the
+    /// mass (kg) of the vehicle that hit this one, `mass` this one's: the change of speed
+    /// is the impulse of the blow over this mass, (1 + e) m1 / (m1 + m2) v - the rigid
+    /// model's restitution, given back only by a real blow (above 1 m/s).
+    pub fn collision_impulse(
+        &mut self,
+        direction: DVec2,
+        closing_speed: f32,
+        striker: f32,
+        mass: f32,
+    ) {
+        if self.kind != MotionKind::Road
+            || !direction.is_finite()
+            || !closing_speed.is_finite()
+            || !striker.is_finite()
+            || !mass.is_finite()
+            || closing_speed <= 0.0
+            || striker <= 0.0
+            || mass <= 0.0
+        {
+            return;
+        }
+        let e = if closing_speed > 1.0 { crate::rigid::RESTITUTION } else { 0.0 };
+        let recoil_speed = (1.0 + e) * striker / (striker + mass) * closing_speed;
+        self.impact_velocity += direction.normalize_or_zero() * recoil_speed as f64;
+        self.impact_velocity = self.impact_velocity.clamp_length_max(12.0);
+    }
+
+    fn settle_collision(&mut self, dt: f32) {
+        if self.kind != MotionKind::Road || dt <= 0.0 {
+            return;
+        }
+        let steps = (dt / 0.015).ceil().clamp(1.0, 20.0) as usize;
+        let step = (dt / steps as f32).min(0.25) as f64;
+        for _ in 0..steps {
+            // A damped suspension-like response returns the displaced car to its planned
+            // path without cancelling its initial backwards or sideways impulse.
+            let acceleration = -self.impact_offset * 7.0 - self.impact_velocity * 5.0;
+            self.impact_velocity += acceleration * step;
+            self.impact_offset += self.impact_velocity * step;
+        }
+        self.impact_offset = self.impact_offset.clamp_length_max(4.0);
+        self.impact_velocity = self.impact_velocity.clamp_length_max(12.0);
+        self.position.x += self.impact_offset.x;
+        self.position.y += self.impact_offset.y;
     }
 
     /// Bicycle model: the rotation point follows the way, the front wheels steer towards a
@@ -354,7 +432,10 @@ impl AiBody {
         // the planner's position along the way leads; the body keeps up with it
         let along = (target - self.rear).dot(fwd) as f32;
         let v = if speed < 0.02 && along.abs() < 0.05 { 0.0 } else { (speed + 1.5 * along).clamp(0.0, speed + 3.0) };
-        let look = (1.2 * self.wheelbase).max(3.5) + 0.6 * speed.min(20.0);
+        // (a long wheelbase looks less far ahead: 1.2 wheelbases and more, a bus aimed 8-10 m
+        // down its way and cut every junction turn over the kerb)
+        let (base, per_speed) = if self.wheelbase <= 3.0 { ((1.2 * self.wheelbase).max(3.5), 0.6) } else { (3.6 + 0.5 * (self.wheelbase - 3.0), 0.45) };
+        let look = (base + per_speed * speed.min(20.0)) * self.look_scale.clamp(0.25, 2.0);
         let g = way(self.rot_long + look).truncate() - self.rear;
         let alpha = (g.dot(right) as f32).atan2(g.dot(fwd) as f32).clamp(-FRAC_PI_2, FRAC_PI_2);
         let reach = (g.length() as f32).max(1.0);
@@ -368,9 +449,11 @@ impl AiBody {
         let turn = (u.x * w.y - u.y * w.x).atan2(u.dot(w)).abs() as f32;
         let bend_k = if look > 0.1 { 2.0 * turn / look } else { 0.0 };
         let need = (bend_k * self.wheelbase).atan().to_degrees() * 1.15;
-        let limit = if std::env::var_os("OMSI_AI_MODEL_LOCK").is_some() { self.max_steer } else { self.max_steer.max(need.min(60.0)) };
+        // (both switches are read once and kept: asked of the environment here, every car
+        // every frame took the process's environment lock from each worker thread)
+        let limit = if omsi_cfg::flags::OMSI_AI_MODEL_LOCK.is_set() { self.max_steer } else { self.max_steer.max(need.min(60.0)) };
         // OMSI_DEBUG_AI_WIDE: every tenth of a second a car stands over 1.5 m beside its way
-        if std::env::var_os("OMSI_DEBUG_AI_WIDE").is_some() {
+        if omsi_cfg::flags::OMSI_DEBUG_AI_WIDE.is_set() {
             let off = ((target - self.rear).dot(right)).abs();
             if off > 1.5 {
                 static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -386,6 +469,7 @@ impl AiBody {
             self.steer_cmd += (want - self.steer_cmd).clamp(-rate, rate);
             self.steer += (self.steer_cmd - self.steer) * (dt / 0.08).min(1.0);
         }
+        self.moved = v;
         let k = self.steer.to_radians().tan() / self.wheelbase;
         let dpsi = (v * dt * k) as f64;
         let mid = dir(self.heading + dpsi.to_degrees() * 0.5);
@@ -617,6 +701,44 @@ impl AiBody {
         best
     }
 
+    /// Drive a copy of this body along a way it has not taken yet, at `speed` (m/s, at least
+    /// walking pace), and show `visit` each pose with the distance driven: every `step`
+    /// metres for the first 20 m, twice that beyond, as far as `distance` or until `visit`
+    /// says stop (true). The steering is the real one (`drive`: its rate, its lock, the
+    /// pure pursuit cutting a bend), so the poses are where this body will be, not where
+    /// its way is. `way(d)` is the point `d` metres along the new way from where the
+    /// vehicle's planner is now.
+    pub fn predict(&self, way: &dyn Fn(f32) -> DVec3, speed: f32, step: f32, distance: f32, visit: &mut dyn FnMut(f32, &AiBody) -> bool) {
+        if self.kind != MotionKind::Road {
+            return;
+        }
+        let mut body = self.clone();
+        let v = speed.max(1.5);
+        let mut x = 0.0f32;
+        while x < distance {
+            let ds = if x < 20.0 { step } else { 2.0 * step };
+            x += ds;
+            let at = x;
+            body.drive(ds / v, v, &|d| way(at + d));
+            if visit(x, &body) {
+                return;
+            }
+        }
+    }
+
+    /// Take a step back: the pose before it (`before`), the wheels still turned as they
+    /// were turned in it. A body whose step ran into something stands where it was; had the
+    /// steering gone back with the pose, the next step turned the same corner into the same
+    /// thing again.
+    pub fn take_back(&mut self, before: AiBody) {
+        let (steer, steer_cmd, look_scale) = (self.steer, self.steer_cmd, self.look_scale);
+        *self = before;
+        self.steer = steer;
+        self.steer_cmd = steer_cmd;
+        self.look_scale = look_scale;
+        self.moved = 0.0;
+    }
+
     /// Hand the pose to the vehicle: position and attitude, the accelerations its scripts
     /// read and each wheel's travel.
     pub fn apply(&self, v: &mut VehicleInstance) {
@@ -654,6 +776,35 @@ mod tests {
         }
         // creeping round something: the old geometric length
         assert_eq!(back_in_ramp(3.0, 1.0, BACK_IN_LAT_ACCEL), 10.5);
+    }
+
+    #[test]
+    fn a_road_ai_vehicle_recoils_then_returns_to_its_path() {
+        let mut body = AiBody::new(&golf(), MotionKind::Road);
+        body.place(&|_| DVec3::ZERO, None, None, 0.0);
+        let origin = body.position;
+        body.collision_impulse(DVec2::new(0.0, -1.0), 5.0, 10_000.0, 1_000.0);
+        body.step(0.1, 0.0, &|_| DVec3::ZERO, None, None);
+        assert!(body.position.y < origin.y - 0.1, "the collision must move the car backwards");
+        for _ in 0..80 {
+            body.step(0.05, 0.0, &|_| DVec3::ZERO, None, None);
+        }
+        assert!((body.position.y - origin.y).abs() < 0.1, "the AI should settle back onto its path");
+    }
+
+    #[test]
+    fn a_heavier_striker_gives_the_ai_a_stronger_recoil() {
+        let recoil_speed = |striker| {
+            let mut body = AiBody::new(&golf(), MotionKind::Road);
+            body.place(&|_| DVec3::ZERO, None, None, 0.0);
+            body.collision_impulse(DVec2::new(0.0, -1.0), 3.0, striker, 1_000.0);
+            body.impact_velocity.length()
+        };
+        let light = recoil_speed(1_000.0);
+        let heavy = recoil_speed(12_000.0);
+        assert!(heavy > light * 1.5, "light striker {light:.3} m/s, heavy striker {heavy:.3} m/s");
+        // momentum: a 12 t bus at 3 m/s gives a 1 t car at most (1 + e) 12/13 of it
+        assert!((heavy - 1.2 * 12.0 / 13.0 * 3.0).abs() < 1e-3, "{heavy}");
     }
 
     fn golf() -> Vehicle {

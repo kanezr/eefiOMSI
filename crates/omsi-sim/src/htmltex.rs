@@ -1,5 +1,4 @@
 use crate::vehicle::VehicleInstance;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -93,7 +92,25 @@ pub fn set_backend(factory: BackendFactory) -> bool {
 fn make_renderer(width: u32, height: u32, html: &str, api: PageApi) -> Box<dyn HtmlRenderer> {
     match BACKEND.get() {
         Some(f) => f(width, height, html, api),
-        None => Box::new(crate::htmlengine::EngineRenderer::with_api(width, height, html, api)),
+        None => {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| log::warn!("htmltexture: no page backend registered, the pages stay empty"));
+            Box::new(NoPage)
+        }
+    }
+}
+
+/// The page of a game that registered no backend ([`set_backend`]: the game registers
+/// omsi-htmlengine's at start): it draws nothing and does nothing.
+struct NoPage;
+
+impl HtmlRenderer for NoPage {
+    fn set_vars(&mut self, _num: &[(String, f32)], _strs: &[(String, String)]) {}
+    fn poll_frame(&mut self) -> Option<Vec<u8>> {
+        None
+    }
+    fn take_events(&mut self) -> Vec<(String, f32)> {
+        Vec::new()
     }
 }
 
@@ -105,7 +122,7 @@ fn find_file(dirs: &[&Path], rel: &str) -> Option<PathBuf> {
     if let Some(parent) = dirs.first().and_then(|d| d.parent()) {
         all.push(parent.to_path_buf());
     }
-    all.iter().map(|d| omsi_cfg::resolve_path(d, rel)).find(|p| p.is_file())
+    all.iter().map(|d| omsi_cfg::resolve_path(d, rel)).find(|p| omsi_cfg::vfs::is_file(p))
 }
 
 fn attr(tag: &str, name: &str) -> Option<String> {
@@ -194,7 +211,7 @@ pub fn load_page(dirs: &[&Path], rel: &str) -> String {
         return String::new();
     };
     log::debug!("htmltexture: page {rel} -> {}", path.display());
-    let Ok(bytes) = std::fs::read(&path) else {
+    let Ok(bytes) = omsi_cfg::vfs::read(&path) else {
         log::debug!("htmltexture: {} cannot be read", path.display());
         return String::new();
     };
@@ -205,7 +222,7 @@ pub fn load_page(dirs: &[&Path], rel: &str) -> String {
     let read = |href: &str| -> Option<String> {
         let href = href.split(['?', '#']).next().unwrap_or(href);
         let text = find_file(&bases, href)
-            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|p| omsi_cfg::vfs::read(&p).ok())
             .map(|b| String::from_utf8_lossy(&b).trim_start_matches('\u{feff}').to_string());
         match &text {
             Some(t) => log::debug!("htmltexture: inlined {href} ({} bytes)", t.len()),
@@ -259,8 +276,9 @@ pub struct HtmlTexture {
     pub width: u32,
     pub height: u32,
     renderer: Box<dyn HtmlRenderer>,
-    last_num: HashMap<String, f32>,
-    last_str: HashMap<String, String>,
+    /// The variables the page has seen, by index (None: not given yet).
+    last_num: Vec<Option<f32>>,
+    last_str: Vec<Option<String>>,
     /// The vehicle snapshot the page has seen.
     last_api: Option<crate::vehicle_api::ApiValue>,
     /// The time, date and locale the page has seen.
@@ -284,8 +302,8 @@ impl HtmlTexture {
             width: w,
             height: h,
             renderer: make_renderer(w, h, html, api),
-            last_num: HashMap::new(),
-            last_str: HashMap::new(),
+            last_num: Vec::new(),
+            last_str: Vec::new(),
             last_api: None,
             last_env: None,
             last_departures: None,
@@ -319,13 +337,23 @@ pub struct PageOutput {
     pub frames: Vec<(usize, u32, u32, Vec<u8>)>,
 }
 
+/// The owner's variables for its pages: names and values side by side, by index (the
+/// program's numeric and string variables).
+pub(crate) struct PageVars<'a> {
+    pub num_names: &'a [String],
+    pub num: &'a [f32],
+    pub str_names: &'a [String],
+    pub strs: &'a [String],
+}
+
 /// Give every page what changed since it last looked (variables, the vehicle's state when
 /// `api` is given, time), and collect what the pages did (variables set, triggers pressed, requests) and
-/// their new pictures. Shared by vehicles and scenery objects.
+/// their new pictures. Shared by vehicles and scenery objects. The variables are compared by
+/// index with what the page saw last; only the changed ones are copied (every name and value
+/// was, every frame).
 pub(crate) fn drive_pages(
     pages: &mut [HtmlTexture],
-    num: &[(String, f32)],
-    strs: &[(String, String)],
+    vars: &PageVars<'_>,
     api: Option<&crate::vehicle_api::ApiValue>,
     env: &crate::vehicle_api::ApiValue,
     depot: Option<&crate::vehicle_api::ApiValue>,
@@ -336,8 +364,23 @@ pub(crate) fn drive_pages(
         let api_changed = api.is_some_and(|a| t.last_api.as_ref() != Some(a));
         let env_changed = t.last_env.as_ref() != Some(env);
         let departures_changed = departures.is_some_and(|d| t.last_departures.as_ref() != Some(d));
-        let dn: Vec<(String, f32)> = num.iter().filter(|(n, v)| t.last_num.get(n) != Some(v)).cloned().collect();
-        let ds: Vec<(String, String)> = strs.iter().filter(|(n, v)| t.last_str.get(n) != Some(v)).cloned().collect();
+        // (`!=`, as before: a NaN is given to the page again every time)
+        let dn: Vec<(String, f32)> = vars
+            .num_names
+            .iter()
+            .zip(vars.num)
+            .enumerate()
+            .filter(|(i, (_, v))| t.last_num.get(*i).copied().flatten().is_none_or(|last| last != **v))
+            .map(|(_, (n, v))| (n.clone(), *v))
+            .collect();
+        let ds: Vec<(String, String)> = vars
+            .str_names
+            .iter()
+            .zip(vars.strs)
+            .enumerate()
+            .filter(|(i, (_, v))| t.last_str.get(*i).and_then(|l| l.as_ref()) != Some(*v))
+            .map(|(_, (n, v))| (n.clone(), v.clone()))
+            .collect();
         if !t.started || !dn.is_empty() || !ds.is_empty() || api_changed || env_changed || departures_changed {
             log::debug!(
                 "htmltexture #{}: {} numeric and {} string variable(s) to the page{}",
@@ -368,11 +411,15 @@ pub(crate) fn drive_pages(
                 t.last_departures = Some(d.clone());
             }
             t.renderer.set_vars(&dn, &ds);
-            for (n, v) in dn {
-                t.last_num.insert(n, v);
+            t.last_num.resize(vars.num.len(), None);
+            for (last, v) in t.last_num.iter_mut().zip(vars.num) {
+                *last = Some(*v);
             }
-            for (n, v) in ds {
-                t.last_str.insert(n, v);
+            t.last_str.resize(vars.strs.len(), None);
+            for (last, v) in t.last_str.iter_mut().zip(vars.strs) {
+                if last.as_ref() != Some(v) {
+                    *last = Some(v.clone());
+                }
             }
             t.started = true;
         }
@@ -464,7 +511,7 @@ impl VehicleInstance {
     }
 
     pub fn update_html_textures(&mut self) {
-        if self.html_textures.is_empty() {
+        if self.host.remote_script_textures || self.html_textures.is_empty() {
             return;
         }
         // the depot file, for the pages that start now
@@ -483,19 +530,18 @@ impl VehicleInstance {
             None
         };
         let mut requests: Vec<HtmlRequest> = Vec::new();
-        let mut num = Vec::new();
-        for (i, name) in self.ty.program.var_names.iter().enumerate() {
-            num.push((name.clone(), self.state.vars[i]));
-        }
-        let mut strs = Vec::new();
-        for (i, name) in self.ty.program.str_var_names.iter().enumerate() {
-            strs.push((name.clone(), self.state.str_vars[i].clone()));
-        }
+        let p = self.ty.program.clone();
+        let vars = PageVars {
+            num_names: &p.var_names,
+            num: &self.state.vars[..p.var_names.len()],
+            str_names: &p.str_var_names,
+            strs: &self.state.str_vars[..p.str_var_names.len()],
+        };
         // one snapshot of the vehicle for all pages
         let api = self.html_api_snapshot();
         let env = self.html_env_snapshot();
         let departures = (!self.host.html_departures.is_empty()).then(|| crate::vehicle_api::departures(&self.host.html_departures));
-        let out = drive_pages(&mut self.html_textures, &num, &strs, Some(&api), &env, depot.as_ref(), departures.as_ref());
+        let out = drive_pages(&mut self.html_textures, &vars, Some(&api), &env, depot.as_ref(), departures.as_ref());
         for key in out.departure_wants {
             self.host.want_departures(key);
         }
@@ -526,5 +572,74 @@ impl VehicleInstance {
                 None => log::debug!("htmltexture #{index}: no script texture with this index"),
             }
         }
+    }
+}
+#[cfg(test)]
+mod page_vars_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    type Sent = Arc<Mutex<Vec<(Vec<(String, f32)>, Vec<(String, String)>)>>>;
+
+    struct Recorder(Sent);
+
+    impl HtmlRenderer for Recorder {
+        fn set_vars(&mut self, num: &[(String, f32)], strs: &[(String, String)]) {
+            self.0.lock().unwrap().push((num.to_vec(), strs.to_vec()));
+        }
+        fn poll_frame(&mut self) -> Option<Vec<u8>> {
+            None
+        }
+        fn take_events(&mut self) -> Vec<(String, f32)> {
+            Vec::new()
+        }
+    }
+
+    /// A page is given all variables first and then only the ones that changed (a NaN
+    /// every time, as it never equals what was given), in the order of the variables.
+    #[test]
+    fn a_page_gets_what_changed_by_index() {
+        let sent: Sent = Arc::default();
+        let mut page = HtmlTexture::new(0, 4, 4, "");
+        page.renderer = Box::new(Recorder(sent.clone()));
+        let mut pages = [page];
+        let names: Vec<String> = ["a", "B", "c"].map(String::from).to_vec();
+        let str_names: Vec<String> = ["s", "t"].map(String::from).to_vec();
+        let env = crate::vehicle_api::ApiValue::Null;
+        let mut drive = |num: [f32; 3], strs: [&str; 2]| {
+            let strs = strs.map(String::from);
+            let vars = PageVars { num_names: &names, num: &num, str_names: &str_names, strs: &strs };
+            drive_pages(&mut pages, &vars, None, &env, None, None);
+        };
+        let s = |v: &[(&str, &str)]| -> Vec<(String, String)> { v.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect() };
+        drive([1.0, 2.0, 3.0], ["x", ""]);
+        drive([1.0, 2.0, 3.0], ["x", ""]);
+        drive([1.0, 5.0, f32::NAN], ["x", "y"]);
+        drive([1.0, 5.0, f32::NAN], ["x", "y"]);
+        drive([0.0, 5.0, 3.0], ["z", "y"]);
+        let got = sent.lock().unwrap().clone();
+        let num = |v: &[(&str, f32)]| -> Vec<(String, f32)> { v.iter().map(|(a, b)| (a.to_string(), *b)).collect() };
+        assert_eq!(got.len(), 4, "{got:?}");
+        assert_eq!(got[0], (num(&[("a", 1.0), ("B", 2.0), ("c", 3.0)]), s(&[("s", "x"), ("t", "")])));
+        assert_eq!(got[1].0[0], ("B".to_string(), 5.0));
+        assert!(got[1].0.len() == 2 && got[1].0[1].0 == "c" && got[1].0[1].1.is_nan());
+        assert_eq!(got[1].1, s(&[("t", "y")]));
+        assert!(got[2].0.len() == 1 && got[2].0[0].1.is_nan() && got[2].1.is_empty());
+        assert_eq!(got[3], (num(&[("a", 0.0), ("c", 3.0)]), s(&[("s", "z")])));
+    }
+}
+
+#[cfg(test)]
+mod css_url_tests {
+    use super::rebase_css_urls;
+
+    #[test]
+    fn style_sheet_urls_are_made_relative_to_the_page() {
+        let css = "a{background:url(../img/x.png)} b{background:url('y.png')} c{background:url(data:x)} d{background:url(/abs.png)}";
+        assert_eq!(
+            rebase_css_urls(css, "css/"),
+            "a{background:url(css/../img/x.png)} b{background:url('css/y.png')} c{background:url(data:x)} d{background:url(/abs.png)}"
+        );
+        assert_eq!(rebase_css_urls(css, ""), css);
     }
 }

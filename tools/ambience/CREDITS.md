@@ -1,0 +1,471 @@
+# Ambience sound credits
+
+The openOMSI ambience pack is cut from the field recordings below. Every file was trimmed, level-normalised and re-encoded (32 kHz MP3, impulse responses 32 kHz FLAC); nothing else was changed. The licence of each recording applies to the takes cut from it (listed in pack.json under `source`).
+
+## CC0 1.0 (public domain dedication)
+
+- "pigeon walking and cooing.wav" by 5ro4 - https://freesound.org/s/701282/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Komatsu S280 Excavator doing road work breaking up pavement 01.wav" by AGFX - https://freesound.org/s/378102/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant Angle Grinder.wav" by Alex_hears_things - https://freesound.org/s/636858/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Passenger jet flying overhead and bird noises.wav" by Alex_hears_things - https://freesound.org/s/636862/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "2 men playing tennis" by AlexMilsom - https://freesound.org/s/803251/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "New years eve Berlin fireworks" by anderperetx - https://freesound.org/s/841160/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Forest, close up of trees rustling in the wind.wav" by Anya_Media - https://freesound.org/s/523389/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Woodland Atmos 05 03-06-2022.wav" by apintofmild - https://freesound.org/s/640188/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "New Year Celebration 2019 Distant Fireworks" by Archos - https://freesound.org/s/456201/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "AutomaticDoor.wav" by ArnyDnD - https://freesound.org/s/232957/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "deep-fryer_sizzle.wav" by Audeption - https://freesound.org/s/455653/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Polish village - rooster" by AudioPapkin - https://freesound.org/s/815127/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Doerener Tunnel 02.wav" by BeatsBasteln - https://freesound.org/s/345344/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "feral pigeons.wav" by BeeProductive - https://freesound.org/s/387207/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "House sparrow.wav" by BeeProductive - https://freesound.org/s/383160/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "pedestrian crossing.wav" by BeeProductive - https://freesound.org/s/395610/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Tractor_Drive_Distant_01.wav" by BenDrain - https://freesound.org/s/488011/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Rooster Crow 1" by BenjaminNelan - https://freesound.org/s/435508/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Tauben im Taubenschlag (pigeons)" by Beskinsky - https://freesound.org/s/778143/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "200603_Leipzig_GottschedstrasseBack_morning_ST.wav" by blaukreuz - https://freesound.org/s/521001/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Heavy Thunder Strike - no Rain - QUADRO.wav" by BlueDelta - https://freesound.org/s/446753/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "THUNDER long rumbling - no Rain - 4-CHANNEL-44kHz.wav" by BlueDelta - https://freesound.org/s/367702/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Kitchen extractor fan" by bolkmar - https://freesound.org/s/472881/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Light rain on street.wav" by BonnyOrbit - https://freesound.org/s/380651/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Soft Rain in Forest Raindrops fall on leaves" by Borgory - https://freesound.org/s/678435/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant ambulance & fire truck sirens (Germany)" by Breviceps - https://freesound.org/s/535776/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "German ambulance passes by" by Breviceps - https://freesound.org/s/581376/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "after rain.wav" by bruno.auzet - https://freesound.org/s/554417/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Berlin train station 01" by bruno.auzet - https://freesound.org/s/727286/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Berlin winter morning" by bruno.auzet - https://freesound.org/s/727290/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "calves in the barn.wav" by bruno.auzet - https://freesound.org/s/660694/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "jackdaws swift sumer evening at Rostrenen 1" by bruno.auzet - https://freesound.org/s/826901/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "meadow with cows.wav" by bruno.auzet - https://freesound.org/s/692841/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "meadow with oriole" by bruno.auzet - https://freesound.org/s/718405/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "outdoor pool.wav" by bruno.auzet - https://freesound.org/s/529787/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "swifts in Rennes" by bruno.auzet - https://freesound.org/s/745891/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "windy night in Berlin" by bruno.auzet - https://freesound.org/s/727292/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Wind-Gusts-late-autumn.wav" by BudJillett - https://freesound.org/s/109485/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Snow Falling In Scotland.wav" by BurghRecords - https://freesound.org/s/551118/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Sleet falls on a snow covered street" by CalebLopez - https://freesound.org/s/844824/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "London UK Ambience Feb 2013 14" by Carlvus - https://freesound.org/s/178704/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Water_Lapping_River.wav" by ceich93 - https://freesound.org/s/318064/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Kraehenruf.mp3" by cfrooos - https://freesound.org/s/181088/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "UK Deciduous Wood in early Spring with Cuckoo" by chris_dagorne - https://freesound.org/s/425315/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Windy UK Woodland in late Winter with European Robin singing" by chris_dagorne - https://freesound.org/s/563153/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Birds in the morning garden with a distant train" by Cinetony - https://freesound.org/s/556929/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Kirchenglocke.wav" by claraluzia - https://freesound.org/s/500324/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "AMB_Ext_Rain_Residential_001.wav" by conleec - https://freesound.org/s/149241/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "AMB_M_City_Rain_Heavy.wav" by conleec - https://freesound.org/s/171981/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "AMB_M_City_Rain_Light.wav" by conleec - https://freesound.org/s/171980/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Snow Shoveling.wav" by crowcountingman - https://freesound.org/s/615841/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "pigeons_fly away_ wing flaps_CsG" by csaszi - https://freesound.org/s/528250/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Close lightning strike 2018 07 07" by csengeri - https://freesound.org/s/434359/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Great Tit" by D4XX - https://freesound.org/s/607242/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Wood Pigeon Call" by D4XX - https://freesound.org/s/607224/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Ambience_Berlin_Balcony.flac" by danner - https://freesound.org/s/427096/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Ambience_Berlin_Rooftop.wav" by danner - https://freesound.org/s/426894/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Outdoor ambience on a wet day" by DarkProductions_2016 - https://freesound.org/s/660878/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Thunder Clap OWB KY 441x16.wav" by Dave Welsh - https://freesound.org/s/194364/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "PARIS_Hailstorm 2014-06-09@1am.wav" by davidmenke - https://freesound.org/s/240295/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Sirens.wav" by deleted_user_2104797 - https://freesound.org/s/325280/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Truck Reverse Beeper.wav" by Disasteradio - https://freesound.org/s/197166/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "3.9s Wide Underpass Reverb IR" by djericmark - https://freesound.org/s/731465/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "JACKHAMMER Tascam DR-05" by dr_elvis01 - https://freesound.org/s/277500/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "GongFeb11.wav" by dreua - https://freesound.org/s/124437/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "frogpond.wav" by eardeer - https://freesound.org/s/431340/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "german_siren_car_driveby_multiple_ambience.wav" by EricsSoundschmiede - https://freesound.org/s/447767/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "SFX_Door_ResidentialBuildingEntrance_BuzzAndOpen.wav" by Euphrosyyn - https://freesound.org/s/370305/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Gelaeut Retzbach Wallfahrtskirche 14 Uhr Sa 20240413" by Evillan - https://commons.wikimedia.org/wiki/File:Gelaeut_Retzbach_Wallfahrtskirche_14Uhr_Sa_20240413_140026.ogg - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "WimpfenBerg Stadtkirche Gelaeut Sonntags 20250427" by Evillan - https://commons.wikimedia.org/wiki/File:WimpfenBerg_Stadtkirche_GelaeutSonntags_20250427_103128.ogg - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Very angry black-headed gull at the baltic sea" by Fania_Katz - https://freesound.org/s/848876/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Chaffinch near a mountain stream" by farandjoun - https://freesound.org/s/828439/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Green woodpecker 2" by farandjoun - https://freesound.org/s/828190/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "electric transformer.wav" by Fedor_Ogon - https://freesound.org/s/649260/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Cow mooing in south of France (Limousin)" by felix.blume - https://freesound.org/s/163727/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Field in the surrounding of a small city in Switzerland (Fribourg)" by felix.blume - https://freesound.org/s/467445/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Strong wind blowing in the plain in Anatolia (Turkey)" by felix.blume - https://freesound.org/s/167684/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Swimming pool outdoor in Romania during the summer" by felix.blume - https://freesound.org/s/238386/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Wind in an electric pole, microphone upwards, slight whistle in the wire, cricket and bird singing, train horn very far away recorded in Texas, Pampa" by felix.blume - https://freesound.org/s/666174/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Football game_long perspective, evening, suburb.wav" by fi2lcallpeace - https://freesound.org/s/542617/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Uptown neigborhood_night_streetlight buzz.WAV.wav" by fi2lcallpeace - https://freesound.org/s/542623/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Beech Forest Atmo.wav" by fionablau - https://freesound.org/s/477555/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "City Playground (Boxhagenerplatz, Berlin)" by foongaz - https://freesound.org/s/209901/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Atmo 5 - Dawn City Birds Quiet Summer Germany.wav" by fred.rabelo - https://freesound.org/s/642296/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "House sparrows" by freemaster2 - https://freesound.org/s/670176/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Rain on roof 0001.wav" by frenkfurth - https://freesound.org/s/650428/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "rainy night at a crossroad" by FrojeoStern - https://freesound.org/s/276875/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Bees buzzing 1" by fthgurdy - https://freesound.org/s/528935/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "berlin city train atmo s-bahn" by Garuda1982 - https://freesound.org/s/528103/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "big dog barks in the village" by Garuda1982 - https://freesound.org/s/708174/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Cherry Blossom Tree Ambience Birds and Distant Road Noise" by Garuda1982 - https://freesound.org/s/851175/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "chicks chirping" by Garuda1982 - https://freesound.org/s/692608/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "city ​​park in the morning with woodpeckers" by Garuda1982 - https://freesound.org/s/631584/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Courtyard ambience with pigeons and city sounds in spring" by Garuda1982 - https://freesound.org/s/851386/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "demolition excavator field recording with zoom h2n" by Garuda1982 - https://freesound.org/s/422081/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "distant train with horn" by Garuda1982 - https://freesound.org/s/633133/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Gentle Rain on Leaves with Soft Wind and Suburban Ambience" by Garuda1982 - https://freesound.org/s/757276/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "leipzig main station atmo field recording" by Garuda1982 - https://freesound.org/s/608860/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "old quarry with birds and rooster" by Garuda1982 - https://freesound.org/s/636870/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "outdoor pool & children atmo field recording" by Garuda1982 - https://freesound.org/s/432326/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "schoolyard playing children atmo" by Garuda1982 - https://freesound.org/s/538220/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Spring Birds at the Edge of a Field with Distant Village Sounds" by Garuda1982 - https://freesound.org/s/852010/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "summer forest atmosphere with birds and insects" by Garuda1982 - https://freesound.org/s/693184/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "swarm of singing starlings with a rushing wind in the trees" by Garuda1982 - https://freesound.org/s/572500/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "under the highway bridge atmo field recording" by Garuda1982 - https://freesound.org/s/529580/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Village pond with bird sounds and natural background" by Garuda1982 - https://freesound.org/s/759738/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "windy pine forest with birds atmo" by Garuda1982 - https://freesound.org/s/636425/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Rook Kravi Hora" by genghisattenborough - https://freesound.org/s/744595/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Group of jackdaw" by GeniusKevin - https://freesound.org/s/612814/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "church_bells_St_Ulrich-and-Afra_Augsburg_Germany" by geraldfiebig - https://freesound.org/s/844602/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Türsignal der S-Bahn Berlin" by Gerhard Iben - https://commons.wikimedia.org/wiki/File:T%C3%BCrsignal_der_S-Bahn_Berlin.wav - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Great Tit (Parus major) Birdsong" by GirlWithSoundRecorder - https://freesound.org/s/849566/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant Airplane - Loop" by gis_sweden - https://freesound.org/s/814318/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Rail Grinding Machine with Rythmic Clang Berlin Night" by giuliorasi - https://freesound.org/s/812360/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Berlin, Friedrichstraße Kochstraße crossroad amb OMNI.wav" by gladkiy - https://freesound.org/s/347332/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Plane flying overhead distant.wav" by gpag1 - https://freesound.org/s/392481/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Rain falling on a metal roof - 96 kHz / 24 Bit" by GregorQuendel - https://freesound.org/s/239939/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant Train 2 RX.flac" by greysound - https://freesound.org/s/547950/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Suburban Park with Children and Tennis Players (binaural)" by hargissssound - https://freesound.org/s/319373/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Winter Snowstorm Ambience" by HECKFRICKER - https://freesound.org/s/754256/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "St. Matthias Trier Kirchenglocken" by Helge Klaus Rieder - https://commons.wikimedia.org/wiki/File:St._Matthias_Trier_Kirchenglocken.ogg - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant Lawn Mower, Leaf Blower, Weed Eater" by Hitrison - https://freesound.org/s/184946/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Downpipe garden rain" by holstebroe - https://freesound.org/s/747532/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "workshop noise.wav" by Ian_G - https://freesound.org/s/547409/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "field recordind Whitegate chuchyard cheshire england 20-may-2025" by IanGW - https://freesound.org/s/808021/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "snowmelt in suburbia" by IanGW - https://freesound.org/s/784086/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "General Atmosphere of Metal Fabrication Workshop" by iankath - https://freesound.org/s/189817/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Walking past the Substation .WAV" by ID_23 - https://freesound.org/s/680647/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant Dogs" by IENBA - https://freesound.org/s/820267/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "North Yorks Mallard Frenzy.flac" by Iggyf - https://freesound.org/s/324087/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "2021-01-12-shoveling-snow.wav" by ilmari_freesound - https://freesound.org/s/578121/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Robin alarm call.wav" by inchadney - https://freesound.org/s/165527/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "TRAIN_passingby_germanRegionalTrain_ruralArea_IrmH24" by Irmsch - https://freesound.org/s/750594/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Nachtigall Nightingale" by JappeHallunken - https://freesound.org/s/515220/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Ambience - Cattle Barn - Busy - 96kHzhg.wav" by JarredGibb - https://freesound.org/s/233268/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Church Clock Strikes 1.wav" by JarredGibb - https://freesound.org/s/219047/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Church Clock Strikes 12.wav" by JarredGibb - https://freesound.org/s/219044/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Church Bells - Bow Bells.wav" by jlm5040 - https://freesound.org/s/431844/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "MB trac 1400 turbo running idle" by jmagiera - https://freesound.org/s/440508/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Ambience - Metal workshop with grinders and machinery.wav" by jodybruchon - https://freesound.org/s/475217/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Road Works in Swiss Cottage, London" by JoeDinesSound - https://freesound.org/s/341268/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Hail Storm" by JonnyThePonny - https://freesound.org/s/393864/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "AMBMisc_ Outdoor, Medium Distant Hum, Factory, Birds, Tascam DR-05X, Stereo, 48Khs, 24 bit_JW Audio" by JW_Audio - https://freesound.org/s/798045/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Heilbronn Kilianskirche Gelaeut Sa 20241116" by Karlunun - https://commons.wikimedia.org/wiki/File:Heilbronn_Kilianskirche_Gelaeut_Sa_20241116_1509.ogg - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "bristol-road-traffic-mid-morning-friday-crossing-bleeps.wav" by keithpeter - https://freesound.org/s/107220/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "2016-10-06 Thunder Crack.wav" by kingsrow - https://freesound.org/s/361772/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Ambience, City, Summer Evening, Swift Calls" by Kinoton - https://freesound.org/s/611708/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Bumblebee In Lavender" by Kinoton - https://freesound.org/s/397113/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Ducks and Geese at the Lake" by Kinoton - https://freesound.org/s/416038/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Isolated Swift Calls" by Kinoton - https://freesound.org/s/478455/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "thundery summer rain 01" by klaard - https://freesound.org/s/868976/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "thundery summer rain 02" by klaard - https://freesound.org/s/868977/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "highwayunderpass01.wav" by klangfabrik - https://freesound.org/s/160002/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Pinewood In Memoriam - Febr 05 NL Giersbergen -33dB 170215_1085.flac" by klankbeeld - https://freesound.org/s/383506/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "WindblownLeavesSkitteringAcrossAsphaltOct31st2014.WAV" by kvgarlic - https://freesound.org/s/253535/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Winds and Leaves MIX From October 23rd 2019 Smaller File Size.WAV" by kvgarlic - https://freesound.org/s/489774/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "airplane jet passby overhead high altitude roar2.flac" by kyles - https://freesound.org/s/451953/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "bus coach ext diesel truck engine idle throaty.flac" by kyles - https://freesound.org/s/453415/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "bus coach ext pull up brake air release idle.wav" by kyles - https://freesound.org/s/454420/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "forest light wind through bare trees winter GREAT FOR FALLING SNOW.flac" by kyles - https://freesound.org/s/637566/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "outdoor community festival wide general activity crowd german and english voices and movement steps grass, distant banging construction nearby traffic and tree wind.wav" by kyles - https://freesound.org/s/405317/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "shopping cart metal rattle push ext.flac" by kyles - https://freesound.org/s/453553/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "gully with water drips" by launemax - https://freesound.org/s/249927/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "English Countryside with Church Bells (Long).flac" by lazymonk - https://freesound.org/s/511193/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Air compressor - After run" by ldezem - https://freesound.org/s/386142/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "City Centre_Distant Sirens" by LewisEmmott5 - https://freesound.org/s/732689/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Main Station. Frankfurt/M.wav" by Lichtbildner - https://freesound.org/s/400203/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "AMBLM ext day people crowd walla berlin kulturforum international german english summer" by LudwigMueller - https://freesound.org/s/459161/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Ampel Kreuzung 08" by LukasGoldbach - https://freesound.org/s/718647/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "AbdnC_KingStPelican_120225.wav" by MacFerret_20 - https://freesound.org/s/147848/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "220802_011 Radawka field Night Crickets Owl Dogs Frogs.wav" by MaciekKubera - https://freesound.org/s/687446/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Storm Drain" by martialway47 - https://freesound.org/s/258187/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant Tractor FF656.aif" by martinimeniscus - https://freesound.org/s/164444/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "DMP013016 HEAVYSNOWSTORM.wav" by martypinso - https://freesound.org/s/22606/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Glocken Mater Dolorosa (Berlin-Lankwitz)" by Membeth - https://commons.wikimedia.org/wiki/File:Glocken.Mater.Dolorosa.ogg - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "file-imbiss s-bhf prenzlauer allee12.35done.mp3" by metropolis I - https://freesound.org/s/81834/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Chainsaws (distant)" by micadoe - https://freesound.org/s/170338/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Geese Flying Overhead.wav" by mike_stranks - https://freesound.org/s/407490/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Grasshoppers" by miklovan - https://freesound.org/s/198277/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Train station platform, southern England" by misperpodcast - https://freesound.org/s/733580/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Balloon Pop, 300m Long Steel Tunnel (192khz IR Sample / Impulse Response)" by modusmogulus - https://freesound.org/s/846029/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "IR Underpass Tunnel 32FP 192kHz Whip" by modusmogulus - https://freesound.org/s/812604/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "highway, atmo, distant.wav" by monotraum - https://freesound.org/s/208502/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Train Station" by NachtmahrTV - https://freesound.org/s/553190/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Eurasian Magpie Calling" by naturenotesuk - https://freesound.org/s/555096/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Flying geese" by naturenotesuk - https://freesound.org/s/484825/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Great Spotted Woodpecker" by naturenotesuk - https://freesound.org/s/428146/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "September Hanningfield Soundscape" by naturenotesuk - https://freesound.org/s/483554/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "IR_Residential Area.5-Storey Residential Buildings 2_EM" by newlocknew - https://freesound.org/s/816877/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "antwerpen duiven vleugels.wav" by NickPeeters - https://freesound.org/s/415019/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Zernikow Skylarks / Lerchen" by no_use - https://freesound.org/s/194343/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Henllys Woods 22-06-2026 Dawn Chorus" by Noisyjones - https://freesound.org/s/856634/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Train_distant_1.wav" by o_ciz - https://freesound.org/s/475501/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Dawn chorus.WAV" by odilonmarcenaro - https://freesound.org/s/118776/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Train Whistle.aif" by olliehahn12 - https://freesound.org/s/264321/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "railway-crossing-bell.wav" by ondrosik - https://freesound.org/s/121260/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "windy calm atmosphere in a berlin backyard" by OneTwo_BER - https://freesound.org/s/474189/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Vauxhall.wav" by oudodou - https://freesound.org/s/371315/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Crowd at a British wedding reception venue" by Pandos - https://freesound.org/s/362353/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "ChainsawCutting_Distant_4824.wav" by pblzr - https://freesound.org/s/512876/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Kindergarten" by Pedro_Neon - https://freesound.org/s/726511/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Forklift reverse beeping" by peridactyloptrix - https://freesound.org/s/221927/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "vibratory plate compactor machine" by Petrosilia - https://freesound.org/s/698751/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Early Summer Morning Ambience with Birds, Berlin" by Pfannkuchn - https://freesound.org/s/457616/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Party-People outdoor 01 (german)" by Pfannkuchn - https://freesound.org/s/457606/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "mallard and mandarin ducks (with take off)" by pillonoise - https://freesound.org/s/263104/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Kölner Dom (Cologne Cathedral) bells" by polymorpheva - https://freesound.org/s/511546/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "NeukollnChurchBells - Katholische Kirche St. Clara" by polymorpheva - https://freesound.org/s/766854/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Platform announcements.wav" by polymorpheva - https://freesound.org/s/645697/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "bus air brakes and drive away" by PostProdDog - https://freesound.org/s/607820/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "BG SaSc Autobahn Highway Background Far Germany.wav" by Profispiesser - https://freesound.org/s/583294/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "BG SaSc Cows Eating Barn Close Rattle Metal Birds.wav" by Profispiesser - https://freesound.org/s/583049/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "BGSaSc Walla Medium Crowd German Berlin Talking People 01" by Profispiesser - https://freesound.org/s/550916/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "FXSaSc Berlin Tram Passing Underpass Interior Rumble" by Profispiesser - https://freesound.org/s/517391/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Great Tit At Dawn (Kohlmeise).wav" by pulswelle - https://freesound.org/s/346066/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Nightingale  - 1h - Nachtigall - 1Std. 48khz" by pulswelle - https://freesound.org/s/732426/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Road Works and Jackhammer" by pulswelle - https://freesound.org/s/248152/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "A Tunnel away from main street (Müllerstraße).flac" by qubodup - https://freesound.org/s/174737/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Next to Shell Gas Station Müllerstraße Berlin Germany.flac" by qubodup - https://freesound.org/s/174735/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Screaching Supermarket Sliding Door" by qubodup - https://freesound.org/s/854877/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Shopping Cart Return.flac" by qubodup - https://freesound.org/s/183993/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Tractor with trailer" by Rahora - https://freesound.org/s/822396/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "GilchingBahnhof.wav" by randomuser22 - https://freesound.org/s/399228/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "CricketsandTawnyOwl.wav" by raoul_slayer - https://freesound.org/s/203598/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "rain water downpipe.wav" by realgone - https://freesound.org/s/465698/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "BÜ DE, Schrankensignal, 5" by Renardo la vulpo - https://commons.wikimedia.org/wiki/File:B%C3%9C_DE,_Schrankensignal,_5.ogg - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Konstanz, Hafenuhr, 1" by Renardo la vulpo - https://commons.wikimedia.org/wiki/File:Konstanz,_Hafenuhr,_1.ogg - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Blackbird (isolated)" by richwise - https://freesound.org/s/811988/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Blackbird in summer" by richwise - https://freesound.org/s/578852/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "By the river in Ringwood, May 2019" by richwise - https://freesound.org/s/469597/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Church bells" by richwise - https://freesound.org/s/660230/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Dawn chorus - Hampshire countryside Springtime" by richwise - https://freesound.org/s/466242/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant Helicopter Hover" by richwise - https://freesound.org/s/473539/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant Helicopter Left-Right Flyby Stereo" by richwise - https://freesound.org/s/472785/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant Thunder" by richwise - https://freesound.org/s/361401/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Larger Car Park" by richwise - https://freesound.org/s/482290/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "New Years Eve 2018 and New Year 2019" by richwise - https://freesound.org/s/455517/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Spring in Southampton" by richwise - https://freesound.org/s/386932/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "UK Farmland at dawn in the Spring" by richwise - https://freesound.org/s/565321/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "UK spring dawn chorus during lockdown" by richwise - https://freesound.org/s/516526/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "York Train Station, UK" by richwise - https://freesound.org/s/583604/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Garbage Truck [distant perspective] 1m40s.WAV" by rimidaL - https://freesound.org/s/626804/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Dawn Chorus - 11th June 2016.wav" by Rollo145 - https://freesound.org/s/347631/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Belgian chip shop" by Rolly-SFX - https://freesound.org/s/626159/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "steady rain in the city.wav" by roofusj - https://freesound.org/s/217236/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Maastricht_Industrial_Estate_with_Nature_at_Night.wav" by RutgerMuller - https://freesound.org/s/553920/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Robin song, good Quality, Forest south of France" by Sacha.Julien - https://freesound.org/s/725331/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Operating a Plate Compactor.wav" by SampleDiaries - https://freesound.org/s/449121/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Village Night Crickets" by savvah - https://freesound.org/s/400353/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Far Away Leaf Blower.wav" by shelbyshark - https://freesound.org/s/513393/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Snow Silence - 10min Ambient Winter Soundscape" by shouya_trumpet - https://freesound.org/s/842985/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Walla_Wetherspoons_The_Justice_Mill_Aberdeen_Scotland_01" by SignatureSoundsOrg - https://freesound.org/s/872738/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "City Backyard Ambience" by simgo - https://freesound.org/s/849171/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Stormy winds through the trees.mp3" by Simon Spiers - https://freesound.org/s/502523/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Berlin Street AMB 01" by Skjor1 - https://freesound.org/s/321728/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "S-Bahn Train Approach - Leave & Tannoy" by Skjor1 - https://freesound.org/s/386480/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Kotti_TrafficLights_Street_Ambiance" by SMKoski02 - https://freesound.org/s/855047/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "AMB-Walla,English-LondonGatwickAirport-29Sep2022,1106H" by soundandmelodies - https://freesound.org/s/731247/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "20131119_Shopping Cart Being Removed_H2nXY.wav" by Soundscape_Leuphana - https://freesound.org/s/209746/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "20131204_Getting a Shopping cart_ZoomH2nXY.wav" by Soundscape_Leuphana - https://freesound.org/s/209978/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Cow moo #8" by spurioustransients - https://freesound.org/s/513565/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "skylark.wav" by squashy555 - https://freesound.org/s/244357/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Autumn wind and dry leaves.wav" by Stek59 - https://freesound.org/s/457318/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "A screeching Magpie in the top of a birch.wav" by straget - https://freesound.org/s/402971/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Mallards at the bay.wav" by straget - https://freesound.org/s/411849/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Wind in trees-force8-night.aif" by surrey_film - https://freesound.org/s/86345/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Chip shop" by taphonomy - https://freesound.org/s/822432/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "BeesShortBurst.wav" by taylordonj - https://freesound.org/s/521364/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "wind_forest_08_strong_l_01.wav" by teadrinker - https://freesound.org/s/403051/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Bells of St Alkelda's Church, Giggleswick, England.flac" by thaighaudio - https://freesound.org/s/125825/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "thecityrings - abouttheschools - school courtyard essen.wav" by thecityrings - https://freesound.org/s/174032/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "thecityrings - abouttheschools - schoolbell essen.wav" by thecityrings - https://freesound.org/s/174031/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "HOOT.wav" by thegoosington - https://freesound.org/s/454842/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Cardiff - Ambulance Drive By" by TicAshfield - https://freesound.org/s/824557/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "UK Ambulance - West Midlands" by TicAshfield - https://freesound.org/s/824560/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "IR_ST_Tunnel_02.wav" by Tim_Verberne - https://freesound.org/s/537673/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Distant Highway Sound." by Tom_Kaszuba - https://freesound.org/s/658590/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Lawnmover, bit distant, birds, stops, STRAFORD, 2011.wav" by TRP - https://freesound.org/s/577285/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Altenthann Winter Hailstorm – Rooftop Impact Ambience STEREO (3 February 2026) - 20260203" by TSP-Talk - https://freesound.org/s/844074/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Altenthann – Midday Rural Village Ambience with Birds, Children, Distant Traffic & Aircraft Events (03 Mar 2026) - 260303_001" by TSP-Talk - https://freesound.org/s/847111/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Munich Ambience Night Train -003 - 20220719" by TSP-Talk - https://freesound.org/s/643048/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Quiet Winter Night with Light Snow & Wind – Altenthann Ambience - 260215_001" by TSP-Talk - https://freesound.org/s/845502/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Conductor Blowing a Whistle" by Urkki69 - https://freesound.org/s/817279/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Tempelhof Skylark" by Veridiansunrise - https://freesound.org/s/399221/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "AMBCnst Calm Sunday at the Verkö industrial area with light rain, Karlskrona, Sweden" by vhio - https://freesound.org/s/801337/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Bird - Tawny owl, female" by Vrymaa - https://freesound.org/s/735744/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Rook (Corvus frugilegus)" by Walking.With.Microphones - https://freesound.org/s/556221/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "metal workshop quiet 2.wav" by Walter_Odington - https://freesound.org/s/26798/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Sieg ICE +7db.wav" by whoank - https://freesound.org/s/349173/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Gas Pump.wav" by WryFighter - https://freesound.org/s/451551/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Construction site with a concrete mixer" by xkeril - https://freesound.org/s/610539/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Light rain on roof" by xkeril - https://freesound.org/s/669484/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Water dripping after the rain" by xkeril - https://freesound.org/s/628404/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "City Ambience Distant Stereo.wav" by Yakobb1 - https://freesound.org/s/495866/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Thunder3" by Yoyodaman234 - https://freesound.org/s/267550/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "distant street cleaners" by Yuval - https://freesound.org/s/204841/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Hail and rain" by zachrau - https://freesound.org/s/232284/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Hail on roof" by zachrau - https://freesound.org/s/232288/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "Woodpecker drumming in a pine forest" by zachrau - https://freesound.org/s/867542/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+- "crickets.wav" by zerrofs - https://freesound.org/s/118419/ - CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/). Trimmed, level-normalised and re-encoded.
+
+## CC BY (attribution)
+
+- "A Parliament Of Tawny Owls.wav" by Benboncan - https://freesound.org/s/116663/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Blackbird.wav" by Benboncan - https://freesound.org/s/72947/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Carrion Crows.wav" by Benboncan - https://freesound.org/s/96950/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Green Woodpecker.wav" by Benboncan - https://freesound.org/s/64063/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Lake Waves 2.wav" by Benboncan - https://freesound.org/s/67884/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "More Frogs.flac" by Benboncan - https://freesound.org/s/147590/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Toads Sh.wav" by Benboncan - https://freesound.org/s/117147/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Thunderclap and Rumble With No Rain 9126" by BobVoldar - https://freesound.org/s/868579/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Hinterhof - Berlin-Neukölln, Kinder, Vögel, leichter Wind.wav" by BockelSound - https://freesound.org/s/487432/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Stadt - Winter, Morgen, Innenhof.wav" by BockelSound - https://freesound.org/s/487879/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Kids playing on a school-yard" by caquet - https://freesound.org/s/262677/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "distribution transformer station.wav" by dibko - https://freesound.org/s/577462/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Downpipe2.wav" by digifishmusic - https://freesound.org/s/71594/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "20060412.thunder.wav" by dobroide - https://freesound.org/s/18045/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "20061026.rain.2cars.flac" by dobroide - https://freesound.org/s/24370/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "20061105.pigeon.flac" by dobroide - https://freesound.org/s/24972/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "20161127_rain.on.foliage.wav" by dobroide - https://freesound.org/s/370154/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Murmuration edit.wav" by dommygee - https://freesound.org/s/254983/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "ATM-LES-CIST-1,50.wav" by Dr. Macak - https://freesound.org/s/111490/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Rain on Window Ledge, Drops and Spashes" by Erbsland-Music - https://freesound.org/s/184629/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "black headed gulls 3.wav" by ERH - https://freesound.org/s/32330/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Sk310308 blue tit gun.wav" by ERH - https://freesound.org/s/52184/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "sparrows.wav" by ERH - https://freesound.org/s/30338/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Blackbird Song & Village Soundscape" by Funkelfang - https://freesound.org/s/851183/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "The Awakening Forest-Early Morning Birds Symphony" by Funkelfang - https://freesound.org/s/851196/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Acoustic traffic signal for blind pedestrians" by Garuda1982 - https://freesound.org/s/566342/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "atmosphere in the suburban garden" by Garuda1982 - https://freesound.org/s/736868/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Bell ringing Gethsemane Church Leipzig Germany" by Garuda1982 - https://freesound.org/s/740617/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "city ​​atmo city courtyard sparrows birds without people background sound effect" by Garuda1982 - https://freesound.org/s/560354/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "crickets chirping in the field on summer evening" by Garuda1982 - https://freesound.org/s/642761/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "distant fireworks new year's eve field recording" by Garuda1982 - https://freesound.org/s/552382/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "dog barks in the distance sound effect" by Garuda1982 - https://freesound.org/s/554600/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "german mixed forest atmo with birds in the spring sound effect" by Garuda1982 - https://freesound.org/s/571440/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "natural pond with birds and reeds rustling in the wind" by Garuda1982 - https://freesound.org/s/641717/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "rain retention basin water runoff sound effect" by Garuda1982 - https://freesound.org/s/566347/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "short heavy summer rain" by Garuda1982 - https://freesound.org/s/641865/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "windless deciduous forest with birds in summer" by Garuda1982 - https://freesound.org/s/641924/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Freight Train Distant Above Perspective" by Geoff-Bremner-Audio - https://freesound.org/s/756215/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Wind singing" by George_Papargyris - https://freesound.org/s/836523/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "City Park Ambience - Berlin / Spring - With Birds, Cars and Planes - Part I.wav" by GregorQuendel - https://freesound.org/s/669172/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "St_Nikolai_Berlin_Spandau.wav" by gurlt - https://freesound.org/s/641075/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "downpipe rain thunder.wav" by hannagreen - https://freesound.org/s/346566/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Gong_Pause_1x.mp3" by Hansl - https://freesound.org/s/203653/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Snow_and_dripping.flac" by haraldthi - https://freesound.org/s/418246/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Wind in Pine Trees, Soft Rustle, Slaley Forest, ORTF Stereo" by Hear_it_use_it - https://freesound.org/s/849627/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Downpour And Thunder" by iainmccurdy - https://freesound.org/s/759327/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "S-Bahn Arriving, Stopping, Departing Schulzendorf Station (Berlin)" by iainmccurdy - https://freesound.org/s/692936/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "at the edge of the forest.WAV" by inchadney - https://freesound.org/s/135135/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Backyard in Berlin in March.WAV" by inchadney - https://freesound.org/s/93452/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Chaffinch.WAV" by inchadney - https://freesound.org/s/69301/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Cuckoo.wav" by inchadney - https://freesound.org/s/121203/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Frogs in town.wav" by inchadney - https://freesound.org/s/54920/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "summer evening in town.WAV" by inchadney - https://freesound.org/s/102245/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Ambience, London Waterloo Train Station.wav" by InspectorJ - https://freesound.org/s/394411/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Thunder, Very Close, No Rain, C.wav" by InspectorJ - https://freesound.org/s/321654/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Gas Station Sequence.WAV" by jakobthiesen - https://freesound.org/s/97935/ - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Trimmed, level-normalised and re-encoded.
+- "peugot 206 car exterior closing door pumping gas bezine ambience birds cars wind" by jorickhoofd - https://freesound.org/s/176637/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "200809_1257_FR_NightCrickets.wav" by kevp888 - https://freesound.org/s/530762/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "ambient farmland NL 140713_0299.wav" by klankbeeld - https://freesound.org/s/242602/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Bumblebees buzzing 170601_1190.ogg" by klankbeeld - https://freesound.org/s/398162/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "CalmWinterWoods NL LONG 140120_01.flac" by klankbeeld - https://freesound.org/s/215704/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Carrion Crow CLEAN 1228 PM  220124_0326.wav" by klankbeeld - https://freesound.org/s/616649/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "city hum 3am winter 140217_0090.wav" by klankbeeld - https://freesound.org/s/219877/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "city park Woodpecker Zaltbommel Netherlands 1123 AM 250203_0991" by klankbeeld - https://freesound.org/s/828376/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Cold CityNight 1005PM 210209_0248.wav" by klankbeeld - https://freesound.org/s/625231/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Common Wood-Pigeon 200503_0170 marienburgtuin.wav" by klankbeeld - https://freesound.org/s/613924/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Dogs night village 01 160823_00.wav" by klankbeeld - https://freesound.org/s/360616/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "DrizzlyWoodsMoorlandFens 150119_0517.wav" by klankbeeld - https://freesound.org/s/262029/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "far thunder city 25 km 1101 pm 260827_156" by klankbeeld - https://freesound.org/s/867986/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "field forest winter 007 NL 201216_0209.flac" by klankbeeld - https://freesound.org/s/593685/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "frogs in ditch 220517_0351.flac" by klankbeeld - https://freesound.org/s/634459/ - CC BY 2.0 (https://creativecommons.org/licenses/by/2.0). Trimmed, level-normalised and re-encoded.
+- "Geese CityNight 210209_0248.wav" by klankbeeld - https://freesound.org/s/625674/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "geese high 191028_0085 Lithse Ham.wav" by klankbeeld - https://freesound.org/s/492414/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Greylag Geese fly over floodplain NL 332 PM 250112_0986" by klankbeeld - https://freesound.org/s/785170/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "hail dilapidated barn 160407_03.flac" by klankbeeld - https://freesound.org/s/347003/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Hamlet morning 01 Bokhoven 150405_0585.wav" by klankbeeld - https://freesound.org/s/269199/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "night fields 0038 AM 240802_0877" by klankbeeld - https://freesound.org/s/769933/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Park Wind 140205_0055.wav" by klankbeeld - https://freesound.org/s/217696/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "pineforest wind 2-3bft SHORT 130102_00.wav" by klankbeeld - https://freesound.org/s/174095/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Pond city-park wind Den-Bosch NL 140925-01.wav" by klankbeeld - https://freesound.org/s/250178/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "rural wind Holland Germent 121226_00.wav" by klankbeeld - https://freesound.org/s/172864/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "snow ambience suburb 01 130115_04 130115_05.flac" by klankbeeld - https://freesound.org/s/191219/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "snow wind city 171211_1249.flac" by klankbeeld - https://freesound.org/s/413365/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "snowflakesXL umbrella 130214_01.flac" by klankbeeld - https://freesound.org/s/178190/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "snowstorm city 02 171211_1249.wav" by klankbeeld - https://freesound.org/s/413608/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Soccer amateurs 02 NL 160925_0978.flac" by klankbeeld - https://freesound.org/s/361060/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "SpringCity5Am NL 130505_03.flac" by klankbeeld - https://freesound.org/s/191787/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "strong wind in park Kijk in de Pot - Bergen op Zoom 459 pm 250915_0024" by klankbeeld - https://freesound.org/s/826923/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "suburban night 2am 121228_00.flac" by klankbeeld - https://freesound.org/s/172632/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "summer great green bush-cricket  river Dommel Singt Michielsgestel Netherlands 327 pm 250710_1157" by klankbeeld - https://freesound.org/s/849166/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "summer night fields village 1055 PM 240801_0874" by klankbeeld - https://freesound.org/s/770858/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Summer-fields NL 170704_1196.flac" by klankbeeld - https://freesound.org/s/397983/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "traffic moderate rain suburban 's-Hertogenbosch Netherlands 1106 am 260602_0121" by klankbeeld - https://freesound.org/s/871284/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "village field  night 2228PM 220811_0495.wav" by klankbeeld - https://freesound.org/s/676639/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "village fields Cromvoirt Netherlands 1035 AM 241103_0937" by klankbeeld - https://freesound.org/s/763264/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "wind bare branches 01 160221_0854.wav" by klankbeeld - https://freesound.org/s/548173/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "wind in tree  white birch 01.wav" by klankbeeld - https://freesound.org/s/131032/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "winter forest 125 PM 240125_0644" by klankbeeld - https://freesound.org/s/726466/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "petrol station.wav" by kwahmah_02 - https://freesound.org/s/245042/ - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Trimmed, level-normalised and re-encoded.
+- "Tree Rustle 3.aif" by le_abbaye_Noirlac - https://freesound.org/s/129427/ - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Trimmed, level-normalised and re-encoded.
+- "Heavy Rain" by lebaston100 - https://freesound.org/s/243629/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Town road traffic by pelican crossing (uk).wav" by loljames - https://freesound.org/s/95294/ - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Trimmed, level-normalised and re-encoded.
+- "Kauwenslaapplaats" by luc de bruijn - https://commons.wikimedia.org/wiki/File:Kauwenslaapplaats_-_SoundCloud_-_luc_de_bruijn.ogg - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Trimmed, level-normalised and re-encoded.
+- "distant_storm_08.wav" by matucha - https://freesound.org/s/115253/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Rain on plastic roof.wav" by Metzik - https://freesound.org/s/243969/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Nightingales at Night" by MichiJung - https://freesound.org/s/871381/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "sodium lamp ballast hum.wav" by namikiri - https://freesound.org/s/590134/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Street light noise" by namikiri - https://freesound.org/s/434070/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Jackdaws on a Cliff by the Sea" by naturenotesuk - https://freesound.org/s/716504/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "AMBPark_Summer.After The Rain.Drops From The Foliage.Ringing Bells.Traffic_EM" by newlocknew - https://freesound.org/s/749473/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "English Dawn Chorus, Rural, late spring" by odilonmarcenaro - https://freesound.org/s/275189/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Open Air Swimming-Pool Ambience" by Oneirophile - https://freesound.org/s/172770/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "JanuarySleet.wav" by pcaeldries - https://freesound.org/s/89488/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "S-Bahn Berlin - Train arrives at station and departs" by Pfannkuchn - https://freesound.org/s/560907/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "S-Bahn Berlin - train passing by in distance, arriving in station" by Pfannkuchn - https://freesound.org/s/560912/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Cuckoo" by plantmonkey - https://freesound.org/s/376703/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Windy Autumn Forest Soundscape 1" by Porphyr - https://freesound.org/s/209338/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "1174thunderclap2.WAV" by reinsamba - https://freesound.org/s/56582/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "120304-004_church_clocks_St.Anna.wav" by reinsamba - https://freesound.org/s/148742/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "1206countryside_crow.wav" by reinsamba - https://freesound.org/s/58838/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "2012_6_14_1070_skylark.wav" by reinsamba - https://freesound.org/s/159374/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "chaffinch_black_forest.wav" by reinsamba - https://freesound.org/s/53973/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "church_clock_striking.wav" by reinsamba - https://freesound.org/s/38010/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "cuckoo_2007_04_17.wav" by reinsamba - https://freesound.org/s/35053/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "nightingale song 5.wav" by reinsamba - https://freesound.org/s/120226/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "tit_warning_call_2007_04_25.wav" by reinsamba - https://freesound.org/s/34196/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Tawny Owl - Male" by sean.townsend - https://freesound.org/s/202917/ - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Trimmed, level-normalised and re-encoded.
+- "AmbBird_Rookery Breeding Season Urban Background_SHMI_ZW Vol 1" by Shuhmi - https://freesound.org/s/855714/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "amateur football game" by soundguyOndrej - https://freesound.org/s/621275/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "GiessHübel-Nacht-310817-zoom0080-Autobahn1.mp3" by stefan_machu - https://freesound.org/s/467941/ - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Trimmed, level-normalised and re-encoded.
+- "Thunder 2" by straget - https://freesound.org/s/529535/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Berlin City Courtyard in the evening" by SwampCommand - https://freesound.org/s/238629/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Pigeons Under Bridge.wav" by theplax - https://freesound.org/s/608899/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "St Peters Bells.wav" by theplax - https://freesound.org/s/660336/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Supermarket Car Park.wav" by theplax - https://freesound.org/s/680406/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "light forest rain.wav" by tim.kahn - https://freesound.org/s/169031/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Spring Sunday morning atmo (Berlin residential area)" by TimoSchmied - https://freesound.org/s/848273/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Liverpool Bus Stop Raining Part 1.wav" by Toby_Crane - https://freesound.org/s/181033/ - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Trimmed, level-normalised and re-encoded.
+- "sewer water.aif" by Tomlija - https://freesound.org/s/105040/ - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Trimmed, level-normalised and re-encoded.
+- "light rain 1.wav" by vedas - https://freesound.org/s/66415/ - CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/). Trimmed, level-normalised and re-encoded.
+- "Harakka räkättää / Magpie chattering in the spring, small birds in the bg" by YleArkisto - https://freesound.org/s/264326/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Puhelinlangat vonkuvat / Telephone wires howling, humming in the wind." by YleArkisto - https://freesound.org/s/362121/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Punarinta, laulu / Robin, redbreast, clear song, singing late in the evening, some faint sounds in the bg (Erithacus rubecula)" by YleArkisto - https://freesound.org/s/350968/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "Tuuli sähkölangoissa / Wind humming and howling in the electric wires, cables, power line, metal tinkling" by YleArkisto - https://freesound.org/s/362915/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+- "electrical substation_hum.wav" by Zabuhailo - https://freesound.org/s/167673/ - CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Trimmed, level-normalised and re-encoded.
+
+## CC BY-SA (attribution, share-alike)
+
+The takes cut from these recordings are adaptations and are shared under the same CC BY-SA licence.
+
+- "Bue Laeutewerk zweifach" by MdE - https://commons.wikimedia.org/wiki/File:Bue_Laeutewerk_zweifach.ogg - CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0/). Trimmed, level-normalised and re-encoded.
+
+## Public domain
+
+- "S-Bahn Berlin - Tür schließen" by Mopshase12 - https://commons.wikimedia.org/wiki/File:S-Bahn_Berlin_-_T%C3%BCr_schlie%C3%9Fen.ogg - Public Domain Mark 1.0 (https://creativecommons.org/publicdomain/mark/1.0/). Trimmed, level-normalised and re-encoded.
+- "Columba palumbus birdsong" by Oona Räisänen (Mysid) - https://commons.wikimedia.org/wiki/File:Columba_palumbus_birdsong.ogg - Public Domain Mark 1.0 (https://creativecommons.org/publicdomain/mark/1.0/). Trimmed, level-normalised and re-encoded.
+- "Quiet of a new Hinterhof plus an evening blackbird" by Peter Cusack - https://archive.org/details/aporee_51484_58743 - Public Domain Mark 1.0 (https://creativecommons.org/publicdomain/mark/1.0/). Trimmed, level-normalised and re-encoded.
+- "Erdkröte Paarungsruf" by Rabe19 - https://commons.wikimedia.org/wiki/File:Erdkr%C3%B6te_Paarungsruf.OGG - Public Domain Mark 1.0 (https://creativecommons.org/publicdomain/mark/1.0/). Trimmed, level-normalised and re-encoded.
+- "Grasfrosch Paarungsrufe" by Rabe19 - https://commons.wikimedia.org/wiki/File:Grasfrosch_Paarungsrufe.OGG - Public Domain Mark 1.0 (https://creativecommons.org/publicdomain/mark/1.0/). Trimmed, level-normalised and re-encoded.
+- "LindauMuenster" by Ramessos - https://commons.wikimedia.org/wiki/File:LindauMuenster.ogg - Public Domain Mark 1.0 (https://creativecommons.org/publicdomain/mark/1.0/). Trimmed, level-normalised and re-encoded.
+- "Train station platform (Dorchester South)" by Richie Warburton - https://archive.org/details/aporee_32460_37321 - Public Domain Mark 1.0 (https://creativecommons.org/publicdomain/mark/1.0/). Trimmed, level-normalised and re-encoded.
+- "Ringeltaube (ruft)" by Sleepytomcat (Jens Kraglund) - https://commons.wikimedia.org/wiki/File:Ringeltaube_(ruft).ogg - Public Domain Mark 1.0 (https://creativecommons.org/publicdomain/mark/1.0/). Trimmed, level-normalised and re-encoded.

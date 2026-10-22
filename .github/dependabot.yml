@@ -1,19 +1,18 @@
-# Dependency updates, once a week. Minor and patch versions of the crates come together in
-# one pull request so they do not flood the list; a new major version (winit...) comes on
-# its own, as it usually needs code changes. Security fixes come whenever an advisory is
-# published, whatever the schedule.
+# Dependency updates, once a month. Minor and patch versions of the crates come together in
+# one pull request, so they do not flood the list; a new major version of a game crate comes
+# in a pull request of its own, so one that breaks the build does not hold back the others.
+# Security fixes come whenever an advisory is published, whatever the schedule.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
     # a release is only proposed once it is a week old: a broken or compromised one is
     # usually yanked by then (security fixes do not wait)
     cooldown:
       default-days: 7
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     groups:
       # wgpu, wgpu-hal and naga are released together and must stay on one version (the
       # game hands wgpu-hal's and naga's types to wgpu): their updates come as one pull
@@ -37,12 +36,20 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "naga"
         update-types: ["version-update:semver-major"]
+      # glam 0.34 moved the camera matrices (perspective_rh, look_to_rh...) to glam::camera,
+      # and jni 0.22 changed the Android bridge's API: both are moved to by hand
+      - dependency-name: "glam"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "jni"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # glow is the one wgpu's GL backend uses (the ANGLE setup hands it wgpu-hal's context)
+      - dependency-name: "glow"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
     # (a week old, as for the crates)
     cooldown:
       default-days: 7
@@ -50,3 +57,40 @@ updates:
       actions:
         patterns:
           - "*"
+
+  - package-ecosystem: cargo
+    directory: /launcher/src-tauri
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      launcher-crates:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "tauri"
+      - dependency-name: "tauri-*"
+      - dependency-name: "glib"
+      - dependency-name: "glib-*"
+      - dependency-name: "gio"
+      - dependency-name: "gio-*"
+      - dependency-name: "gtk"
+      - dependency-name: "gtk-*"
+      - dependency-name: "gtk3-*"
+      - dependency-name: "gdk*"
+      - dependency-name: "atk"
+      - dependency-name: "atk-*"
+      - dependency-name: "pango"
+      - dependency-name: "pango-*"
+      - dependency-name: "cairo-*"
+      - dependency-name: "soup3"
+      - dependency-name: "soup3-*"
+      - dependency-name: "webkit2gtk"
+      - dependency-name: "webkit2gtk-*"
+      - dependency-name: "javascriptcore-*"
+      - dependency-name: "glam"

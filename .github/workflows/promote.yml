@@ -1,0 +1,73 @@
+name: Promote a beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Beta to make the stable release (e.g. 0.2.55)
+        required: true
+        type: string
+
+concurrency:
+  group: promote
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Promote v${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::a beta is promoted from main only (Run workflow → Use workflow from: main)"
+            exit 1
+          fi
+          case "$VERSION" in
+            ''|*[!0-9.]*) echo "::error::the version is a number like 0.2.55"; exit 1 ;;
+          esac
+          state=$(gh release view "v$VERSION" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"' 2>/dev/null || true)
+          if [ "$state" != "false true" ]; then
+            echo "::error::v$VERSION is not a published beta"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "v$VERSION" origin/main; then
+            echo "::error::v$VERSION is not a commit of main"
+            exit 1
+          fi
+          files=$(gh release view "v$VERSION" --json assets --jq '.assets[].name')
+          for f in windows-x64.zip windows-arm64.zip macos-arm64.zip macos-x64.zip linux-x64.zip linux-arm64.zip android-arm64.apk server-linux-x64.zip server-linux-arm64.zip server-windows-x64.zip server-windows-arm64.zip; do
+            if ! printf '%s\n' "$files" | grep -qx "openOMSI-$VERSION-$f"; then
+              echo "::error::v$VERSION has no openOMSI-$VERSION-$f: only a beta of every platform can be promoted"
+              exit 1
+            fi
+          done
+          for f in openOMSI-android.apk SHA256SUMS; do
+            if ! printf '%s\n' "$files" | grep -qx "$f"; then
+              echo "::error::v$VERSION has no $f"
+              exit 1
+            fi
+          done
+          if jq -e --arg v "$VERSION" 'any(.bad[]? | strings; (gsub("^\\s+|\\s+$"; "") | sub("^[vV]+"; "")) == $v)' <(git show origin/main:release/health.json) >/dev/null; then
+            echo "::error::v$VERSION is listed as broken in release/health.json"
+            exit 1
+          fi
+          stable=$(gh release view --json tagName --jq .tagName)
+          stable=${stable#v}
+          if [ "$(printf '%s\n%s\n' "$stable" "$VERSION" | sort -V | tail -1)" != "$VERSION" ] || [ "$stable" = "$VERSION" ]; then
+            echo "::error::v$VERSION is not newer than the stable release $stable"
+            exit 1
+          fi
+          sh scripts/release-notes.sh "$VERSION" "$stable" > notes.md
+          gh release edit "v$VERSION" --prerelease=false --latest --notes-file notes.md
+          echo "### openOMSI $VERSION is the stable release (after $stable)" >> "$GITHUB_STEP_SUMMARY"

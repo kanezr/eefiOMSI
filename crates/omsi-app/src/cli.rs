@@ -8,6 +8,10 @@ pub(crate) const DEFAULT_SIZE: &str = "1600x900";
 #[derive(Parser, Debug, Clone)]
 #[command(name = "openomsi", version = crate::startup::VERSION, about = "openOMSI")]
 pub(crate) struct Args {
+    /// Write a support package (a ZIP for a GitHub issue: the system, the graphics device and
+    /// settings, no paths, names or log text) to this file and end, without starting the game.
+    #[arg(long)]
+    pub(crate) export_diagnostics: Option<PathBuf>,
     /// OMSI 2 installation root (the folder that contains `maps`, `Vehicles`, …).
     /// Found by itself when left out: $OMSI_ROOT, the folder remembered from last time,
     /// a folder next to this program, or the usual Steam locations.
@@ -67,14 +71,28 @@ pub(crate) struct Args {
     /// LAN play: join the host at ip[:port], or `auto` to find one on the local network.
     #[arg(long)]
     pub(crate) lan_join: Option<String>,
+    /// Discovered gateway to try if a direct UDP join gets no answer.
+    #[arg(long)]
+    pub(crate) lan_ws_fallback: Option<String>,
     /// Dedicated server: host a session from this server.cfg (written with the defaults when
     /// missing), with no window, no sound and no graphics card.
     #[arg(long)]
     pub(crate) server: Option<PathBuf>,
+    /// Dedicated server: this map instead of server.cfg's `map` (maps/<folder>/global.cfg).
+    #[arg(long)]
+    pub(crate) server_map: Option<String>,
+    /// Print the installed maps (as server.cfg names them), one a line, and end: for a
+    /// server's start script. With --server, a missing server.cfg is written first.
+    #[arg(long)]
+    pub(crate) list_maps: bool,
     /// Your name as the other players see it.
     #[arg(long, default_value = "Driver")]
     pub(crate) lan_name: String,
-    /// Season override: spring, summer, autumn or winter (else the date decides, as in OMSI).
+    /// Season: spring, summer, autumn or winter, with its phase `-early`, `-mid` (the
+    /// default) or `-late` (`autumn-late`), else the date decides, as in OMSI. The date
+    /// moves into the phase's month (its typical day; a --date already in that month stays,
+    /// the year and the time of day stay), half a year later south of the equator; the
+    /// plants are mixed between the two texture seasons the phase lies between.
     #[arg(long)]
     pub(crate) season: Option<String>,
     /// Fire script triggers after spawning: name[@seconds],… (times apply during --drive).
@@ -108,6 +126,10 @@ pub(crate) struct Args {
     /// Run the timetable: scheduled AI buses from the map's TTData (needs --traffic > 0 or this).
     #[arg(long)]
     pub(crate) schedule: bool,
+    /// With --schedule: the timetable for the player's own duty only, no timetable AI
+    /// buses (the launcher's "Disable timetable buses" with a line chosen).
+    #[arg(long)]
+    pub(crate) no_timetable_buses: bool,
     /// Date at start, YYYY-MM-DD (default 1989-05-30).
     #[arg(long)]
     pub(crate) date: Option<String>,
@@ -121,7 +143,7 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) setstr: Option<String>,
     /// Weather file (relative to root), e.g. Weather/Bodennebel.owt; `natural` (or none) is
-    /// the physical weather model, `cycle` the weather cycle.
+    /// the physical weather model, `cycle` the weather cycle, `tomorrow` map-group live weather.
     #[arg(long)]
     pub(crate) weather: Option<String>,
     /// Passengers at bus stops (window and offscreen).
@@ -183,6 +205,9 @@ pub(crate) struct Args {
     pub(crate) situation_vars: Vec<(String, f32)>,
     #[arg(skip)]
     pub(crate) situation_strvars: Vec<(String, String)>,
+    /// The saved bus odometer, applied after spawning so initialization cannot replace it.
+    #[arg(skip)]
+    pub(crate) situation_odometer_km: Option<f64>,
     /// Saved ordinal in the current timetable trip; absent in older situations.
     #[arg(skip)]
     pub(crate) situation_next_stop: Option<usize>,
@@ -190,6 +215,10 @@ pub(crate) struct Args {
     /// saved with its variables.
     #[arg(skip)]
     pub(crate) situation_others: Vec<SituationOther>,
+    /// The vehicle put down is not a new one (a part uncoupled from the bus): its tank stays
+    /// as it was, whatever the "full tank" setting says.
+    #[arg(skip)]
+    pub(crate) keep_fuel: bool,
     /// The trip of the duty the bus was placed at (`duty_start::place_on_duty`).
     #[arg(skip)]
     pub(crate) duty_trip: Option<usize>,
@@ -200,10 +229,27 @@ pub(crate) struct Args {
     /// shortly before the bus has to set off (what the HUD says at the start).
     #[arg(skip)]
     pub(crate) clock_moved: Option<String>,
+    /// The game starts at this device's date and time (`real_time::start_at_now`): a duty
+    /// must not move the clock then. (A field, not a global: a second drive in the same
+    /// process - Android's launcher - starts from its own arguments.)
+    #[arg(skip)]
+    pub(crate) start_synced: bool,
+    /// The world the duty start opened, for the session to go on with (see
+    /// `duty_start::Preopened`).
+    #[arg(skip)]
+    pub(crate) preopened: crate::duty_start::Preopened,
+    /// The look the settings and arguments ask for (see `startup::SessionSettings`), worked out at the
+    /// session's start.
+    #[arg(skip)]
+    pub(crate) session_settings: crate::startup::SessionSettings,
     /// With a duty: start at the entry point nearest to its first stop by road (the
     /// launcher's "Automatic") instead of `--entry`.
     #[arg(long)]
     pub(crate) auto_entry: bool,
+    /// With a duty: the clock stays at `--time` however late its first trip leaves (the
+    /// launcher's start at the real time).
+    #[arg(long)]
+    pub(crate) keep_time: bool,
     /// OMSI's tutorial 1..4 (its situation, and its pages beside the picture).
     #[arg(long)]
     pub(crate) tutorial: Option<usize>,
@@ -235,9 +281,6 @@ pub(crate) struct Args {
     /// can trace rays).
     #[arg(long)]
     pub(crate) enhanced_plus: bool,
-    /// Open the launcher (the default when the program is started without arguments).
-    #[arg(long)]
-    pub(crate) launcher: bool,
     /// Skip the launcher and show the in-game start menu instead.
     #[arg(long)]
     pub(crate) menu: bool,
@@ -248,11 +291,7 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn parse_time(s: &str) -> f64 {
-    let mut it = s.split(':');
-    let h: f64 = it.next().and_then(|x| x.trim().parse().ok()).unwrap_or(9.0);
-    let m: f64 = it.next().and_then(|x| x.trim().parse().ok()).unwrap_or(0.0);
-    let sec: f64 = it.next().and_then(|x| x.trim().parse().ok()).unwrap_or(0.0);
-    h * 3600.0 + m * 60.0 + sec
+    omsi_sim::clock::parse_day_time(s)
 }
 
 pub(crate) fn parse_cam(s: &str) -> Result<Camera> {
@@ -292,6 +331,7 @@ pub(crate) fn parse_triggers(args: &Args) -> Vec<(String, f32)> {
 impl Args {
     pub(crate) fn is_resuming(&self) -> bool {
         self.situation.is_some()
+            || self.situation_odometer_km.is_some()
             || !self.situation_vars.is_empty()
             || !self.situation_strvars.is_empty()
     }
@@ -307,4 +347,5 @@ pub(crate) struct SituationOther {
     pub paint: Option<String>,
     pub vars: Vec<(String, f32)>,
     pub strvars: Vec<(String, String)>,
+    pub odometer_km: Option<f64>,
 }

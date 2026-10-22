@@ -43,7 +43,7 @@ fn main() {
     }
     files.sort();
     if gpu {
-        use omsi_texture::{bc, gpu::*, PixelFormat};
+        use omsi_texture::gpu::*;
         for f in files {
             let Ok(bytes) = omsi_cfg::vfs::read(&f) else { continue };
             let Ok(img) = omsi_texture::decode_bytes(&bytes, &f) else { continue };
@@ -51,12 +51,7 @@ fn main() {
                 println!("{}\tGPU-ERR", f.display());
                 continue;
             };
-            let back = match t.format {
-                PixelFormat::Rgba8 => t.levels[0].clone(),
-                PixelFormat::Bc1 => bc::decode(&t.levels[0], t.width, t.height, bc::Bc::Bc1 { punch: t.has_alpha }),
-                PixelFormat::Bc2 => bc::decode(&t.levels[0], t.width, t.height, bc::Bc::Bc2),
-                PixelFormat::Bc3 => bc::decode(&t.levels[0], t.width, t.height, bc::Bc::Bc3),
-            };
+            let back = t.format.decode_level(&t.levels[0], t.width, t.height, t.has_alpha);
             let mean = |v: &[u8]| {
                 let mut s = [0f64; 4];
                 for p in v.chunks_exact(4) {

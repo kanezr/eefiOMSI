@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launcher's background (see startup::WINDOW_BACKGROUND), from the system's starting
+         window on: the window the native code draws into stays without a picture until its
+         first frame, and nothing of the home screen's wallpaper is to show through it. -->
+    <color name="omsi_background">#FF111111</color>
+    <style name="OmsiTheme" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">@color/omsi_background</item>
+        <item name="android:colorBackground">@color/omsi_background</item>
+        <item name="android:windowShowWallpaper">false</item>
+        <item name="android:windowIsTranslucent">false</item>
+    </style>
+</resources>
