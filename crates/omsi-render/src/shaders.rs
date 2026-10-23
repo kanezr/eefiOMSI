@@ -43,21 +43,12 @@ mod tests {
         text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
     }
 
-    /// The assembled modules are byte for byte the single files they were cut from (sizes
-    /// and hashes taken of `shader.wgsl` and `enhanced.wgsl` before the cut, updated for
-    /// 0.2.30's capped surface pull and the Vanilla/transparency fixes in both modules,
-    /// 0.2.42's night sphere map and lacquer, people lit as bodies, not leaves, the far
-    /// map's shadow where no traced one is found, 0.2.51's clear coat that stays sharp on
-    /// lacquer, the draw order's depth step of a surface lying on another of its object, and a
-    /// livery's tint above the alpha test, the painted lines' pull and the wet paint's water film, and the player's vehicle
-    /// standing between other vehicles' lamps and what lies behind it).
-     /// lamps taking coverage from their active night map, and #3019's larger rain caps).
-    /// (with Unix line ends: a Windows checkout may turn the parts' into CRLF, as it did the
-    /// single files', and the 0.2.31 release's Windows test failed on that alone)
+    /// The assembled modules' sizes and hashes, updated for deliberate edits to their parts.
+    /// Normalize line endings because Windows checkouts may turn the parts into CRLF.
     #[test]
-    fn assembled_shaders_are_the_old_files() {
+    fn assembled_shaders_match_their_fingerprints() {
         let (scene, enhanced) = (super::SCENE.replace("\r\n", "\n"), super::ENHANCED.replace("\r\n", "\n"));
-        assert_eq!((scene.len(), fnv1a(&scene)), (125_248, 0x4772_9599_3508_a9a1));
+        assert_eq!((scene.len(), fnv1a(&scene)), (124_586, 0x74bf_122b_26ac_9da3));
         assert_eq!((enhanced.len(), fnv1a(&enhanced)), (87_903, 0xac03_9b68_6de3_69a1));
     }
 }

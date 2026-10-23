@@ -1025,7 +1025,6 @@ mod governor_tests {
 
 #[cfg(test)]
 mod info_tests {
-    use super::{distance_driven, odometer_reading, passengers_aboard};
     use super::{distance_driven, odometer_value, passenger_count};
 
     #[test]

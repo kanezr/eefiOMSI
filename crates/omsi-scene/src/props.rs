@@ -1270,6 +1270,17 @@ pub(super) fn fallen_pole(xf: Mat4, push: DVec3) -> Mat4 {
 /// "Set neighbor tiles count to 1 or max. 2").
 pub(super) const OMSI_TILE_DIST: i32 = 1;
 
+/// Ground area in which OMSI keeps objects belonging to `tile`.
+pub(super) fn tile_visibility_area(tile: (i32, i32)) -> [f64; 4] {
+    let ts = tile_size();
+    [
+        (tile.0 - OMSI_TILE_DIST) as f64 * ts,
+        (tile.1 - OMSI_TILE_DIST) as f64 * ts,
+        (tile.0 + OMSI_TILE_DIST + 1) as f64 * ts,
+        (tile.1 + OMSI_TILE_DIST + 1) as f64 * ts,
+    ]
+}
+
 /// Where the camera has to stand for a stand-in for far tiles to be drawn: the ground of
 /// the tiles OMSI loads with the one it is on. None for every other object.
 ///
@@ -1288,7 +1299,8 @@ pub(super) const OMSI_TILE_DIST: i32 = 1;
 /// So is a large mesh drawn only as a backdrop, every material `[matl_noZwrite]` or
 /// `[matl_noZcheck]`: HafenCity's `3_BG_niederbaum` is a 1.6 km strip of the far bank of
 /// the Elbe that starts at its placement by the Niederbaumbruecke, and it stood across
-/// the road at the Landungsbruecken.
+/// the road at the Landungsbruecken. An object explicitly named or grouped as a backdrop
+/// uses the same restriction even when its geometry is too small for the size tests.
 pub(super) fn stand_in_area(ot: &ObjectType, xf: &Mat4, pos: DVec3, tile: (i32, i32)) -> Option<[f64; 4]> {
     let ts = tile_size();
     let loaded = (2 * OMSI_TILE_DIST + 1) as f64 * ts;
@@ -1301,16 +1313,22 @@ pub(super) fn stand_in_area(ot: &ObjectType, xf: &Mat4, pos: DVec3, tile: (i32, 
         .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]);
     let wide = bounds.is_some_and(|b| (b[2] - b[0]).max(b[3] - b[1]) > 2.0 * loaded)
         || ot.meshes.iter().any(|(m, _, defs)| stand_in_mesh(m, defs, xf, pos, loaded));
+    let named_backdrop = ot.sco.friendly_name.to_ascii_lowercase().contains("backdrop")
+        || ot.sco.groups.iter().any(|group| group.to_ascii_lowercase().contains("backdrop"))
+        || ot.sco.path.file_stem().is_some_and(|stem| stem.to_string_lossy().to_ascii_lowercase().contains("backdrop"));
+    if named_backdrop {
+        return Some([
+            tile.0 as f64 * ts,
+            tile.1 as f64 * ts,
+            (tile.0 + 1) as f64 * ts,
+            (tile.1 + 1) as f64 * ts,
+        ]);
+    }
     if !wide {
         return None;
     }
     log::debug!("{} on tile {tile:?} stands in for far tiles: drawn only from the tiles around it", ot.sco.path.display());
-    Some([
-        (tile.0 - OMSI_TILE_DIST) as f64 * ts,
-        (tile.1 - OMSI_TILE_DIST) as f64 * ts,
-        (tile.0 + OMSI_TILE_DIST + 1) as f64 * ts,
-        (tile.1 + OMSI_TILE_DIST + 1) as f64 * ts,
-    ])
+    Some(tile_visibility_area(tile))
 }
 
 pub(super) fn stand_in_mesh(m: &MeshData, defs: &[MaterialDef], xf: &Mat4, pos: DVec3, loaded: f64) -> bool {
