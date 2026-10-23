@@ -378,13 +378,44 @@ harbour.dds
     let pier = world.object_type("pier.sco").unwrap();
     let tile = (-6, -4);
     let ts = tile_size();
-    let expected = Some([-7.0 * ts, -5.0 * ts, -4.0 * ts, -2.0 * ts]);
+    let expected = Some([-6.0 * ts, -4.0 * ts, -5.0 * ts, -3.0 * ts]);
     for heading in [0.0, 37.0, 90.0] {
         let xf = object_rotation([heading, 0.0, 0.0]);
         let pos = DVec3::new(-1515.0, -914.0, 0.0);
         assert_eq!(stand_in_area(&backdrop, &xf, pos, tile), expected,
-            "a backdrop card at heading {heading} keeps to the tiles around its own");
+            "a named backdrop card at heading {heading} stays within its owner tile");
         assert_eq!(stand_in_area(&pier, &xf, pos, tile), None,
             "an ordinary model of the same size keeps the far view at heading {heading}");
+    }
+}
+
+#[test]
+fn a_named_backdrop_is_restricted_to_its_owner_tiles() {
+    let fixture = Fixture::new();
+    fixture.write("global.cfg", "[name]\nArtificial forest\n");
+    fixture.write(
+        "backdrop.sco",
+        "[friendlyname]\nA long scenic Backdrop for the distant town\n[mesh]\ncard.x\n",
+    );
+    fixture.write(
+        "grouped.sco",
+        "[groups]\n1\nBackdrop\n[mesh]\ncard.x\n",
+    );
+    fixture.write("card.x", &strip(&[(0.0, 0.0), (20.0, 0.0)]));
+    let world = World::open(&fixture.0, &fixture.0.join("global.cfg"), 20261008).unwrap();
+    let objects = [
+        world.object_type("backdrop.sco").unwrap(),
+        world.object_type("grouped.sco").unwrap(),
+    ];
+
+    let tile = (0, 0);
+    let ts = tile_size();
+    for object in objects {
+        assert_eq!(
+            stand_in_area(&object, &Mat4::IDENTITY, DVec3::ZERO, tile),
+            Some([0.0, 0.0, ts, ts]),
+            "{} should be hidden outside its owner tile",
+            object.sco.path.display()
+        );
     }
 }

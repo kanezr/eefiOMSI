@@ -1142,8 +1142,8 @@ mod tests {
             draft,
             pre,
             bare,
-            release("v0.2.31", "2026-10-11T19:00:00Z"),
-            release("v0.2.10", "2026-10-10T19:00:00Z"),
+            release("v0.1.31", "2026-10-11T19:00:00Z"),
+            release("v0.1.10", "2026-10-10T19:00:00Z"),
             release("v0.2.32", "2026-10-11T20:00:00Z"),
             release("v0.2.37", "2026-10-12T04:12:02Z"),
             release("v0.2.37", "2026-10-12T04:12:02Z"),
@@ -1189,17 +1189,17 @@ mod tests {
         assert!(releases_paged(|_| anyhow::bail!("offline"), false).is_err());
 
         let pages = std::cell::Cell::new(0);
-        let reaches_unlisted = |page: u32| {
+        let stable_after_beta_page = |page: u32| {
             pages.set(pages.get() + 1);
             let list: Vec<_> = match page {
                 1 => (100..200).rev().map(|n| release(n, true)).collect(),
-                2 => (0..100).rev().map(|n| release_of_minor(2, n, false)).collect(),
+                2 => (40..100).rev().map(|n| release_of_minor(3, n, false)).collect(),
                 _ => panic!("page {page} asked after releases too old to list"),
             };
             Ok(serde_json::Value::Array(list).to_string())
         };
-        let found = releases_paged(reaches_unlisted, false).unwrap();
-        assert_eq!((found.first().map(|l| l.release.version.as_str()), found.len()), (Some("0.2.99"), 68));
+        let found = releases_paged(stable_after_beta_page, false).unwrap();
+        assert_eq!((found.first().map(|l| l.release.version.as_str()), found.len()), (Some("0.3.99"), 60));
         assert_eq!(pages.get(), 2);
     }
 
