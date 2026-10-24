@@ -134,7 +134,10 @@ fn project(v: vec3<f32>) -> vec2<f32> {
 fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     let px = vec2<i32>(in.clip.xy);
     let size = vec2<i32>(i32(p.params.z), i32(p.params.w));
-    let z0 = lin(textureLoad(t_depth, px * 2, 0));
+    // Raw AO already stores positive linear depth in .g (60000 for sky), so reuse it
+    // for edge weights instead of reloading depth and reconstructing it for every tap.
+    let center = textureLoad(t_ao, px, 0);
+    let z0 = center.g;
     var sum = 0.0;
     var wsum = 0.0;
     // 6x6 window: covers every rotation of the 4x4 pattern at least once in each row and
@@ -143,13 +146,14 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     for (var y = -3; y <= 2; y = y + 1) {
         for (var x = -3; x <= 2; x = x + 1) {
             let c = clamp(px + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
-            let z = lin(textureLoad(t_depth, c * 2, 0));
+            let sample = textureLoad(t_ao, c, 0);
+            let z = sample.g;
             let tol = 0.3 + 0.02 * abs(z0);
             let w = select(0.0, 1.0, abs(z - z0) < tol);
-            sum = sum + textureLoad(t_ao, c, 0).r * w;
+            sum = sum + sample.r * w;
             wsum = wsum + w;
         }
     }
     let blurred = select(1.0, sum / wsum, wsum > 0.0);
-    return vec4<f32>(select(1.0, blurred, (bitcast<u32>(blurred) & 0x7f800000u) != 0x7f800000u), select(-z0, 60000.0, textureLoad(t_depth, px * 2, 0) <= 0.0), 0.0, 0.0);
+    return vec4<f32>(select(1.0, blurred, (bitcast<u32>(blurred) & 0x7f800000u) != 0x7f800000u), select(z0, 60000.0, center.g >= 60000.0), 0.0, 0.0);
 }
