@@ -4,6 +4,13 @@ Releases are started by hand from `main` as the beta `MAJOR.MINOR.PATCH`, and te
 promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the downloads are on the
 [Releases](https://github.com/kanezr/eefiOMSI/releases) page.
 
+## eefiOMSI v0.2.0.1
+
+## Fixes + Changes
+- **Reduced Enhanced SSAO blur GPU work.** Reuses linear depth already produced by the AO pass for edge-aware blur weighting, avoiding repeated depth-buffer reads and reconstruction.
+- **Fixed workspace test failures.** Updated stale test imports and fixtures, synchronized generated flag and plugin API documentation, and refreshed the scene shader fingerprint. The updater's `FIRST_SELF_TESTED` cutoff was left unchanged.
+- **Scenery backdrops disappear as you approach them.** Backdrop objects identified by their filename, friendly name, or group are limited to their owner tile, so distant one-sided scenery cards no longer remain visible across nearby roads.
+
 ## eefiOMSI v0.2.0
 
 ## Added
