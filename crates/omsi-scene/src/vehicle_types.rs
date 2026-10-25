@@ -6,6 +6,9 @@ use super::*;
 pub struct VehicleRender {
     pub window_wipers: Option<crate::window_wipers::WindowWipers>,
     pub instances: Vec<usize>,
+    /// The instances of the lower levels of detail: they stand where the vehicle's body does
+    /// (no animation) and are drawn while the vehicle is small on the screen.
+    pub far: Vec<usize>,
     /// Materials made for this vehicle alone (its text and script texture slots).
     pub own_materials: Vec<MaterialId>,
     /// The shared set it is drawn with (None for the player's own).
@@ -479,9 +482,20 @@ pub type VehicleKey = (PathBuf, Option<usize>);
 /// The GPU side of a vehicle type in one paint scheme, shared by its AI copies: meshes and
 /// materials, the slots every copy fills itself, and what the set holds of the shared
 /// textures and meshes (given back when the set is trimmed).
+/// A mesh of a lower level of detail of a vehicle on the GPU: plain materials, drawn in place
+/// of the full model while the vehicle is small on the screen (see `lod_bands`).
+#[derive(Clone)]
+pub struct FarMesh {
+    pub(super) level: usize,
+    pub(super) mesh: MeshId,
+    pub(super) mats: Vec<MaterialId>,
+    pub(super) casts: bool,
+}
 #[derive(Clone)]
 pub struct VehicleSet {
     pub(super) meshes: Vec<(MeshId, Vec<MaterialId>)>,
+    /// The meshes of the lower levels of detail (none: the model has one level).
+    pub(super) far: Vec<FarMesh>,
     pub(super) dyn_slots: Vec<DynSlot>,
     pub(super) variants: Vec<VariantSlot>,
     pub(super) textures: Vec<PathBuf>,
@@ -639,7 +653,7 @@ pub(super) fn vehicle_texture_names(
             out.push((name, d.clone()));
         }
     };
-    for vm in &vt.meshes {
+    for vm in vt.meshes.iter().chain(&vt.lod_meshes) {
         for m in &vm.materials {
             match vt.texchange(&m.texture) {
                 Some(master) => {

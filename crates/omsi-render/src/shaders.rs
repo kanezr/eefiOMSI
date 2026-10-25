@@ -49,6 +49,6 @@ mod tests {
     fn assembled_shaders_match_their_fingerprints() {
         let (scene, enhanced) = (super::SCENE.replace("\r\n", "\n"), super::ENHANCED.replace("\r\n", "\n"));
         assert_eq!((scene.len(), fnv1a(&scene)), (124_586, 0x74bf_122b_26ac_9da3));
-        assert_eq!((enhanced.len(), fnv1a(&enhanced)), (87_903, 0xac03_9b68_6de3_69a1));
+        assert_eq!((enhanced.len(), fnv1a(&enhanced)), (88_274, 0xfb91_a09b_8be5_10c9));
     }
 }

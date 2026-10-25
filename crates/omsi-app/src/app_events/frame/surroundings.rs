@@ -58,7 +58,7 @@ crate::app::stage_ctx!(
 /// the snow, the cabin air, the tyres' spray and the sounds of the street.
 pub(super) fn lights(cx: LightsCx, dt: f32, daylight: omsi_sim::Daylight, behind: f32) {
     // the lamps' cones in fog and falling rain or snow, and new light pictures
-    let cone = cx.weather.weather.as_ref().map(|wt| lights::ConeWeather::new(wt.fog.0, daylight.night)).unwrap_or_default();
+    let cone = cx.weather.weather.as_ref().map(|wt| lights::ConeWeather::of(wt, daylight.night)).unwrap_or_default();
     if let Some(r) = cx.gfx.renderer.as_mut() {
         lights::upload_corona_textures(r);
     }

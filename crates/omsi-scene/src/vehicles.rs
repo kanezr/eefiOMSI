@@ -1,6 +1,8 @@
 //! The vehicle upload: a vehicle type's meshes and materials made into render instances.
 use super::*;
 
+mod lods;
+
 impl World {
     /// Upload a vehicle type's meshes and create render instances for one vehicle (the
     /// player's: its set is not shared and stays).
@@ -15,7 +17,7 @@ impl World {
         self.mirror_aspect.lock().clear();
         self.mirror_glass.lock().clear();
         let set = self.upload_vehicle(renderer, scene, vt, scheme, true);
-        let mut render = self.instantiate_vehicle(renderer, scene, vt, &set, None, None);
+        let mut render = self.instantiate_vehicle(renderer, scene, vt, &set, None, None, false);
         own_skinned_meshes(renderer, scene, vt, &mut render);
         render
     }
@@ -38,7 +40,7 @@ impl World {
         } else {
             None
         };
-        let mut render = self.instantiate_vehicle(renderer, scene, vt, &set, None, shared);
+        let mut render = self.instantiate_vehicle(renderer, scene, vt, &set, None, shared, false);
         own_skinned_meshes(renderer, scene, vt, &mut render);
         render
     }
@@ -148,6 +150,21 @@ impl World {
         scheme: Option<usize>,
         lead: Option<&VehicleRender>,
     ) -> VehicleRender {
+        self.add_vehicle_shared_lod(renderer, scene, vt, scheme, lead, false)
+    }
+
+    /// [`World::add_vehicle_shared`] for a vehicle whose pose the caller also gives the
+    /// instances of its lower levels of detail (`VehicleRender::far`), which are drawn in
+    /// place of the full model while it is small on the screen (the AI traffic's).
+    pub fn add_vehicle_shared_lod(
+        &self,
+        renderer: &Renderer,
+        scene: &mut Scene,
+        vt: &omsi_sim::VehicleType,
+        scheme: Option<usize>,
+        lead: Option<&VehicleRender>,
+        lod: bool,
+    ) -> VehicleRender {
         let shared = lead.and_then(|l| {
             (vt.def.script_share || vt.model.script_textures.is_empty()).then(|| l.script_textures.as_slice())
         });
@@ -165,7 +182,7 @@ impl World {
             s.users += 1;
             s.idle_since = None;
         }
-        let mut render = self.instantiate_vehicle(renderer, scene, vt, &set, Some(key), shared);
+        let mut render = self.instantiate_vehicle(renderer, scene, vt, &set, Some(key), shared, lod);
         // an articulated AI bus (timetable or random traffic, and its coupled rear section)
         // bends its own bellows too, from a mesh copy of its own (freed again in
         // `release_vehicle`) - the shared set's copy has to stay in the rest pose, since
@@ -193,7 +210,7 @@ impl World {
                 gpu.free_instances.entry(slots).or_default().push(*instance);
                 renderer.free_mesh(scene, *mesh);
             }
-            for i in render.instances {
+            for i in render.instances.into_iter().chain(render.far) {
                 renderer.remove_instance(scene, i);
                 let slots = renderer.instance_slots(scene, i);
                 gpu.free_instances.entry(slots).or_default().push(i);
@@ -583,6 +600,7 @@ impl World {
         set: &VehicleSet,
         key: Option<VehicleKey>,
         shared_script: Option<&[Option<TextureId>]>,
+        lod: bool,
     ) -> VehicleRender {
         let mut gpu = self.gpu.lock();
         let blank = |gpu: &mut GpuCache, scene: &mut Scene, w: i32, h: i32| {
@@ -803,6 +821,7 @@ impl World {
                 }
             }
         }
+        let far = self.far_instances(renderer, scene, vt, set, &instances, key.is_some() && lod, &mut gpu);
         // the vehicle is drawn or left out as one object (see `set_object_culling`): its
         // sphere about the vehicle's origin, which every mesh instance shares
         let radius = set
@@ -814,12 +833,13 @@ impl World {
             .fold(0.0f32, f32::max);
         let any_distance =
             vt.model.no_distance_check || vt.model.meshes.iter().any(|m| m.no_distance_check);
-        for inst in &instances {
+        for inst in instances.iter().chain(&far) {
             renderer.set_object_culling(scene, *inst, radius, vt.model.detail_factor, any_distance);
         }
         VehicleRender {
             window_wipers: None,
             instances,
+            far,
             text_textures,
             script_textures,
             shared_script: shared_script.is_some(),
@@ -916,6 +936,7 @@ impl World {
             mesh_secs += t_mesh.elapsed().as_secs_f64();
             up.instances.push((id, mats));
         }
+        let far = self.upload_far(renderer, scene, &mut up, &mut mesh_ids, &mut mesh_keys, only.is_some() || hide.is_some());
         let VehicleUpload { held, mut materials, tex_time, instances, mut missing_tex, variants, dyn_slots, .. } = up;
         if !missing_tex.is_empty() {
             missing_tex.sort();
@@ -939,6 +960,7 @@ impl World {
         }
         VehicleSet {
             meshes: instances,
+            far,
             dyn_slots,
             variants,
             textures: held,
