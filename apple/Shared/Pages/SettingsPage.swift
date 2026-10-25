@@ -290,7 +290,6 @@ struct SettingsPage: View {
                 SettingToggle(label: "Install updates without asking", key: "update_auto")
                 SettingToggle(label: "Tell me about a new version during a session", key: "update_notify", fallback: true)
             }
-            SettingToggle(label: "Count me in the website's \"playing now\" (anonymous)", key: "presence", fallback: true)
             HStack {
                 Button("Export diagnostics") {
                     if let path = (try? JSONSerialization.jsonObject(with: Bridge.call("act", ["do": "diagnostics"]), options: [.fragmentsAllowed])) as? String {

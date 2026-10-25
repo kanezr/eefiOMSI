@@ -291,18 +291,6 @@ _version: 2
   nl: "Meld nieuwe versies tijdens het spelen"
   sv: "Meddela mig om en ny version under en spelsession"
   sr: "Obavesti me o novoj verziji tokom sesije"
-"Count me in the website's \"playing now\" (anonymous)":
-  es: "Incluirme en el contador anónimo de jugadores de la web"
-  fr: "Me compter dans les « en jeu maintenant » du site (anonyme)"
-  ca: "Compta'm a «jugant ara» del web (anònim)"
-  zh-tw: "將我計入網站的「目前遊玩人數」（匿名）"
-  pt: "Incluir-me no \"jogando agora\" do site (anônimo)"
-  pt-pt: "Incluir-me no \"a jogar agora\" do site (anónimo)"
-  zh: "将我计入网站的“正在游玩”人数（匿名）"
-  de: "Mich zu \"Spielen aktuell\" auf der Website dazuzählen (anonym)"
-  nl: "Mij anoniem meetellen bij 'nu aan het spelen' op de website"
-  sv: "Räkna med mig i webbplatsens ”spelar nu” (anonymt)"
-  sr: "Prikaži moje prisustvo na stranici „Trenutno igraju“ (anonimno)"
 "Radio stations":
   fr: "Stations de radio"
   ca: "Emissores de ràdio"

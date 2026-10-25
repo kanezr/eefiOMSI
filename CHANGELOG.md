@@ -4,11 +4,48 @@ Releases are started by hand from `main` as the beta `MAJOR.MINOR.PATCH`, and te
 promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the downloads are on the
 [Releases](https://github.com/kanezr/eefiOMSI/releases) page.'
 
+## Unreleased
+
+## Fixes
+- Fixed all warnings.
+
+## Removed
+- **Removed the website's "playing now" presence feature**: game sessions no longer report presence, the website
+  no longer requests or displays a live player count, and the launcher no longer offers the setting.
+
+## Fixes from the latest openOMSI PR requests
+- **Enhanced clouds no longer turn to layered mush while driving fast**: every time the camera had
+  moved far enough for the sky to be drawn from a new point, the new picture of the sky was one
+  noisy sample of the cloud march and took seconds to clear; at speed a new one came before the
+  last had cleared, so the clouds stayed grainy and banded. The new picture is now the average of
+  four samples before it replaces the old one.
+- **The launcher's bus preview is no longer misted over**: the bus is made for it (the
+  showroom and `--export-glb`) on a mild day (22 °C) instead of at 0 °C, the temperature a
+  vehicle starts at without a weather. The
+  Kajosoft Citaro, Citaro Facelift and 628 fog every window up in their {init} below 10 °C,
+  so the preview always showed them misted; in the game the map's weather still decides.
+- **A bus's window labels keep their depth, as before v0.3.33**: A bus's fleet number and the labels 
+  printed on its windows no longer flicker or vanish when it is a few tens of metres away. 
+  They worked in 0.3.0 and broke in the 0.3.33 beta.
+- **Bus shelters show through a bus's windows** instead of a white shape in Enhanced and
+  Enhanced+, or nothing at all in Vanilla. Grundorf's shelter is drawn "after vehicles"
+  (`[rendertype] 4`) and the bus's panes write depth, so it failed the depth test behind them,
+  and the houses behind it were already gone. The blended draws of `[rendertype]` 3 and 4 are
+  now sorted far to near with the normal objects', after the opaque draws of all of them
+- **Split the main pass when the view has an excavation**: Less main-thread time per frame on maps 
+  with excavations (St-Servan, for one): the main pass is finished on two threads there too. 
+  The frame rate rises where the CPU is the limit; the picture does not change.
+- **Plan the prepass lists and long phases on the pool: Less main-thread time per frame in dense areas: 
+  the draw lists are planned on several threads. The frame rate rises where the CPU is the limit; 
+  the picture does not change.
+
 ## eefiOMSI v0.2.0.2
 ### Performance and fixes from the latest version of openOMSI
 
 ## Fixes
-- **Less CPU work for traffic out of sight**: a car outside the view and beyond 150 m runs its script a few times a second; timetable buses keep their usual beat. Distant, unseen cars' lamps and smoke leave the frame's work, and placing dormant traffic no longer scans every lane for every car
+- **Less CPU work for traffic out of sight**: a car outside the view and beyond 150 m runs its script a few times a second; 
+  timetable buses keep their usual beat. Distant, unseen cars' lamps and smoke leave the frame's work, 
+  and placing dormant traffic no longer scans every lane for every car
 - **Destination displays light up at night in Enhanced and Enhanced+**: a script's screen is
   never taken for a pane. The EMT Citaro's Krueger matrix (Mallorca) is blended, writes no
   depth and draws its letters through a `\S:n` transparency map - the layout of a window - so
@@ -38,7 +75,8 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
   variable every frame: the scheme's values are set again after the scripts, as Omsi.exe
   draws them. The Kajosoft Jelcz Vectus with the JGSP Novi Sad repaint chooses the glazed
   doors (`v_drzwi 1`) and had the standard doors' white frames
-- **Culling and shadow casters in many small parts**: less main-thread time per frame in dense areas (about 1 ms in a lit city street at night), so a higher frame rate where the CPU is the limit.
+- **Culling and shadow casters in many small parts**: less main-thread time per frame in dense areas 
+  (about 1 ms in a lit city street at night), so a higher frame rate where the CPU is the limit.
 - Destination displays light up at night - a script's screen is never glass
 - Startup tests isolate Steam and temporary folders more reliably
 - Closing the game stops frame stages instead of letting plugins load again on exit
@@ -87,7 +125,7 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
 - **Choose which vehicles show smoke**: a new Vehicle smoke option, in the launcher and in the game's Graphics menu, shows smoke from all vehicles (the default), only your own bus with its articulated sections, or none. Scenery smoke and glowing effects stay as they are.
 - **A new Shift+Y information bar**: a compact, rounded bar of two rows, route, time, speed, speed limit (in red) and delay on the first, distance, odometer, temperatures, passengers and fuel on the second, with its labels in english.
 
-## openOMSI v0.3.37 had these
+## openOMSI v0.2.37 had these
 
 ### New
 

@@ -64,6 +64,19 @@ fn the_games_options_survive_a_save() {
 }
 
 #[test]
+fn removed_presence_setting_is_ignored_and_dropped_on_save() {
+    let defaults = settings_from_text(None);
+    assert!(defaults.get("presence").is_none());
+
+    let old_settings = "presence=1\n";
+    let loaded = settings_from_text(Some(old_settings));
+    assert!(loaded.get("presence").is_none());
+
+    let saved = settings_to_text(&loaded, Some(old_settings));
+    assert!(!saved.lines().any(|line| line.starts_with("presence=")));
+}
+
+#[test]
 fn dsc_files_give_name_and_description() {
     let d = super::parse_dsc("\r\n[friendlyname]\r\nMAN\r\nNL202 - EN92\r\nBeige\r\n\r\n[description]\r\nAlthough the BVG did not purchase\r\n\r\n-Technical specifications-\r\n[end]\r\n");
     assert_eq!(d.name, vec!["MAN", "NL202 - EN92", "Beige"]);
