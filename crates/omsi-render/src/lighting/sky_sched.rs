@@ -6,6 +6,12 @@ use crate::*;
 
 /// Slices (bands of rows) a sky cube face is drawn in, one a frame.
 pub(crate) const SKY_CUBE_SLICES: u32 = 4;
+/// Times every slice of a cube filled for a new eye is drawn, each with its own start of the
+/// steps and averaged with the ones before it. A cloud march of a few dozen steps leaves
+/// layered grain from one start point; the cube in use averages it out over seconds, and a
+/// cube filled with one round showed that grain after every change of eye - driving fast,
+/// the clouds were mush most of the time.
+pub(crate) const STAGE_ROUNDS: u32 = 4;
 /// The most slices drawn in one frame (owed ones catch up two at a time).
 const SLICES_PER_FRAME: u32 = 2;
 /// The reflection probe is redrawn this often (seconds): every 30 frames it was, twice a
@@ -26,6 +32,8 @@ pub(crate) fn slice_rows(first: u32, count: u32) -> (u32, u32) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SkySlice {
     pub staging: bool,
+    /// Which pass over the cube being filled this is (0 for the cube in use).
+    pub round: u32,
     pub face: u32,
     pub first: u32,
     pub count: u32,
@@ -70,7 +78,7 @@ impl Default for SkySched {
 impl SkySched {
     /// Whether the cube being filled for a new eye is complete.
     pub(crate) fn staging_full(&self) -> bool {
-        self.staged >= 6 * SKY_CUBE_SLICES
+        self.staged >= 6 * SKY_CUBE_SLICES * STAGE_ROUNDS
     }
 
     /// Start filling a cube for a new eye unless one is being filled already.
@@ -103,11 +111,12 @@ impl SkySched {
         let mut k = 0;
         for _ in 0..n {
             let s = if self.staging_eye.is_some() && !self.staging_full() {
-                let s = SkySlice { staging: true, face: self.staged / SKY_CUBE_SLICES, first: self.staged % SKY_CUBE_SLICES, count: 1 };
+                let (round, within) = (self.staged / (6 * SKY_CUBE_SLICES), self.staged % (6 * SKY_CUBE_SLICES));
+                let s = SkySlice { staging: true, round, face: within / SKY_CUBE_SLICES, first: within % SKY_CUBE_SLICES, count: 1 };
                 self.staged += 1;
                 s
             } else {
-                let s = SkySlice { staging: false, face: *face, first: self.slice, count: 1 };
+                let s = SkySlice { staging: false, round: 0, face: *face, first: self.slice, count: 1 };
                 self.slice += 1;
                 if self.slice == SKY_CUBE_SLICES {
                     self.slice = 0;
@@ -117,7 +126,7 @@ impl SkySched {
                 s
             };
             // (the next band of the same face goes into the same pass)
-            let joins = k > 0 && out[k - 1].is_some_and(|p| p.staging == s.staging && p.face == s.face && p.first + p.count == s.first);
+            let joins = k > 0 && out[k - 1].is_some_and(|p| p.staging == s.staging && p.round == s.round && p.face == s.face && p.first + p.count == s.first);
             if joins {
                 if let Some(p) = out[k - 1].as_mut() {
                     p.count += 1;
@@ -152,8 +161,8 @@ mod tests {
         assert!(out[1].is_none(), "one pass: {out:?}");
     }
 
-    /// A new eye's cube is filled first, every slice of every face once, then the faces
-    /// in use take their turns again.
+    /// A new eye's cube is filled first, every slice of every face once in each round, then
+    /// the faces in use take their turns again.
     #[test]
     fn a_new_cube_is_filled_slice_by_slice() {
         let mut s = SkySched::default();
@@ -164,11 +173,11 @@ mod tests {
             for p in s.plan(&mut face, &mut round, 0.02).into_iter().flatten() {
                 assert!(p.staging);
                 for k in p.first..p.first + p.count {
-                    assert!(seen.insert((p.face, k)));
+                    assert!(seen.insert((p.round, p.face, k)));
                 }
             }
         }
-        assert_eq!(seen.len(), 24);
+        assert_eq!(seen.len() as u32, 6 * SKY_CUBE_SLICES * STAGE_ROUNDS);
         assert_eq!((face, round), (2, 5));
         s.start_staging(DVec3::ZERO);
         assert_eq!(s.staging_eye, Some(DVec3::new(1.0, 2.0, 3.0)), "a fill under way is not restarted");
@@ -201,7 +210,7 @@ mod tests {
             assert!(s.plan(&mut face, &mut round, 1.0 / 240.0)[0].is_some_and(|p| p.staging));
             frames += 1;
         }
-        assert_eq!(frames, 6 * SKY_CUBE_SLICES);
+        assert_eq!(frames, 6 * SKY_CUBE_SLICES * STAGE_ROUNDS);
     }
 
     #[test]

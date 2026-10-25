@@ -106,14 +106,14 @@ to.
 
 ## Network and privacy
 
-This build does not send no usage data or statistics anywhere. The network is used only by features you start or switch on:
+eefiOMSI does not send a playing-now count or usage statistics. The game connects to the network for:
 
 - Multiplayer (when you host or join): public STUN servers (Google, Cloudflare) to find your address, an automatic port forward in your router (UPnP), and the public relay ntfy.sh to exchange addresses with the other player. When you host, the game may fetch and run Cloudflare's cloudflared for an internet tunnel (OMSI_NO_TUNNEL=1 or OMSI_NO_BRIDGE=1 switch these off). The Multiplayer page asks the servers in your list for their status.
 - Internet radio (when you play a station) and real weather (METAR from aviationweather.gov, off by default).
 - Machine translation of the interface (off by default): the language model (about 620 MB) is downloaded once from Hugging Face.
 - Discord Rich Presence: talks only to the Discord program on your computer, which shows the map, bus and duty on your profile; Settings → General switches it off.
 - Voice chat connects only to a GreenTeaSpeak plugin on your own computer (127.0.0.1).
-- and the Auto Updater
+- The launcher checks GitHub for updates when configured to do so.
 
 ## Goals
 

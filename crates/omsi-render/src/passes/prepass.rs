@@ -108,7 +108,9 @@ impl Renderer {
                 let round = (probe.cube_round / 6) % SKY_CUBE_ROUNDS;
                 let (mut next, mut rounds) = (probe.cube_next, probe.cube_round);
                 for s in probe.sched.plan(&mut next, &mut rounds, if f.env.sky_cube_every_frame { SLICE_EVERY } else { f.dt }).into_iter().flatten() {
-                    let history = if s.staging { 0.0 } else { SKY_CUBE_HISTORY };
+                    // (a cube for a new eye is the mean of its rounds, the one in use a
+                    // running mean with the history's share)
+                    let (round, history) = if s.staging { (s.round, s.round as f64 / (s.round as f64 + 1.0)) } else { (round, SKY_CUBE_HISTORY) };
                     draws.push((s.face, round, history, slice_rows(s.first, s.count), s.staging));
                 }
                 (probe.cube_next, probe.cube_round) = (next, rounds);

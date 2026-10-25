@@ -59,7 +59,7 @@ impl Renderer {
         // depth before cutouts/blends saved more hidden shading than the pass cost.
         let msaa_prepass = plan.msaa_prepass(self, f);
         let presurface_prefill = plan.presurface_prefill(self, f);
-        let parts = if presurface_prefill { 1 } else if !cfg!(any(target_os = "macos", target_os = "ios")) && main_bundles.len() >= 2 && !f.env.no_main_split {
+        let parts = if !cfg!(any(target_os = "macos", target_os = "ios")) && main_bundles.len() >= 2 && !f.env.no_main_split {
             main_bundles.len().min(2)
         } else { 1 };
         let mut lead = (parts > 1).then(|| self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("main part") }));
@@ -147,7 +147,7 @@ impl Renderer {
                 // (OMSI_GPU_TIMERS: the first part timed too - the sky and the first bundles;
                 // ahead of every other timed pass, it was counted nowhere)
                 let stamp = if first { pass_timer(timers.set.as_ref(), &mut timers.timed, if f.with_overlays { "main part" } else { "mirror part" }) } else { None };
-                self.encode_main_part(&mut part, scene, f, &mt, &main_bundles[g * per_part..((g + 1) * per_part).min(main_bundles.len())], first, stamp);
+                self.encode_main_part(&mut part, scene, f, plan, &mt, &main_bundles[g * per_part..((g + 1) * per_part).min(main_bundles.len())], first, stamp);
                 main_parts.push(part);
             }
             self.encode_main(encoder, scene, f, plan, &mt, timers);
@@ -186,8 +186,8 @@ impl Renderer {
     }
 
     /// One part of a split main pass (the first one with the sky), its bundles executed.
-    fn encode_main_part(&self, part: &mut wgpu::CommandEncoder, scene: &Scene, f: &FrameCtx, mt: &MainTargets, bundles: &[wgpu::RenderBundle], first: bool, stamp: Option<wgpu::RenderPassTimestampWrites<'_>>) {
-        let MainTargets { draw_view, depth_view, hdr, sky_pipe, sky_clear, depth_first, prefill, .. } = *mt;
+    fn encode_main_part(&self, part: &mut wgpu::CommandEncoder, scene: &Scene, f: &FrameCtx, plan: &DrawPlan, mt: &MainTargets, bundles: &[wgpu::RenderBundle], first: bool, stamp: Option<wgpu::RenderPassTimestampWrites<'_>>) {
+        let MainTargets { draw_view, depth_view, hdr, pp, sky_pipe, sky_clear, depth_first, prefill, presurface_prefill, .. } = *mt;
         let part_colors = [
             Some(wgpu::RenderPassColorAttachment {
                 view: draw_view,
@@ -231,6 +231,11 @@ impl Renderer {
             let sky_late = prefill.is_some() && f.exclude_texture.is_none();
             if !sky_late {
                 self.encode_sky(&mut pass, scene, sky_pipe);
+            }
+            // (an excavation coloured and sealed first, as `encode_main` does for an unsplit pass)
+            if presurface_prefill {
+                encode_batches(&mut pass, scene, &plan.main_batches[..plan.presurface_batch_end], |pipe| main_pipeline(pp, pipe));
+                self.encode_prefill(&mut pass, scene, f, &plan.msaa_safe_batches, self.prepass_msaa_pipelines.as_ref().unwrap());
             }
             if let Some((batches, pipes)) = prefill {
                 self.encode_prefill(&mut pass, scene, f, batches, pipes);
@@ -315,7 +320,7 @@ impl Renderer {
         if parts == 1 && !sky_late {
             self.encode_sky(&mut pass, scene, sky_pipe);
         }
-        if presurface_prefill {
+        if presurface_prefill && parts == 1 {
             // Colour and seal the excavation first; prefill ordinary scenery without
             // storing and reloading the colour attachments in a separate pass.
             encode_batches(&mut pass, scene, &plan.main_batches[..plan.presurface_batch_end], |pipe| main_pipeline(pp, pipe));
