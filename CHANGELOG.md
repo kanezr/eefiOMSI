@@ -87,7 +87,7 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
 - **Choose which vehicles show smoke**: a new Vehicle smoke option, in the launcher and in the game's Graphics menu, shows smoke from all vehicles (the default), only your own bus with its articulated sections, or none. Scenery smoke and glowing effects stay as they are.
 - **A new Shift+Y information bar**: a compact, rounded bar of two rows, route, time, speed, speed limit (in red) and delay on the first, distance, odometer, temperatures, passengers and fuel on the second, with its labels in english.
 
-## openOMSI v0.2.37 had these
+## openOMSI v0.3.37 had these
 
 ### New
 
