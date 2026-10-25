@@ -1,6 +1,6 @@
 //! openOMSI's platform services: what the game and the launcher do with the world outside
 //! the simulation - the updates from GitHub (`updater`), Discord's rich presence (`discord`),
-//! the project's count of running games (`presence`), what the start guard needs to heal a
+//! what the start guard needs to heal a
 //! broken release (`recovery`) - and the version stamp of the build.
 //!
 //! Nothing here knows the game's state: the app hands over plain values (a status line, a
@@ -9,7 +9,6 @@
 pub mod avatars;
 pub mod discord;
 pub mod memory;
-pub mod presence;
 pub mod proxy;
 pub mod quit;
 pub mod recovery;
@@ -22,7 +21,7 @@ pub mod webview2;
 /// `build.rs`).
 pub const BUILD: &str = env!("OMSI_BUILD");
 
-/// The release version, `MAJOR.MINOR.PATCH` (see `build.rs` and docs/VERSIONING.md).
+/// The release version (see `build.rs` and docs/VERSIONING.md).
 pub const VERSION: &str = env!("OPENOMSI_VERSION");
 
 /// Android: the calls into Java the services need (the system's package installer, the

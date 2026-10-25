@@ -15,6 +15,14 @@ if errorlevel 1 (
   echo Install Rust from https://rustup.rs using the MSVC toolchain, then run this script again.
   exit /b 1
 )
+if not defined OPENOMSI_VERSION (
+  for /f "tokens=1-4 delims=." %%a in (VERSION) do (
+    if not "%%c"=="" (
+      set "OPENOMSI_VERSION=%%a.%%b.%%c"
+      if not "%%d"=="" set "OPENOMSI_VERSION=%%a.%%b.%%c.%%d"
+    )
+  )
+)
 cargo build --locked --release --target %TARGET% -p omsi-app -p omsi-launcher-core
 if errorlevel 1 goto :failed
 if not exist "dist\windows" mkdir "dist\windows"
@@ -22,7 +30,14 @@ copy /y "target\%TARGET%\release\openomsi.exe" "dist\windows\openomsi.exe" >nul 
 copy /y "target\%TARGET%\release\openomsi-launcher.exe" "dist\windows\openomsi-launcher.exe" >nul || goto :failed
 rem the desktop launcher (launcher\, Tauri on WebView2): a plain start of openomsi.exe opens it,
 rem stamped with the release version (numbers only)
-if defined OPENOMSI_VERSION for /f "tokens=1 delims=-" %%v in ("%OPENOMSI_VERSION%") do set "TAURI_CONFIG={"version":"%%v"}"
+if defined OPENOMSI_VERSION (
+  for /f "tokens=1 delims=-" %%v in ("%OPENOMSI_VERSION%") do set "TAURI_BASE_VERSION=%%v"
+  for /f "tokens=1-4 delims=." %%a in ("%TAURI_BASE_VERSION%") do (
+    set "TAURI_VERSION=%%a.%%b.%%c"
+    if not "%%d"=="" set "TAURI_VERSION=%%a.%%b.%%c+%%d"
+  )
+)
+if defined TAURI_VERSION set "TAURI_CONFIG={"version":"%TAURI_VERSION%"}"
 cargo build --locked --release --target %TARGET% --manifest-path launcher\src-tauri\Cargo.toml
 if errorlevel 1 goto :failed
 copy /y "launcher\src-tauri\target\%TARGET%\release\openomsi-launcher-app.exe" "dist\windows\openomsi-launcher-app.exe" >nul || goto :failed

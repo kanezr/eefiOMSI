@@ -130,7 +130,7 @@ forbid omsi-lan omsi-audio
 forbid omsi-lan omsi-ui
 forbid omsi-lan omsi-launcher-*
 
-# The platform services (updates, presence) know nothing of the game: no simulation, drawing,
+# The platform services (updates) know nothing of the game: no simulation, drawing,
 # sound or network sessions.
 forbid omsi-platform omsi-sim
 forbid omsi-platform omsi-render
