@@ -3,6 +3,12 @@
 Releases are started by hand from `main` as the beta `MAJOR.MINOR.PATCH`, and tested betas are
 promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the downloads are on the
 [Releases](https://github.com/kanezr/eefiOMSI/releases) page.'
+## Unreleased
+
+## Fixes
+- **Fixed the build version gaining an extra `.0`**: complete three- and four-part versions in
+  `VERSION` are now used as written. Tauri receives a SemVer-compatible version, so `0.2.0.2`
+  remains the game version while the launcher uses `0.2.0+2`.
 
 ## Unreleased
 

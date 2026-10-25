@@ -1,12 +1,30 @@
 #!/bin/sh
-# Print the version of the checked-out commit: MAJOR.MINOR.PATCH.
-#   MAJOR.MINOR  the VERSION file (edited by hand)
-#   PATCH        the release tagged on this commit, or one more than the last release
-#                v<MAJOR.MINOR>.* (0 when there is none yet)
+# Print the version of the checked-out commit.
+#   MAJOR.MINOR in VERSION keeps the historical automatic patch numbering.
+#   A three- or four-part VERSION is already complete and is printed as-is.
 # See docs/VERSIONING.md. Needs the tags (CI: fetch-depth: 0).
 set -eu
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 base=$(tr -d ' \r\n' < VERSION)
+case "$base" in
+  *[!0-9.]*|.*|*.|*..*)
+    echo "VERSION must contain dot-separated numbers" >&2
+    exit 1
+    ;;
+esac
+parts=$(printf '%s\n' "$base" | awk -F. '{ print NF }')
+if [ "$parts" -ge 3 ]; then
+  if [ "$parts" -gt 4 ]; then
+    echo "VERSION may contain at most four numeric parts" >&2
+    exit 1
+  fi
+  echo "$base"
+  exit 0
+fi
+if [ "$parts" -ne 2 ]; then
+  echo "VERSION must contain two, three, or four numeric parts" >&2
+  exit 1
+fi
 last() { git tag -l "$@" "v$base.*" 2>/dev/null | sed "s/^v$base\.//" | grep -E '^[0-9]+$' | sort -n | tail -1; }
 n=$(last --points-at HEAD)
 if [ -z "$n" ]; then
