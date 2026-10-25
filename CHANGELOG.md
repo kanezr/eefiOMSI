@@ -2,14 +2,59 @@
 
 Releases are started by hand from `main` as the beta `MAJOR.MINOR.PATCH`, and tested betas are
 promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the downloads are on the
-[Releases](https://github.com/kanezr/eefiOMSI/releases) page.
+[Releases](https://github.com/kanezr/eefiOMSI/releases) page.'
+
+## eefiOMSI v0.2.0.2
+### Performance and fixes from the latest version of openOMSI
+
+## Fixes
+- **Less CPU work for traffic out of sight**: a car outside the view and beyond 150 m runs its script a few times a second; timetable buses keep their usual beat. Distant, unseen cars' lamps and smoke leave the frame's work, and placing dormant traffic no longer scans every lane for every car
+- **Destination displays light up at night in Enhanced and Enhanced+**: a script's screen is
+  never taken for a pane. The EMT Citaro's Krueger matrix (Mallorca) is blended, writes no
+  depth and draws its letters through a `\S:n` transparency map - the layout of a window - so
+  the Enhanced pictures shaded it as glass, which gives no light of its own: its light map was
+  left out and its letters stayed grey at night, where Vanilla+ lights them.
+- **A much lighter Enhanced frame by day**: since 0.2.42 the AI cars were lent headlamp beams
+  whenever their lights were on, and in a grey winter noon (cars' lights on, no street lamp lit)
+  those twelve cars' beams cost 13 ms of a 25 ms frame on an M4 - any light at all in the
+  scene makes every pixel look through the lamp grid and has the weather's fog work the lamps'
+  air light out. They are lent only while the scene is dark enough for them to show (the sun's
+  height and the weather's gloom, the larger, is 0.12 or more): in a grey or rainy day the three
+  nearest cars within 60 m, in the dark the twelve within 200 m as before. In a clear day, 27.4
+  ms -> 13.0 ms of GPU a frame; in a heavy grey snow day 27.6 ms -> 19 ms; the night picture is
+  as before.
+- **AI cars and buses are drawn with their model's lower levels of detail** (`[LOD]`, as
+  Omsi.exe picks them by the vehicle's size on the screen, and as the scenery's levels are):
+  only the first level was loaded, so each AI vehicle was all its meshes at any distance. A
+  model with interior lamps, displays, switched textures or a lit or animated lower level (a bus,
+  a tram) keeps its full meshes.
+  `OMSI_FORCE_LOD=1` draws the lower levels at any size, for a look at them.
+- **Timetable buses no longer stall the frame when they appear**: a departure whose vehicle was
+  not on the graphics card yet (the clock set far ahead, a type nothing read ahead) had its
+  meshes and textures built on the frame it appeared on - 120 to 300 ms; it is tried again
+  once the vehicle is read ahead. A parallel loop's caller sleeps while it waits for the items
+  a helper has started instead of spinning.
+- **A paint scheme's `[setvar]` is what the bus shows**, also when a script writes the same
+  variable every frame: the scheme's values are set again after the scripts, as Omsi.exe
+  draws them. The Kajosoft Jelcz Vectus with the JGSP Novi Sad repaint chooses the glazed
+  doors (`v_drzwi 1`) and had the standard doors' white frames
+- **Culling and shadow casters in many small parts**: less main-thread time per frame in dense areas (about 1 ms in a lit city street at night), so a higher frame rate where the CPU is the limit.
+- Destination displays light up at night - a script's screen is never glass
+- Startup tests isolate Steam and temporary folders more reliably
+- Closing the game stops frame stages instead of letting plugins load again on exit
+- Cabin condensation reads the weather's humidity in the right units
 
 ## eefiOMSI v0.2.0.1
 
-## Fixes + Changes
-- **Reduced Enhanced SSAO blur GPU work.** Reuses linear depth already produced by the AO pass for edge-aware blur weighting, avoiding repeated depth-buffer reads and reconstruction.
-- **Fixed workspace test failures.** Updated stale test imports and fixtures, synchronized generated flag and plugin API documentation, and refreshed the scene shader fingerprint. The updater's `FIRST_SELF_TESTED` cutoff was left unchanged.
-- **Scenery backdrops disappear as you approach them.** Backdrop objects identified by their filename, friendly name, or group are limited to their owner tile, so distant one-sided scenery cards no longer remain visible across nearby roads.
+## Fixes and changes
+- **Reduced Enhanced SSAO blur GPU work.** Reuses linear depth already produced by the AO
+  pass for edge-aware blur weighting, avoiding repeated depth-buffer reads and reconstruction.
+- **Fixed workspace test failures.** Updated stale test imports and fixtures, synchronized
+  generated flag and plugin API documentation, and refreshed the scene shader fingerprint.
+  The updater's `FIRST_SELF_TESTED` cutoff was left unchanged.
+- **Scenery backdrops disappear as you approach them.** Backdrop objects identified by their
+  filename, friendly name, or group are limited to their owner tile, so distant one-sided
+  scenery cards no longer remain visible across nearby roads.
 
 ## eefiOMSI v0.2.0
 
@@ -42,7 +87,7 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
 - **Choose which vehicles show smoke**: a new Vehicle smoke option, in the launcher and in the game's Graphics menu, shows smoke from all vehicles (the default), only your own bus with its articulated sections, or none. Scenery smoke and glowing effects stay as they are.
 - **A new Shift+Y information bar**: a compact, rounded bar of two rows, route, time, speed, speed limit (in red) and delay on the first, distance, odometer, temperatures, passengers and fuel on the second, with its labels in english.
 
-## openOMSI v0.3.37 had these
+## openOMSI v0.2.37 had these
 
 ### New
 

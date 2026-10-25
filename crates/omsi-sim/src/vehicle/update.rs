@@ -168,6 +168,8 @@ impl VehicleInstance {
         self.apply_scheme_vars_each_frame();
         let p = self.ty.program.clone();
         self.vm.run_frame(&p, &mut self.state, &mut self.host);
+        // and once more after them: what is drawn is the scheme's (see the method)
+        self.apply_scheme_vars_each_frame();
         self.show_radio_text();
         self.clear_pax_requests();
         self.update_visuals(dt);
@@ -198,6 +200,7 @@ impl VehicleInstance {
         let gap = self.host.clock.timegap;
         self.host.clock.timegap = 0.0;
         self.vm.run_frame(&p, &mut self.state, &mut self.host);
+        self.apply_scheme_vars_each_frame();
         self.host.clock.timegap = gap;
     }
 

@@ -164,6 +164,10 @@ pub struct VehicleType {
     pub model_dir: PathBuf,
     pub program: Arc<Program>,
     pub meshes: Vec<VehicleMesh>,
+    /// The meshes of the model's lower levels of detail (see `load_with`), drawn instead of
+    /// `meshes` when the vehicle is small on the screen; `model.meshes[def_index].lod` is the
+    /// level, `model.lods[level].min_size` its least size.
+    pub lod_meshes: Vec<VehicleMesh>,
     /// Paint schemes / adverts from the `[CTC]` folders' `.cti` files.
     pub paint_schemes: Vec<PaintScheme>,
     /// `[texchanges]`: material textures a script variable swaps (roller blinds, trim).
@@ -454,6 +458,33 @@ impl VehicleType {
                 }
             }
         }
+        // The lower levels of detail (`[LOD]` 2 and on): the meshes a vehicle is drawn with
+        // from farther away, as Omsi.exe picks them by the vehicle's size on the screen. They
+        // are small (a few thousand triangles against tens of thousands) and kept whole, and
+        // they stay out of `meshes`: nothing that reads the model's real parts (the wheels,
+        // the animations, the lamps, the boxes) is to take them for parts.
+        let mut lod_meshes = Vec::new();
+        for l in 1..model.lods.len() {
+            let first = model.lods[l].first_mesh;
+            for (i, md) in model.lod_meshes(l).iter().enumerate() {
+                let p = mesh_path(root, &dir, &model_dir, &md.file);
+                let Ok(m) = omsi_o3d::load_mesh(&p) else { continue };
+                if m.triangles.is_empty() {
+                    continue;
+                }
+                lod_meshes.push(VehicleMesh {
+                    def_index: first + i,
+                    data: mesh_from_o3d(&m),
+                    file: p,
+                    materials: m.materials.clone(),
+                    overrides: md.materials.clone(),
+                    pivot: pivot_from_mesh(&m),
+                    viewpoint: md.viewpoint,
+                    skin: Vec::new(),
+                    keep_winding: false,
+                });
+            }
+        }
         // A pack whose meshes with a positive determinant mostly face along their normals
         // keeps the winding of its backwards ones (see bb0c32b: the Citelis' buttons). Asked
         // of the whole vehicle, a part borrowed from another pack - a ticket machine, a
@@ -557,6 +588,7 @@ impl VehicleType {
             model_dir,
             program: Arc::new(program),
             meshes,
+            lod_meshes,
             paint_schemes,
             texchanges,
             wheel_meshes,
