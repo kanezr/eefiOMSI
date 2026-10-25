@@ -13,7 +13,7 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
 - **Removed the website's "playing now" presence feature**: game sessions no longer report presence, the website
   no longer requests or displays a live player count, and the launcher no longer offers the setting.
 
-## Fixes from the latest openOMSI PR requests
+## Fixes from the latest openOMSI PR
 - **Enhanced clouds no longer turn to layered mush while driving fast**: every time the camera had
   moved far enough for the sky to be drawn from a new point, the new picture of the sky was one
   noisy sample of the cloud march and took seconds to clear; at speed a new one came before the
