@@ -216,8 +216,6 @@ impl Renderer {
         // the driver's compiled pipelines kept for the next start (Vulkan, OpenGL)
         if !intel_vulkan_safe {
             required_features |= pipeline_cache::wanted(&adapter);
-            // (the vehicles' blank display textures cleared on the GPU, `add_blank_texture`)
-            required_features |= adapter.features() & wgpu::Features::CLEAR_TEXTURE;
         }
         // Enhanced+: hardware ray queries where the device has them (Apple silicon from the
         // M3/A17 on, RTX and RDNA 2 cards and newer through Vulkan and Direct3D 12 - with DXC,

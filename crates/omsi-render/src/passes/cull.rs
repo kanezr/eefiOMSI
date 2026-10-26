@@ -68,9 +68,6 @@ impl Frustum {
     }
 }
 
-/// How far a mirror draws the objects smaller than a terrain tile (m).
-const MIRROR_REACH: f32 = 600.0;
-
 impl Renderer {
     /// The instances the camera sees: (instance, distance along the view direction, the
     /// camera is inside its bounds).
@@ -136,11 +133,6 @@ impl Renderer {
             // left out for the fog let it show through, road-shaped holes in the
             // terrain seen from above, so the ground is always drawn there)
             if !inside && z - r > fog_far && !(enhanced_frame && (inst.surface || r > 100.0)) {
-                return None;
-            }
-            // (a mirror leaves out what is small past its reach: the Enhanced picture keeps every
-            // road piece and mark, and they were four fifths of a city street's mirror)
-            if !inside && !main_view && r <= 100.0 && z - r > MIRROR_REACH {
                 return None;
             }
             if !inside && (v.x.abs() > z * tan_x + r / cos_x || v.y.abs() > z * tan_y + r / cos_y) {

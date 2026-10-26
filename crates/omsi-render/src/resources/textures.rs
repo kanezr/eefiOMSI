@@ -450,24 +450,23 @@ impl Renderer {
         scene.textures.len() - 1
     }
 
-    /// A transparent texture for a vehicle's displays; `mipmaps`: with the levels its text is drawn into.
-    pub fn add_blank_texture(&self, scene: &mut Scene, width: u32, height: u32, mipmaps: bool) -> TextureId {
+    pub fn add_blank_texture(&self, scene: &mut Scene, width: u32, height: u32) -> TextureId {
         let (width, height) = fit_size(width.max(1), height.max(1), self.device.limits().max_texture_dimension_2d);
-        let mipmaps = mipmaps && width > 1 && height > 1;
         // A newly allocated GPU texture has undefined contents. Script displays may be
         // sampled before their first `STUnlock`, so initialise them as transparent rather
         // than briefly showing arbitrary solid pixels on new or AI vehicles.
-        // (cleared on the GPU where it can: uploading the zeros was 10-35 ms per articulated AI bus)
-        let texture = if self.device.features().contains(wgpu::Features::CLEAR_TEXTURE) {
-            self.cleared_texture(width, height, mipmaps)
-        } else {
-            let image = omsi_texture::Image { width, height, rgba: vec![0; (width * height * 4) as usize], has_alpha: true };
-            if mipmaps { self.upload_texture_gpu_mips(&image) } else { upload_texture(&self.device, &self.queue, &image, false) }
+        let image = omsi_texture::Image {
+            width,
+            height,
+            rgba: vec![0; (width * height * 4) as usize],
+            has_alpha: true,
         };
+        let texture = upload_texture(&self.device, &self.queue, &image, false);
         scene.textures.push(texture);
         scene.textures.len() - 1
     }
 
+<<<<<<< HEAD
     /// An sRGB texture cleared to transparent on the GPU, made as `upload_texture` (`upload_texture_gpu_mips`) makes it.
     fn cleared_texture(&self, width: u32, height: u32, mipmaps: bool) -> GpuTexture {
         let mip_count = if mipmaps { (32 - width.max(height).leading_zeros()).max(1) } else { 1 };
@@ -497,6 +496,8 @@ impl Renderer {
         GpuTexture { texture, view, size: (width, height), bytes: texture_bytes(format, width, height, mip_count), gen: next_gen() }
     }
 
+=======
+>>>>>>> parent of fca590ed (Performance upgrades from openOMSI PR)
     /// The PBR set found beside diffuse texture `diffuse` (`omsi_texture::pbr`): its maps up
     /// (as data, not colours) and known to the materials made with that texture from now on.
     pub fn add_pbr_maps(&self, scene: &mut Scene, diffuse: TextureId, set: &omsi_texture::pbr::PbrImages) {
