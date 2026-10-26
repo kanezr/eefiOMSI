@@ -114,7 +114,10 @@ impl Humans {
     /// OMSI's `change_take`: the driver takes back the coins lying on the change tray.
     pub fn take_change_tray(&mut self) {
         if let Some(m) = self.sim.money.as_mut() {
+            // Collect the driver's change.
             m.clear(true);
+            // Collect the passenger's payment.
+            m.clear(false);
         }
     }
 

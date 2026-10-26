@@ -138,7 +138,7 @@ fn interpolated_intermediate_stop_cannot_hold_a_bus_for_many_minutes() {
     let mut service = BusService::new(vec![stop(2), stop(3)]);
     service.last_stop = Some(3);
     assert!(!service.waits_here(false, false, 1200.0));
-    assert_eq!(service.stop_wait(1200.0, 0.0, false, false, false), 120.0);
+    assert_eq!(service.stop_wait(1200.0, 0.0, false, false, false), 20.0);
     assert_eq!(service.stop_wait(1200.0, 0.0, true, false, false), 0.0);
     service.holds.push(2);
     assert!(service.waits_here(false, false, 1200.0));

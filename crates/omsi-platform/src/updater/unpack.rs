@@ -61,9 +61,6 @@ fn link_points_down(target: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::io::Write;
-
     #[cfg(unix)]
     #[test]
     fn links_and_setuid_bits_do_not_leave_the_unpacked_folder() {

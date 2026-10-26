@@ -53,6 +53,11 @@ pub struct DoorWants {
     pub places: Vec<(String, bool)>,
 }
 
+/// Sale events to play money sounds
+pub enum SaleEvent {
+    PassengerGaveMoney,
+}
+
 /// A bus as the passengers know it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BusId {
@@ -315,6 +320,8 @@ pub struct PeopleSim {
     pub content: u32,
     pub ticket_requests: u32,
     pub ticket_points: u32,
+    //sale events to play money sounds
+    pub sale_events: Vec<(BusId, SaleEvent)>,
     /// `PAX_Entry<i>_Req`: somebody at the kerb wants in through entry `i`.
     pub entry_req: Vec<bool>,
     /// `PAX_Exit<i>_Req`: somebody inside wants out through exit `i`.
