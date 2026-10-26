@@ -494,7 +494,7 @@ impl Renderer {
         encoder.clear_texture(&texture, &wgpu::ImageSubresourceRange::default());
         self.queue.submit([encoder.finish()]);
         let view = texture.create_view(&Default::default());
-        GpuTexture { texture, view, size: (width, height), bytes: texture_bytes(format, width, height, mip_count), generation: next_gen() }
+        GpuTexture { texture, view, size: (width, height), bytes: texture_bytes(format, width, height, mip_count), gen: next_gen() }
     }
 
     /// The PBR set found beside diffuse texture `diffuse` (`omsi_texture::pbr`): its maps up
