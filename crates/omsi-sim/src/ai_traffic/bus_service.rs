@@ -280,9 +280,13 @@ const EARLY_LEAVE_RAIL: f64 = 120.0;
 /// trip) - except at its trip's last stop, where it stands until its time there however
 /// long (`stop_wait`).
 const LAYOVER_WAIT: f64 = 1800.0;
-/// An untimed intermediate stop has only an interpolated departure. Holding to that
-/// estimate for many minutes can block the stop and the lane behind it on mod maps.
-const INTERPOLATED_STOP_WAIT: f64 = 120.0;
+/// An untimed intermediate stop has only an interpolated departure: the running time shared
+/// out by distance, which a bus driving through town keeps to no better than by a few
+/// minutes. Holding to that estimate blocks the stop and the lane behind it for no reason
+/// anyone at the stop can see (on Spandau a third of the buses stood over a minute at the
+/// stops that have no time of their own, up to 2 min, the early ones 8..17 min early): the
+/// bus waits the length of a stop's boarding at the most.
+const INTERPOLATED_STOP_WAIT: f64 = 20.0;
 
 /// How long a bus arriving at `now` stands at a stop it is to leave at `depart`.
 #[cfg(test)]
@@ -636,6 +640,19 @@ impl BusService {
     /// Off from the stop: the next one is the front.
     fn depart(&mut self, st: &mut AiState, vehicle: &mut VehicleInstance, ctx: &Ctx) {
         let bay = self.stops.front().map(|s| s.bay).unwrap_or(0.0);
+        if omsi_cfg::flags::OMSI_DEBUG_STOPS.is_set() {
+            // (what kept it: the timetable's wait, or the people at the doors past it)
+            log::info!(
+                "t={:.1}: timetable bus {} leaves its stop {:?} after {:.0} s ({:.0} s late of its time, held by people {:.0} s, timetable wait {:.0} s)",
+                ctx.day_time,
+                ctx.id,
+                self.stops.front().map(|s| s.id),
+                ctx.day_time - self.arrived_at,
+                ctx.day_time - self.stops.front().map_or(ctx.day_time, |s| s.depart),
+                self.held_over,
+                (self.leave_at - self.arrived_at).max(0.0)
+            );
+        }
         if let Some(stop) = self.stops.front() {
             self.delay = ctx.day_time - stop.depart;
         }

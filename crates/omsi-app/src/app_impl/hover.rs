@@ -164,7 +164,7 @@ impl App {
         };
         let (o, d, _) = self.cockpit_cursor_ray(cam, (s.config.width, s.config.height));
         self.gfx.sim_view.people.ticket_blocks.as_ref().is_some_and(|b| b.hit(o, d, &p.vehicle).is_some())
-            || h.sim.money.as_ref().is_some_and(|m| crate::money::change_hit(m, o, d, &p.vehicle).is_some())
+            || h.sim.money.as_ref().is_some_and(|m| crate::money::money_hit(m, o, d, &p.vehicle).is_some())
     }
 
     /// Show the mouse cursor `kind` (0 arrow, 1 pointing hand, 2 cross, 3 arrows, 4 closed hand).

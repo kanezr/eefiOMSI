@@ -530,3 +530,36 @@ fn the_cars_step_alike_with_and_without_the_workers() {
 }
 
 const SIM_DT_TEST: f32 = super::fixed_step::SIM_DT;
+
+/// A car waiting for a gap to move over into the next lane while the car there, abreast of
+/// it, stands behind it for good (it takes the one moving over for its lead, at a green
+/// light too): the standing one drives on, and the waiting one gets its gap.
+#[test]
+fn a_car_that_waits_to_move_over_does_not_hold_up_the_lane_it_waits_for() {
+    let f = Fixture::new();
+    let net = Network {
+        lanes: vec![street(DVec3::new(0.0, 0.0, 0.0), 0.0, 100.0), street(DVec3::new(3.5, 0.0, 0.0), 0.0, 100.0)],
+        ..Default::default()
+    };
+    let mut t = traffic(&f, net);
+    let waiting = add_car(&mut t, &f, 0, 60.0, 1, Some(0.0));
+    let standing = add_car(&mut t, &f, 1, 58.0, 2, Some(0.0));
+    let (a, b) = (t.cars.iter().position(|c| c.id == waiting).unwrap(), t.cars.iter().position(|c| c.id == standing).unwrap());
+    t.time = 100.0;
+    // the one behind takes the other for its lead and has stood for a while
+    t.cars[b].lead_car = Some(waiting);
+    t.cars[b].stopped = 20.0;
+    t.cars[a].sideways.signalled = 12.0;
+    t.cars[a].sideways.waiting = Some((1, t.time));
+    t.break_lead_pairs();
+    assert_eq!(t.cars[b].ignore_lead.map(|x| x.0), Some(waiting));
+    // not when it waited for another lane, or only just began to wait
+    t.cars[b].ignore_lead = None;
+    t.cars[a].sideways.waiting = Some((0, t.time));
+    t.break_lead_pairs();
+    assert_eq!(t.cars[b].ignore_lead, None);
+    t.cars[a].sideways.waiting = Some((1, t.time));
+    t.cars[a].sideways.signalled = 2.0;
+    t.break_lead_pairs();
+    assert_eq!(t.cars[b].ignore_lead, None);
+}

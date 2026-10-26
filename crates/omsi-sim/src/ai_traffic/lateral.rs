@@ -40,6 +40,9 @@ pub const TURN_LANE_LOOK: f32 = 150.0;
 /// (`AiState::start_change`), and one that is not over where the car's own way ends
 /// finishes with a jump sideways.
 pub const CHANGE_ROOM: f32 = 13.0;
+/// Seconds a car whose route moves it over a lane waits for its gap before it moves over
+/// even where the two lanes no longer run side by side.
+pub const LATE_CHANGE_AFTER: f32 = 12.0;
 
 /// Is the box (with its heights) in a scenery object's way? See `TrafficSim::scenery_probe`.
 pub type SceneryProbe = Arc<dyn Fn(&Obb) -> bool + Send + Sync>;
@@ -57,6 +60,10 @@ pub struct Sideways {
     pub retry: f32,
     /// Seconds the indicator has been on for the change its way requires.
     pub signalled: f32,
+    /// The lane it is waiting for a gap in for that change, and when it last waited
+    /// (`TrafficSim::time`): the cars of that lane that stand behind it for good are told
+    /// to drive on (`TrafficSim::break_lead_pairs`).
+    pub waiting: Option<(usize, f32)>,
     /// What decided its lateral target this step (for the debug output).
     pub why: &'static str,
 }
@@ -375,7 +382,14 @@ impl TrafficSim {
             return None;
         };
         let st = &self.cars[i].state;
-        let possible = r.need != Need::Route || self.net.route_change_locally_possible(st.lane, to, st.s);
+        // (a route's change is made where the two lanes still run side by side; a bus that
+        // waited for its gap until they parted - or came to the change too late to wait for
+        // it - stood at the end of its lane for good, the street behind it with it: after
+        // `LATE_CHANGE_AFTER` s of waiting it moves over wherever it is, finishing the move
+        // with a jump sideways at the end of its lane, as the module notes say)
+        let possible = r.need != Need::Route
+            || self.net.route_change_locally_possible(st.lane, to, st.s)
+            || self.cars[i].sideways.signalled > LATE_CHANGE_AFTER;
         if possible && self.try_change(i, to, dir, ChangeKind::Required(r.need), ts, None) {
             if ts.debug {
                 log::info!("t={:.1}: car {} moves over to lane {to} ({:?})", self.time, self.cars[i].id, r.need);
@@ -398,6 +412,29 @@ impl TrafficSim {
         car.state.signal = dir;
         car.state.signal_time = 1.0;
         car.sideways.signalled += ts.dt;
+        car.sideways.waiting = Some((to, self.time));
+        if ts.debug && [30.0, 90.0, 240.0].iter().any(|t| (car.sideways.signalled - t).abs() < ts.dt * 0.5) {
+            let (id, s) = (car.id, car.state.s);
+            let s_to = self.net.beside_s(self.cars[i].state.lane, to, s);
+            let near: Vec<String> = ts
+                .by_lane
+                .get(&to)
+                .into_iter()
+                .flatten()
+                .filter(|e| (e.1 - s_to).abs() < 45.0)
+                .map(|e| format!("car {} {:+.1} m v {:.1}{}", self.cars[e.0].id, e.1 - s_to, self.cars[e.0].state.speed, if e.3 { " foreign" } else { "" }))
+                .collect();
+            log::info!(
+                "t={:.1}: car {id} has waited {:.0} s on lane {} (s {s:.1}) to move over to lane {to} ({:?}): may merge {}, claim free {}, cars there: {:?}",
+                self.time,
+                self.cars[i].sideways.signalled,
+                self.cars[i].state.lane,
+                r.need,
+                self.can_merge(i, to, s_to, &ts.by_lane),
+                self.claim_free(to, s_to, id, true),
+                near
+            );
+        }
         Some(wait.max(0.0))
     }
 

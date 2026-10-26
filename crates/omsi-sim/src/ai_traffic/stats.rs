@@ -420,11 +420,11 @@ impl TrafficSim {
             };
             *w.heads.entry(reason).or_default() += 1;
             // (the heads of the longest waits, once a minute)
-            if debug && logged < 4 && (s.t / WINDOW).fract() * WINDOW < SAMPLE {
+            if debug && logged < 8 && [90.0, 240.0].iter().any(|t| (c.stopped.max(c.progress.1) - t) >= 0.0 && (c.stopped.max(c.progress.1) - t) < SAMPLE) {
                 if let Some(h) = chain_head(&waits, k).filter(|&h| h == k) {
                     let head = &self.cars[h];
                     logged += 1;
-                    log::info!("stats t={:.0}: car {} stood {:.0} s at ({:.1}, {:.1}) lane {}: {:?} waits on {:?} yield_to {:?} junction {}", s.t, head.id, head.stopped.max(head.progress.1), head.vehicle.position.x, head.vehicle.position.y, head.state.lane, head.why, head.waits_on, head.yield_to, head.junction_why);
+                    log::info!("stats t={:.0}: car {} ({}) stood {:.0} s at ({:.1}, {:.1}) lane {}: {:?} waits on {:?} yield_to {:?} junction {} sideways {} (indicator on {:.0} s)", s.t, head.id, if head.is_bus() { "bus" } else { "car" }, head.stopped.max(head.progress.1), head.vehicle.position.x, head.vehicle.position.y, head.state.lane, head.why, head.waits_on, head.yield_to, head.junction_why, head.sideways.why, head.sideways.signalled);
                 }
             }
         }

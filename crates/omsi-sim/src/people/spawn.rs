@@ -120,6 +120,7 @@ impl PeopleSim {
             content: 0,
             ticket_requests: 0,
             ticket_points: 0,
+            sale_events: Vec::new(),
             entry_req: Vec::new(),
             exit_req: Vec::new(),
             entry_busy: Vec::new(),

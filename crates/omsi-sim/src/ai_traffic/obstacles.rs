@@ -36,6 +36,10 @@ pub fn player_reach_ahead(half_len: f32, speed: f32, horizon: f32, fwd: DVec2, w
     half_len as f64 + if same_way { 0.0 } else { (speed.max(0.0) * horizon) as f64 }
 }
 
+/// Seconds a car has stood behind one that waits to move over into its lane, and that one has
+/// waited, before the car drives on (`TrafficSim::break_lead_pairs`).
+const MOVE_OVER_PATIENCE: f32 = 8.0;
+
 impl TrafficSim {
     /// Where car `i` has to stop for somebody on foot (the distance of its front from its
     /// origin, as the other stops): anybody standing in the strip it is about to sweep, or
@@ -132,6 +136,24 @@ impl TrafficSim {
                 log::info!("t={:.1}: cars {} and {} each waited for the other: {} drives off", self.time, self.cars[go].id, other, self.cars[go].id);
             }
             self.cars[go].ignore_lead = Some((other, self.time as f64 + 5.0));
+        }
+        // The same wait with only one side taking the other for its lead: a car waiting
+        // beside a queue for a gap to move over into its lane (a bus whose route shifts a
+        // lane, a lane that closes) while the car it waits for stands behind it for good,
+        // because it takes the one moving over for its lead - even at a green light. The
+        // one that stands drives on (up to the line, the gap) and the other can move over.
+        for b in 0..self.cars.len() {
+            let c = &self.cars[b];
+            let Some(&a) = c.lead_car.and_then(|id| index.get(&id)) else { continue };
+            let wait = &self.cars[a].sideways;
+            let waits_for_this_lane = wait.waiting.is_some_and(|(lane, at)| lane == c.state.lane && self.time - at < 0.5);
+            if c.state.speed.abs() < 0.3 && c.stopped > MOVE_OVER_PATIENCE && wait.signalled > MOVE_OVER_PATIENCE && waits_for_this_lane && c.ignore_lead.is_none_or(|(_, until)| until < self.time as f64) {
+                if omsi_cfg::flags::OMSI_DEBUG_STUCK.is_set() {
+                    log::info!("t={:.1}: car {} stands behind car {}, which waits to move over into its lane ({:.0} s): it drives on", self.time, c.id, self.cars[a].id, wait.signalled);
+                }
+                let other = self.cars[a].id;
+                self.cars[b].ignore_lead = Some((other, self.time as f64 + 5.0));
+            }
         }
     }
 
