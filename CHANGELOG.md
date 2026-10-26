@@ -59,6 +59,13 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
   junction). The standing car now drives on after a few seconds. And a route's lane change that
   the bus missed its window for (the two lanes no longer run side by side) is made all the same
   after 12 s of waiting instead of never. `OMSI_DEBUG_STUCK` also says why a lane change waits.
+- **Performance: mirrors leave out small objects past 600 m**: much higher frame rate in cities with 
+  Enhanced mirrors (Mirror quality: As the picture): St-Servan at midday 66 → 87 fps standing, 
+  62 → 77 fps driving. The mirrors look the same: they no longer draw the road pieces and 
+  marks more than 600 m behind the bus, a pixel or two each in a mirror.
+- **Performance: clear the vehicles' blank display textures on the GPU**: fewer freezes when the 
+  timetable puts AI buses on the road, mostly the articulated ones (Citelis 18, GC2 BHNS): 
+  each one used to hold the frame for 12–35 ms.
 
 ## eefiOMSI v0.2.0.2
 ### Performance and fixes from the latest version of openOMSI
