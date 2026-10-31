@@ -5,13 +5,11 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
 [Releases](https://github.com/kanezr/eefiOMSI/releases) page.'
 
 ## eefiOMSI v0.2.1
-
 ## Fixes
+- **Security**: updated packages to a newer version for security purposes (#7, @kanezr).
 - **Fixed the build version gaining an extra `.0`**: complete three- and four-part versions in
   `VERSION` are now used as written. Tauri receives a SemVer-compatible version, so `0.2.0.2`
   remains the game version while the launcher uses `0.2.0+2`.
-- **Fixed Tauri builds rejecting four-part versions**: Windows, Linux and macOS builds now map
-  the game's four-part version to valid SemVer metadata for the launcher.
 - Fixed all warnings.
 
 ## Removed
@@ -40,40 +38,17 @@ promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the 
 - **Split the main pass when the view has an excavation**: Less main-thread time per frame on maps 
   with excavations (St-Servan, for one): the main pass is finished on two threads there too. 
   The frame rate rises where the CPU is the limit; the picture does not change.
-- **Plan the prepass lists and long phases on the pool: Less main-thread time per frame in dense areas: 
+- **Plan the prepass lists and long phases on the pool**: Less main-thread time per frame in dense areas: 
   the draw lists are planned on several threads. The frame rate rises where the CPU is the limit; 
   the picture does not change.
-- **The people boarding a timetable bus walk in to their seats**: in any bus but the player's they
-  stood in their seats the moment they stepped through the door, a jump in the saloon of every bus
-  that passed a stop. They now walk along the bus's own paths to the place reserved, as in the
-  player's bus (a bus without paths to the place keeps the jump).
-- **Timetable buses no longer stand at the stops that have no time of their own**: a bus that came to
-  such a stop early waited for the timetable's estimate (the running time shared out by distance)
-  up to two minutes, so a third of the buses stood over a minute with nobody getting on or off. They
-  now wait the length of a boarding at the most; the stops the timetable gives a time, the first and
-  the last stop keep their wait. `OMSI_DEBUG_STOPS` also logs how long each bus stood and why.
-- **AI traffic: a bus waiting to move over a lane no longer jams the street for good**: a car standing
-  in the lane a bus (or a car whose lane closes) waits to move over into took that vehicle for its
-  lead, so it stayed put even at a green light while the bus waited for it to move - both stood for
-  minutes, and the queue behind them with them (Spandau, the four-lane approach of the Altstadt
-  junction). The standing car now drives on after a few seconds. And a route's lane change that
-  the bus missed its window for (the two lanes no longer run side by side) is made all the same
-  after 12 s of waiting instead of never. `OMSI_DEBUG_STUCK` also says why a lane change waits.
-- **Performance: mirrors leave out small objects past 600 m**: much higher frame rate in cities with 
-  Enhanced mirrors (Mirror quality: As the picture): St-Servan at midday 66 → 87 fps standing, 
-  62 → 77 fps driving. The mirrors look the same: they no longer draw the road pieces and 
-  marks more than 600 m behind the bus, a pixel or two each in a mirror.
-- **Performance: clear the vehicles' blank display textures on the GPU**: fewer freezes when the 
-  timetable puts AI buses on the road, mostly the articulated ones (Citelis 18, GC2 BHNS): 
-  each one used to hold the frame for 12–35 ms.
 
 ## eefiOMSI v0.2.0.2
 ### Performance and fixes from the latest version of openOMSI
 
 ## Fixes
-- **Less CPU work for traffic out of sight**: a car outside the view and beyond 150 m runs its script a few times a second; 
-  timetable buses keep their usual beat. Distant, unseen cars' lamps and smoke leave the frame's work, 
-  and placing dormant traffic no longer scans every lane for every car
+- **Less CPU work for traffic out of sight**: a car outside the view and beyond 150 m runs its script 
+  a few times a second; timetable buses keep their usual beat. Distant, unseen cars' lamps and smoke 
+  leave the frame's work, and placing dormant traffic no longer scans every lane for every car
 - **Destination displays light up at night in Enhanced and Enhanced+**: a script's screen is
   never taken for a pane. The EMT Citaro's Krueger matrix (Mallorca) is blended, writes no
   depth and draws its letters through a `\S:n` transparency map - the layout of a window - so

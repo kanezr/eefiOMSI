@@ -1,4 +1,4 @@
-//! Stamps the build with its version (see docs/VERSIONING.md) and the
+//! Stamps the build with its version (`MAJOR.MINOR.PATCH`, see docs/VERSIONING.md) and the
 //! commit it came from, so a screenshot or a log line says which version is running
 //! (`omsi_platform::VERSION`, `omsi_platform::BUILD`; the updater compares the version with
 //! the latest release).
@@ -21,8 +21,9 @@ fn main() {
     println!("cargo:rerun-if-changed=../../.git/index");
 }
 
-/// A complete three- or four-part VERSION is used as-is. The historical two-part form gets
-/// its patch number from release tags, as in scripts/version.sh.
+/// `MAJOR.MINOR` from the VERSION file, then the release tagged on this commit, or one more
+/// than the last release of that `MAJOR.MINOR` (as scripts/version.sh; the CI passes its
+/// result in `OPENOMSI_VERSION`).
 fn version(git: &dyn Fn(&[&str]) -> Option<String>) -> String {
     if let Ok(v) = std::env::var("OPENOMSI_VERSION") {
         if !v.trim().is_empty() {

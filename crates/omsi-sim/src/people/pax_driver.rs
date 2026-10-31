@@ -197,18 +197,6 @@ impl PeopleSim {
             if self.desk_busy.is_some_and(|d| d != self.people[i].id) {
                 return;
             }
-            // A previous passenger's payment must be collected before another passenger starts
-            // selling a ticket - by the driver; in `auto` boarding the game plays the driver
-            // and takes it with the ticket, as before.
-            let payment_still_on_desk = self.money.as_ref().is_some_and(|m| {
-                m.placed
-                    .iter()
-                    .any(|(_, _, _, change, _)| !*change)
-            });
-
-            if payment_still_on_desk && !auto {
-                return;
-            }
             let k = 1 + self.rand() % 2;
             self.say_ticket(i, id, k, p.plugin().voice.as_deref());
             self.ticket_requests += 1;
@@ -239,10 +227,6 @@ impl PeopleSim {
                 // Real payment made by the passenger, which may be different from the ticket price.
                 paid = m.value_of(&coins);
                 if let Some((pos, var, parent)) = point {
-                    let coin_count = m.currency.as_ref().map(|currency| currency.coins.len()).unwrap_or(0);
-                    if coins.iter().any(|&id| id < coin_count) {
-                        self.sale_events.push((bn.id, SaleEvent::PassengerGaveMoney));
-                    }
                     // (put there when the view catches up: view_sync::apply_people)
                     self.bodies.ops.push(BodyOp::Coins { coins, point: pos, var, change: false, parent, });
                 }
@@ -271,10 +255,8 @@ impl PeopleSim {
             self.ticket_cash += value;
             self.sales.push((name, value));
             *taken_ticket = true;
-            if auto {
-                if let Some(m) = self.money.as_mut() {
-                    m.clear(false);
-                }
+            if let Some(m) = self.money.as_mut() {
+                m.clear(false);
             }
             self.paid = None;
             let pp = self.pax_mut(i).unwrap();

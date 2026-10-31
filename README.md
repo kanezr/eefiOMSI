@@ -37,7 +37,7 @@ Every commit to `main` is built by GitHub Actions and published on the
 
 | Platform | File |
 | --- | --- |
-| Windows x64 / ARM64 | `eefiOMSI-<version>-windows-x64.zip` / `-windows-arm64.zip` - run `openomsi.exe` |
+| Windows x64 / ARM64 | `openOMSI-<version>-windows-x64.zip` / `-windows-arm64.zip` - run `openomsi.exe` |
 
 Start the game, point the launcher to your OMSI 2 folder once, pick a map, a bus and a duty,
 and drive. Mods go into the folder next to the game (or through the launcher's **Mods**

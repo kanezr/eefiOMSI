@@ -545,15 +545,10 @@ impl App {
                     self.input.dragging = false;
                     return;
                 }
-                // A piece of money on the desk/change tray: picked up by the driver.
-                if let Some((m, k)) = self.session.humans.as_mut().and_then(|h| h.sim.money.as_mut()).and_then(|m| crate::money::money_hit(m, o, d, &p.vehicle).map(|k| (m, k))) {
-                    log::info!("a piece of money picked up");
-                    let coin_count = m.currency.as_ref().map(|currency| currency.coins.len()).unwrap_or(0);
-                    let is_coin = m.placed.get(k).is_some_and(|piece| piece.2 < coin_count);
+                // a coin of the change on the tray: picked up again
+                if let Some((m, k)) = self.session.humans.as_mut().and_then(|h| h.sim.money.as_mut()).and_then(|m| crate::money::change_hit(m, o, d, &p.vehicle).map(|k| (m, k))) {
+                    log::info!("a coin of the change picked up again");
                     m.take_coin(k);
-                    if is_coin {
-                        p.vehicle.host.fired_triggers.push("ev_ticketsale_takemoney".into());
-                    }
                     self.input.dragging = false;
                     return;
                 }

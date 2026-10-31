@@ -1,7 +1,8 @@
 #!/bin/sh
-# Print the version of the checked-out commit.
-#   MAJOR.MINOR in VERSION keeps the historical automatic patch numbering.
-#   A three- or four-part VERSION is already complete and is printed as-is.
+# Print the version of the checked-out commit: MAJOR.MINOR.PATCH.
+#   MAJOR.MINOR  the VERSION file (edited by hand)
+#   PATCH        the release tagged on this commit, or one more than the last release
+#                v<MAJOR.MINOR>.* (0 when there is none yet)
 # See docs/VERSIONING.md. Needs the tags (CI: fetch-depth: 0).
 set -eu
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"

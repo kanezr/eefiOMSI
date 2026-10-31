@@ -76,11 +76,6 @@ impl PeopleSim {
                 let km = self.odometer.get(&bn.id).copied().unwrap_or(0.0);
                 let detailed = bn.id == BusId::Player;
                 let all = bn.cabin.all_points();
-                // The riders of any bus walk in to their places along its paths, the way those
-                // of the player's do (Omsi.exe has them at their places at once, which looks
-                // like a jump in the saloon of a bus passing at a stop): to the place reserved,
-                // when the bus has paths to it. Without them, or without a place, at once.
-                let place_pt = self.pax(i).unwrap().seat.and_then(|k| bn.cabin.seats.get(k)).and_then(|s| bn.cabin.omsi_nearest(s.pos, &all, false, true, None, None));
                 let p = self.pax_mut(i).unwrap();
                 p.pax_state = 1.0;
                 p.km_start = km;
@@ -93,17 +88,10 @@ impl PeopleSim {
                 p.target_bus = true;
                 p.pt = bn.cabin.omsi_nearest(local, &all, false, false, None, None);
                 p.st = 5;
-                if debug_pax() && !detailed {
-                    log::info!("pax boards bus {:?}: place {:?} (path point {:?}), doorway point {:?}, {} path points", bn.id, p.seat, place_pt, p.pt, all.len());
-                }
-                if !detailed && (place_pt.is_none() || p.pt.is_none()) {
-                    // no way to the place: at it at once (sub_62a358 + task 7)
+                if !detailed {
+                    // a bus not the player's: at the place at once (sub_62a358 + task 7)
                     self.set_task(i, Task::SittingInBus, buses, bus_ix, world);
                     return;
-                }
-                if !detailed {
-                    // (the tickets are the player's affair: the others of the town have theirs)
-                    p.ticket = TICKET_NONE;
                 }
                 let ticket = p.ticket;
                 match ticket {

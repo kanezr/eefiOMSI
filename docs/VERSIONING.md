@@ -1,30 +1,29 @@
 # Versioning and releases
 
-## The version number
+## The version number: `MAJOR.MINOR.PATCH`
 
 | Part | Where it comes from | Example |
 | --- | --- | --- |
-| Full version | A three- or four-part number in [`VERSION`](../VERSION), used as written | `0.2.0.2` |
-| Automatic version | The historical two-part `MAJOR.MINOR` form; patch is counted from release tags | `1.2.17` |
+| `MAJOR` | the first number in the [`VERSION`](../VERSION) file, changed by hand | `1` |
+| `MINOR` | the second number in `VERSION`, changed by hand | `1.2` |
+| `PATCH` | counted automatically: one more than the last release `v<MAJOR.MINOR>.*` (its tag), or `0` when there is none yet | `1.2.17` |
 
-With a full version, `scripts/version.sh` and the game use the value in `VERSION` exactly;
-they do not append another `.0`. With the two-part form, releases follow each other without
-gaps: after `1.2.16`, the next release is `1.2.17`. Tauri requires SemVer's three numeric
-components, so a four-part game version such as `0.2.0.2` is passed to Tauri as
-`0.2.0+2` (the last component as build metadata); the game's displayed version remains
-`0.2.0.2`.
+Releases follow each other without gaps, however many commits come in between: after
+`1.2.16`, the next release is `1.2.17`. A commit that already has a release keeps its version.
+`PATCH` restarts from `0` whenever `VERSION` changes: after `1.1.23`, the first release with
+`VERSION` set to `1.2` is `1.2.0`, and the next one `1.2.1`.
 
-To set a full version, change that one line in a pull request like any other change:
+To start a new version, change that one line in a pull request like any other change:
 
 ```sh
-git switch -c version-0.2.0.3 && echo 0.2.0.3 > VERSION
-git commit -am "Version 0.2.0.3" && git push -u origin version-0.2.0.3
+git switch -c version-1.2 && echo 1.2 > VERSION
+git commit -am "Version 1.2" && git push -u origin version-1.2
 ```
 
 `scripts/version.sh` prints the version of the checked-out commit; the game shows it in the
 launcher's side bar, in its log and in `openomsi --version` (baked in by
-`crates/omsi-platform/build.rs`, which uses the same rule). For the two-part form only, a
-build of a commit that has no release shows the number of the next release.
+`crates/omsi-platform/build.rs`, which uses the same rule). A build of a commit that has no
+release shows the number of the next release, whichever commit that release comes from.
 
 ## Releases: beta, then stable
 

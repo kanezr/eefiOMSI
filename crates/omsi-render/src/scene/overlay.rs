@@ -105,7 +105,6 @@ pub(crate) struct ObjectRun {
 fn normal_key(n: Vec3) -> (i32, i32, i32) {
     ((n.x * 100.0).round() as i32, (n.y * 100.0).round() as i32, (n.z * 100.0).round() as i32)
 }
-
 /// `f` against `g` when the two face the same way and their boxes overlap within `margin`: how
 /// far `f`'s middle lies off `g`'s plane, and how far `f`'s tilt lifts its corners off it.
 fn facing(f: &Flat, g: &Flat, margin: f32) -> Option<(f32, f32)> {

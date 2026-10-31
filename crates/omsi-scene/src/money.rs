@@ -74,16 +74,11 @@ fn mesh_of(bus: &VehicleInstance, name: &str) -> Mat4 {
         .unwrap_or(Mat4::IDENTITY)
 }
 
-/// The coin of the change lying on the tray OR coin/bill on the desk a ray from `origin` along `dir` points at
+/// The coin of the change lying on the tray a ray from `origin` along `dir` points at
 /// (its place in `Money::placed`), the nearest: within 2 cm of a coin's middle, as near
 /// as a coin is wide. A click on it picks it up again, as in Omsi.exe (#1354, #2399: the
 /// coins could not be clicked).
-pub fn money_hit(
-    m: &Money,
-    origin: DVec3,
-    dir: Vec3,
-    bus: &VehicleInstance,
-) -> Option<usize> {
+pub fn change_hit(m: &Money, origin: DVec3, dir: Vec3, bus: &VehicleInstance) -> Option<usize> {
     let rot = bus.body_rotation();
     let o = (origin - bus.position).as_vec3();
     let dir = dir.normalize_or_zero();
@@ -92,15 +87,10 @@ pub fn money_hit(
         .enumerate()
         .filter(|(_, p)| p.3)
         .filter_map(|(k, (_, local, _, _, parent))| {
-           let on = parent
-                .as_deref()
-                .map(|n| mesh_of(bus, n))
-                .unwrap_or(Mat4::IDENTITY);
-                
+            let on = parent.as_deref().map(|n| mesh_of(bus, n)).unwrap_or(Mat4::IDENTITY);
             let c = (rot * on * *local).transform_point3(Vec3::ZERO);
             let t = (c - o).dot(dir);
-            (t > 0.0 && t < 3.0 && (o + dir * t).distance(c) < 0.02)
-                .then_some((k, t))
+            (t > 0.0 && t < 3.0 && (o + dir * t).distance(c) < 0.02).then_some((k, t))
         })
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|h| h.0)
