@@ -79,6 +79,25 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 }
 
 impl Navigator {
+    pub(super) fn release_city_resources(&mut self, renderer: &Renderer, scene: &mut Scene) {
+        if self.city.target.is_none() && self.city.ground.is_none() && self.city_job.is_none() {
+            return;
+        }
+        if let Some((texture, _, _)) = self.city.target.take() {
+            renderer.free_texture(scene, texture);
+            scene.premultiplied.remove(&texture);
+        }
+        self.city.ground = None;
+        self.city.route = ((u64::MAX, u64::MAX, u32::MAX, u64::MAX), DVec2::ZERO, 0);
+        self.city_job = None;
+        self.city.buttons.clear();
+        if let Some(gpu) = self.gpu.as_mut() {
+            for id in [4, 5, 7, 10, 11, 14, 15, 17, 18] {
+                gpu.put(id, Gpu::vertices(&renderer.device, &[]));
+            }
+        }
+    }
+
     /// Where OMSI 2's dynamic route arrows stand on the route ahead (the `nav_arrows`
     /// setting): every junction lane of the next `reach` metres with the way through it
     /// (`L`, `R`, or `dn` for straight on), and the stops of the trip ahead with their
@@ -464,13 +483,6 @@ impl Navigator {
             let pal2 = *pal;
             let houses = mpp < 6.0;
             let job = move || super::build::build(&parts, centre, radius, &pal2, look, mpp < 2.2, houses);
-            if self.city.ground.is_none() {
-                // (the first picture at once: nothing to show meanwhile)
-                let b = job();
-                let [verts, houses @ ..] = b.counts.map(|n| n as u32);
-                self.city.ground = Some(CityGround { key, anchor: b.anchor, centre, radius, mpp, verts, houses });
-                return Some(b);
-            }
             let device = device.clone();
             self.city_job = Some(super::build::Job::start(CityJob { key, centre, radius, mpp }, move || job().made_on(&device)));
         }
@@ -513,7 +525,7 @@ impl Navigator {
         self.city.rect = [x0, y0, x0 + w, y0 + h];
         let (tw, th) = (w as u32, h as u32);
         if self.gpu.is_none() {
-            self.gpu = Some(Gpu::with_depth(&renderer.device, renderer.format(), map_samples(renderer.format()), self.atlas.size));
+            self.gpu = Some(Gpu::with_depth(&renderer.device, renderer.format(), map_samples(), self.atlas.size));
         }
         if self.city.target.map(|t| (t.1, t.2) != (tw, th)).unwrap_or(true) {
             if let Some((t, _, _)) = self.city.target.take() {

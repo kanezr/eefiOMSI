@@ -15,14 +15,18 @@ use std::path::PathBuf;
 type Batch = (Vec<(i32, i32)>, Vec<crate::Prepared>, crate::LoadStats, f64);
 
 /// The threads tiles are prepared on while the game runs: a pool of their own, a third of
-/// the cores, so that the frame's parallel work (culling, the AI scripts) never waits for a
-/// tile to finish on the shared pool - and at a lower priority, so that they do not take
-/// the cores those workers need either (see `threads`).
+/// its own single thread, so preparing scenery cannot occupy several cores or saturate memory
+/// bandwidth while the frame renders (especially on integrated GPUs); at a lower priority
+/// as well (see `threads`).
 fn loader_pool() -> &'static rayon::ThreadPool {
     static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
     POOL.get_or_init(|| {
-        let n = (std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4) / 3).max(2);
-        rayon::ThreadPoolBuilder::new().num_threads(n).thread_name(|i| format!("tile loader {i}")).start_handler(|_| crate::threads::lower_thread_priority()).build().expect("tile loader pool")
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .thread_name(|_| "tile loader".into())
+            .start_handler(|_| crate::threads::lower_thread_priority())
+            .build()
+            .expect("tile loader pool")
     })
 }
 

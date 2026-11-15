@@ -367,12 +367,8 @@ impl VehicleInstance {
                         .map(|&a| (def.axles[a].wheel_diameter / 2.0).max(0.15))
                         .unwrap_or(0.5),
                     driven_load: driven.iter().map(|&a| wheel_load(a)).sum(),
-                    brake: t
-                        .v_brakes
-                        .iter()
-                        .map(|&id| self.get(id).max(0.0))
-                        .sum::<f32>()
-                        + def.rolling_resistance.max(0.0),
+                    brake: t.v_brakes.iter().map(|&id| self.get(id).max(0.0)).sum(),
+                    rolling_resistance: def.rolling_resistance.max(0.0),
                     load: (0..def.axles.len()).map(wheel_load).sum(),
                     joint_load: t.joint_load,
                 }
@@ -408,6 +404,11 @@ impl VehicleInstance {
             // one session for the whole step: the tyres ask for a few hundred points close
             // together, and it looks the tiles under them up once
             let session = self.contact.as_ref().map(|c| c.session());
+            let surface_session = if rb.bouncy_suspension {
+                self.contact.as_ref().map(|c| c.surface_session(self.host.road_wetness))
+            } else {
+                None
+            };
             let probe: &dyn Fn(f64, f64, f64) -> crate::rigid::GroundProbe =
                 match (&session, &self.ground) {
                     (Some(s), _) => s.as_ref(),
@@ -415,7 +416,10 @@ impl VehicleInstance {
                     (None, None) => &flat,
                 };
             rb.wheel_walls = self.wheel_walls;
-            rb.step(dt, m_wheel, brakes, steer, probe);
+            let no_surface = |_: f64, _: f64, _: f64| crate::rigid::GroundSample::default();
+            let surface: &dyn Fn(f64, f64, f64) -> crate::rigid::GroundSample =
+                surface_session.as_deref().unwrap_or(&no_surface);
+            rb.step_with_surface(dt, m_wheel, brakes, steer, probe, surface);
         }
         // what the crashes of this step destroyed, and the worst of them
         let mut energy = 0.0f32;

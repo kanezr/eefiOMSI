@@ -732,7 +732,7 @@ impl World {
                     if omsi_cfg::flags::OMSI_LIST_ALIGNED.is_set() {
                         let p = curve.point_at(curve.length * 0.5);
                         log::info!("aligned spline {} {} mode {mode} mid ({:.1}, {:.1}, {:.1}) heading {:.0}", s.id, s.file, p.x, p.y, p.z, curve.heading_at(curve.length * 0.5));
-                    }
+                    } 
                     for rim in omsi_geometry::spline_hole_rims(&st.def, &curve, s.mirror, mode) {
                         let ring: Vec<_> = rim.iter().map(|v| v.truncate()).collect();
                         if omsi_geometry::outline_crosses_itself(&ring) {
@@ -741,7 +741,7 @@ impl World {
                             }
                             continue;
                         }
-                        out.hole_rims.push(rim);
+                        out.hole_rims.push(rim.clone());
                     }
                 }
                 let bounds = mesh_bounds(&mesh, &Mat4::IDENTITY, origin);

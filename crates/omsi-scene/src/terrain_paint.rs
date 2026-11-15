@@ -400,3 +400,10 @@ pub fn surface_by_name(texture: &str) -> u8 {
         0
     }
 }
+
+/// Broad physical class of a texture, including named kerbs that share OMSI's concrete
+/// surface ID.
+pub fn surface_kind(texture: &str, dirs: &[&Path]) -> omsi_geometry::SurfaceKind {
+    let id = surface_id(texture, dirs);
+    omsi_geometry::SurfaceKind::from_texture_name(texture, id)
+}

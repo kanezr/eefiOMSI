@@ -134,15 +134,14 @@ pub fn ray_mesh(origin: Vec3, dir: Vec3, mesh: &MeshData, transform: &Mat4) -> O
 }
 
 pub fn cone_triangles(origin: Vec3, axis: Vec3, tan_half: f32, mesh: &MeshData, transform: &Mat4) -> Vec<u32> {
-    let inv = transform.inverse();
-    let o = inv.transform_point3(origin);
-    let a = inv.transform_vector3(axis).normalize_or_zero();
+    let a = axis.normalize_or_zero();
     let mut out = Vec::new();
     for (k, tri) in mesh.indices.chunks_exact(3).enumerate() {
-        let (p0, p1, p2) = (mesh.positions[tri[0] as usize], mesh.positions[tri[1] as usize], mesh.positions[tri[2] as usize]);
+        let [p0, p1, p2] = [tri[0], tri[1], tri[2]]
+            .map(|i| transform.transform_point3(mesh.positions[i as usize]));
         let c = (p0 + p1 + p2) / 3.0;
         let r = (p0 - c).length().max((p1 - c).length()).max((p2 - c).length());
-        let w = c - o;
+        let w = c - origin;
         let along = w.dot(a);
         if along < -r {
             continue;

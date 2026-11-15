@@ -130,6 +130,8 @@ pub struct Renderer {
     /// its own depth laid first (see `encode_prefill`), so that its costly shading runs
     /// once per visible surface.
     prepass_msaa_pipelines: Option<[wgpu::RenderPipeline; 6]>,
+    pane_mask: Option<pipelines::scene::PaneMaskPipelines>,
+    pane_depth: Option<((u32, u32), wgpu::TextureView, wgpu::BindGroup)>,
     /// Ambient occlusion and its blur; none on OpenGL (GLES), whose shading language cannot
     /// read a depth texture texel by texel - the pipelines failed there, AO off or not (#422).
     ssao_pipeline: Option<wgpu::RenderPipeline>,

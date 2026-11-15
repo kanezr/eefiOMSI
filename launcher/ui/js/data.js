@@ -170,25 +170,22 @@ export const curTour = () => curLine()?.tours.find((x) => x.number === S.choice?
 export const realTime = () => !!S.settings?.use_real_time;
 export const realDate = () => !!S.settings?.use_real_date;
 
-/** `date` (YYYY-MM-DD) fitted to the year span of the map `file` (its `[years]`), as OMSI 2
- * starts a map on a day it allows: the same day in the nearest allowed year, 29 February the
- * 28th where that year has none. Inside the span, or not a date: kept. The launcher core
- * fits the game's date the same way (`fit_date_to_years`). */
+/** `date` (YYYY-MM-DD) fitted to the first year of the map's `[years]` span. Its last year
+ * is not a hard limit: dates later than it stay selectable, as in the game. */
 export function fitDateToMap(date, file) {
   const span = S.maps?.find((m) => m.file === file)?.year_span;
   const parts = /^(\d+)-(\d+)-(\d+)$/.exec((date || '').trim());
   if (!span || !parts) return date;
   const [, y, mm, dd] = parts;
   const was = Number(y);
-  const year = was < span[0] ? span[0] : was > span[1] ? span[1] : was;
+  const year = was < span[0] ? span[0] : was;
   if (year === was) return date;
   const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
   const day = mm === '02' && dd === '29' && !leap ? '28' : dd;
   return `${String(year).padStart(4, '0')}-${mm}-${day}`;
 }
 
-/** The time and date the duty takes from the computer's clock, as `duty_args` gives them to
- * the game (the year stays the duty's unless the real year is on). */
+/** The time and date the duty takes from the computer's clock, as `duty_args` gives them. */
 function clockPatch(c, st) {
   const now = new Date();
   const patch = {};
@@ -197,8 +194,7 @@ function clockPatch(c, st) {
     if (c.time !== m) patch.time = m;
   }
   if (st?.use_real_date) {
-    const year = st.use_real_year ? now.getFullYear() : parseInt(c.date, 10) || now.getFullYear();
-    const d = fitDateToMap(`${String(year).padStart(4, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`, c.map);
+    const d = fitDateToMap(`${String(now.getFullYear()).padStart(4, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`, c.map);
     if (c.date !== d) patch.date = d;
   }
   return patch;

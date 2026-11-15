@@ -269,9 +269,11 @@ effect. On Android, `openOMSI/env.txt` holds `NAME=value` lines that are set bef
 | `OMSI_NO_CLOUDS` | bool | off | use | app | No clouds. |
 | `OMSI_NO_CORONAS` | bool | off | frame | render | No light coronas. |
 | `OMSI_NO_CULL` | bool | off | once | render | Draw every mesh from both sides (A/B). |
+| `OMSI_NO_DIFF` | bool | off | use | sim | Disable the improved open differential (A/B). |
 | `OMSI_NO_DRAW_ORDER_DEPTH` | bool | off | once | render | An object's surfaces in one plane without the draw order's depth step (A/B). |
 | `OMSI_NO_ENHANCED` | bool | off | frame | render | Enhanced settings drawn with the plain path. |
 | `OMSI_NO_ENVMAP` | bool | off | use | scene | No environment maps. |
+| `OMSI_NO_FRICTION_CIRCLE` | bool | off | use | sim | Disable the improved tyre friction circle (A/B). |
 | `OMSI_NO_FXAA` | bool | off | frame | render | No FXAA. |
 | `OMSI_NO_GLARE` | bool | off | frame | render | No sun glare. |
 | `OMSI_NO_GLASS_PICTURE` | bool | off | frame | render | No picture behind the glass (rain films). |
@@ -289,6 +291,7 @@ effect. On Android, `openOMSI/env.txt` holds `NAME=value` lines that are set bef
 | `OMSI_NO_MSAA_PREPASS` | bool | off | frame | render | No depth prepass with multisampling. |
 | `OMSI_NO_NAV_CULL` | bool | off | use | navigator | The navigator draws all of its ground and houses every frame, not only what its camera sees (A/B). |
 | `OMSI_NO_OWN_VEHICLE_LAMP_BLOCK` | bool | off | frame | render | Other vehicles' lamps light the player's vehicle inside and the street beyond it through its body again (A/B). |
+| `OMSI_NO_PAINTED_GROUND_GRIP` | bool | off | use | sim | Use the previous soft-ground grip on unpaved terrain, ignoring painted terrain classes (A/B). |
 | `OMSI_NO_PBR` | bool | off | use | scene | No PBR materials. |
 | `OMSI_NO_PIPELINE_CACHE` | bool | off | use | render | Compile every pipeline at each start (no ~/.openomsi/cache/pipelines-*.bin). |
 | `OMSI_NO_PLUGINS` | bool | off | use | app, guard | No plugins loaded. |
@@ -300,6 +303,7 @@ effect. On Android, `openOMSI/env.txt` holds `NAME=value` lines that are set bef
 | `OMSI_NO_PUDDLE_VEHICLE` | bool | off | use | render | No vehicles in puddle reflections. |
 | `OMSI_NO_RAIN` | bool | off | frame | render | No rainfall. |
 | `OMSI_NO_RENDER_POOL` | bool | off | use | render | No encoding thread pool for rendering. |
+| `OMSI_NO_ROLLING_RESISTANCE` | bool | off | use | sim | Use the previous constant rolling resistance in improved physics (A/B). |
 | `OMSI_NO_RT` | bool | off | use | render | No ray queries (Enhanced+ draws as Enhanced). |
 | `OMSI_NO_RT_FRAME` | bool | off | frame | render | Ray queries kept but nothing traced. |
 | `OMSI_NO_RT_GRADE` | bool | off | frame | render | Enhanced+ without its colour grade. |
@@ -330,6 +334,7 @@ effect. On Android, `openOMSI/env.txt` holds `NAME=value` lines that are set bef
 | `OMSI_TRACKIR_NATIVE` | text | on | use | input | 0 turns the native TrackIR interface off. |
 | `OMSI_TRAFFIC_ALL_GROUPS` | bool | off | use | app | Let restricted AI groups (aircraft, depot fleets) drive everywhere. |
 | `OMSI_TYRE_SUSPENSION` | bool | off | once | sim | The old suspension with wheel mass, tyre and bump stops (A/B). |
+| `OMSI_UNIFORM_GRIP` | bool | off | use | sim | Use uniform grip for all tyres in improved physics (A/B). |
 
 ## Tuning
 

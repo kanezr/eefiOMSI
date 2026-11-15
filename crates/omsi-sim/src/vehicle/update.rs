@@ -84,6 +84,7 @@ impl VehicleInstance {
         let mu = road_grip(self.host.street_cond, self.host.temperature);
         if let Some(rb) = self.rigid.as_mut() {
             rb.friction = mu;
+            rb.street_cond = self.host.street_cond;
         }
     }
 

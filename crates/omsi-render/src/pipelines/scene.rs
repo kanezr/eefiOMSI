@@ -191,6 +191,15 @@ pub(crate) struct Prepass {
     pub pipelines: [wgpu::RenderPipeline; 6],
     /// (drawn in the enhanced main pass, see `encode_prefill`)
     pub msaa_pipelines: Option<[wgpu::RenderPipeline; 6]>,
+    pub pane_mask: Option<PaneMaskPipelines>,
+}
+
+pub(crate) const PANE_MASK_TEXTURES: u32 = 17;
+
+pub(crate) struct PaneMaskPipelines {
+    pub layout: wgpu::BindGroupLayout,
+    pub panes: [wgpu::RenderPipeline; 4],
+    pub prefill: [wgpu::RenderPipeline; 2],
 }
 
 pub(crate) fn prepass(device: &wgpu::Device, scene: &SceneBase, msaa: u32, enhanced: bool) -> Prepass {
@@ -259,5 +268,82 @@ pub(crate) fn prepass(device: &wgpu::Device, scene: &SceneBase, msaa: u32, enhan
         [(0, false), (0, true), (1, false), (1, true), (2, false), (2, true)]
             .map(|(kind, cull)| make_prepass_samples(kind, cull, msaa, true))
     });
-    Prepass { pipelines, msaa_pipelines }
+
+    let pane_mask = (msaa > 1 && enhanced && MULTISAMPLED_SHADING.load(std::sync::atomic::Ordering::Relaxed) && device.limits().max_sampled_textures_per_shader_stage >= PANE_MASK_TEXTURES)
+        .then(|| pane_mask(device, scene, msaa));
+    Prepass { pipelines, msaa_pipelines, pane_mask }
+}
+
+fn pane_mask(device: &wgpu::Device, scene: &SceneBase, msaa: u32) -> PaneMaskPipelines {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("pane depth"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: true,
+            },
+            count: None,
+        }],
+    });
+    let pane_layout = pane_pl(device, scene);
+    let panes = [(false, 0), (true, 0), (false, scene.bias), (true, scene.bias)]
+        .map(|(cull, bias)| depth_pipeline(device, scene, &pane_layout, "fs_depth", cull, msaa, false, false, bias));
+    let masked_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("masked prefill"),
+        bind_group_layouts: &[Some(&scene.camera_layout), Some(&scene.material_layout), None, Some(&layout)],
+        immediate_size: 0,
+    });
+    let prefill = [false, true].map(|cull| depth_pipeline(device, scene, &masked_pl, "fs_depth_masked", cull, msaa, true, rt_gbuf(), 0));
+    PaneMaskPipelines { layout, panes, prefill }
+}
+
+fn pane_pl(device: &wgpu::Device, scene: &SceneBase) -> wgpu::PipelineLayout {
+    device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("pane depth"),
+        bind_group_layouts: &[Some(&scene.camera_layout), Some(&scene.material_layout)],
+        immediate_size: 0,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn depth_pipeline(device: &wgpu::Device, scene: &SceneBase, layout: &wgpu::PipelineLayout, fragment: &str, cull: bool, samples: u32, in_main: bool, surfaces: bool, bias: i32) -> wgpu::RenderPipeline {
+    compile_pipeline(device, &wgpu::RenderPipelineDescriptor {
+        label: Some("depth prepass"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: &scene.shader,
+            // (the place and the cut-out's coverage only: see `vs_depth`)
+            entry_point: Some("vs_depth"),
+            buffers: &[scene.vertex_layout.clone()],
+            compilation_options: Default::default(),
+        },
+        primitive: one_sided_primitive(cull),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
+            stencil: Default::default(),
+            bias: wgpu::DepthBiasState {
+                constant: -bias,
+                slope_scale: if bias != 0 { -bias.signum() as f32 * 2.0 } else { 0.0 },
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
+        fragment: Some(wgpu::FragmentState {
+            module: &scene.shader,
+            entry_point: Some(fragment),
+            targets: &if in_main {
+                        color_targets(HDR_FORMAT, None, wgpu::ColorWrites::empty(), false, surfaces)
+                    } else {
+                        Vec::new()
+                    },
+            compilation_options: Default::default(),
+        }),
+        multiview_mask: None,
+        cache: crate::pipeline_cache::get(device).as_ref(),
+    })
 }

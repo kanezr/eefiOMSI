@@ -118,7 +118,14 @@ pub const MILKY: f32 = 3.0;
 
 impl CabinAir {
     pub fn new() -> CabinAir {
-        CabinAir { temp: 0.0, vapour: 0.0, coolant: 0.0, film: [0.0; 3], defrost: 0.0, vehicle: None }
+        CabinAir {
+            temp: 0.0,
+            vapour: 0.0,
+            coolant: 0.0,
+            film: [0.0; 3],
+            defrost: 0.0,
+            vehicle: None,
+        }
     }
 
     /// The glass's inner temperature for a pane with `h_in` on its inner side, under air at
@@ -150,7 +157,9 @@ impl CabinAir {
 
     /// Carry the state `dt` seconds on.
     pub fn step(&mut self, dt: f32, i: &CabinInputs) {
-        let moved = self.vehicle.is_some_and(|(v, p)| v != i.vehicle || (p - i.position).length() > 50.0 + 60.0 * dt.max(0.0) as f64);
+        let moved = self.vehicle.is_some_and(|(v, p)| {
+            v != i.vehicle || (p - i.position).length() > 50.0 + 60.0 * dt.max(0.0) as f64
+        });
         if self.vehicle.is_none() || moved {
             // a bus that has stood: as warm and as humid as the street, dry glass
             *self = CabinAir::new();
@@ -169,7 +178,11 @@ impl CabinAir {
         let ach = 3.0 + 0.35 * i.speed.max(0.0) + 120.0 * i.doors_open as f32;
         let leave = ach / 3600.0;
         // the coolant warms with the engine running and cools when it stops
-        let (aim, tau) = if i.engine { (COOLANT_HOT, COOLANT_WARMUP) } else { (i.outside, COOLANT_COOLDOWN) };
+        let (aim, tau) = if i.engine {
+            (COOLANT_HOT, COOLANT_WARMUP)
+        } else {
+            (i.outside, COOLANT_COOLDOWN)
+        };
         self.coolant += (aim - self.coolant) * (1.0 - (-dt / tau).exp());
         // the cabin's heat: the heating (thermostat, as far as the coolant's heat allows),
         // the people, the skin and the air that leaves
@@ -196,7 +209,8 @@ impl CabinAir {
         // runs along the sides and leaves the rear window in the bus's wake)
         let stream = [1.0, 0.8, 0.35];
         for (k, film) in self.film.iter_mut().enumerate() {
-            let t_glass = Self::glass_temp(H_INSIDE, self.temp, i.outside, i.speed * stream[k] + 1.0);
+            let t_glass =
+                Self::glass_temp(H_INSIDE, self.temp, i.outside, i.speed * stream[k] + 1.0);
             // mass transfer coefficient by Lewis' analogy: h / (rho c_p) (m/s)
             let flux = H_INSIDE / AIR_RHO_CP * (self.vapour - saturation(t_glass));
             *film = (*film + flux * dt).clamp(0.0, 80.0);
@@ -208,16 +222,25 @@ impl CabinAir {
             (if dry > 0.0 { DEFROST_REACH } else { 0.0 }, dry.abs())
         } else {
             let t_glass = Self::glass_temp(H_INSIDE, self.temp, i.outside, i.speed + 1.0);
-            (0.0, (H_INSIDE / AIR_RHO_CP * (self.vapour - saturation(t_glass))).max(0.0))
+            (
+                0.0,
+                (H_INSIDE / AIR_RHO_CP * (self.vapour - saturation(t_glass))).max(0.0),
+            )
         };
-        self.defrost += (target - self.defrost) * (1.0 - (-dt * rate / self.film[0].max(0.5)).exp());
+        self.defrost +=
+            (target - self.defrost) * (1.0 - (-dt * rate / self.film[0].max(0.5)).exp());
     }
 
     /// For the renderer: each pane's film as an optical depth (windscreen, sides, rear: the
     /// share of the light it scatters is 1 - e^-depth) and how far the defroster has
     /// cleared the windscreen (0..1).
     pub fn appearance(&self) -> [f32; 4] {
-        [self.film[0] / MILKY, self.film[1] / MILKY, self.film[2] / MILKY, self.defrost]
+        [
+            self.film[0] / MILKY,
+            self.film[1] / MILKY,
+            self.film[2] / MILKY,
+            self.defrost,
+        ]
     }
 }
 
@@ -243,9 +266,18 @@ pub fn open_doors(doors: &[(glam::Vec3, glam::DVec3, f32, bool)]) -> usize {
 /// dew point, the speed, the engine, the people aboard (the driver and `riders`), the open
 /// doors and the cabin (its `[boundingbox]`: the volume less the seats and the walls, the
 /// skin around it).
-pub fn inputs_for(v: &omsi_sim::VehicleInstance, w: &omsi_content::weather::Weather, riders: usize, doors_open: usize) -> CabinInputs {
+pub fn inputs_for(
+    v: &omsi_sim::VehicleInstance,
+    w: &omsi_content::weather::Weather,
+    riders: usize,
+    doors_open: usize,
+) -> CabinInputs {
     let (kind, rate) = crate::conditions::precip_of(w);
-    let [x, y, z] = v.ty.def.bounding_box.map(|bb| [bb[0], bb[1], bb[2]]).unwrap_or([2.5, 12.0, 3.1]);
+    let [x, y, z] =
+        v.ty.def
+            .bounding_box
+            .map(|bb| [bb[0], bb[1], bb[2]])
+            .unwrap_or([2.5, 12.0, 3.1]);
     CabinInputs {
         outside: w.temp.0,
         dew_point: dew_point_of(w.temp.1.max(0.0)).min(w.temp.0),
@@ -274,7 +306,19 @@ mod tests {
     }
 
     fn inputs() -> CabinInputs {
-        CabinInputs { outside: 7.0, dew_point: 6.0, speed: 10.0, engine: true, people: 31, doors_open: 0, precip: true, volume: 70.0, skin: 150.0, vehicle: 1, position: glam::DVec3::ZERO }
+        CabinInputs {
+            outside: 7.0,
+            dew_point: 6.0,
+            speed: 10.0,
+            engine: true,
+            people: 31,
+            doors_open: 0,
+            precip: true,
+            volume: 70.0,
+            skin: 150.0,
+            vehicle: 1,
+            position: glam::DVec3::ZERO,
+        }
     }
 
     fn milky(c: &CabinAir, k: usize) -> f32 {
@@ -296,15 +340,35 @@ mod tests {
 
     #[test]
     fn an_empty_bus_stays_clear() {
-        let c = run(CabinInputs { people: 1, precip: false, dew_point: -2.0, ..inputs() }, 15.0);
+        let c = run(
+            CabinInputs {
+                people: 1,
+                precip: false,
+                dew_point: -2.0,
+                ..inputs()
+            },
+            15.0,
+        );
         assert!(milky(&c, 1) < 0.2, "{c:?}");
     }
 
     #[test]
     fn the_heating_warms_the_cabin_in_some_minutes() {
-        let c = run(CabinInputs { people: 1, ..inputs() }, 5.0);
+        let c = run(
+            CabinInputs {
+                people: 1,
+                ..inputs()
+            },
+            5.0,
+        );
         assert!(c.temp < 17.0, "{c:?}");
-        let c = run(CabinInputs { people: 1, ..inputs() }, 25.0);
+        let c = run(
+            CabinInputs {
+                people: 1,
+                ..inputs()
+            },
+            25.0,
+        );
         assert!((c.temp - HEATED).abs() < 2.0, "{c:?}");
     }
 
@@ -312,7 +376,13 @@ mod tests {
     fn open_doors_and_dry_air_clear_the_glass() {
         let mut c = run(inputs(), 15.0);
         let fogged = c.film[1];
-        let dry = CabinInputs { people: 1, precip: false, dew_point: -10.0, doors_open: 2, ..inputs() };
+        let dry = CabinInputs {
+            people: 1,
+            precip: false,
+            dew_point: -10.0,
+            doors_open: 2,
+            ..inputs()
+        };
         for _ in 0..600 {
             c.step(1.0, &dry);
         }
@@ -322,26 +392,49 @@ mod tests {
     #[test]
     fn the_defroster_clears_the_windscreen() {
         let c = run(inputs(), 15.0);
-        assert!(c.defrost > 0.5 && c.defrosted_glass_clear(&inputs()), "{c:?}");
+        assert!(
+            c.defrost > 0.5 && c.defrosted_glass_clear(&inputs()),
+            "{c:?}"
+        );
     }
 
     #[test]
     fn another_bus_starts_afresh() {
         let mut c = run(inputs(), 15.0);
         assert!(c.film[1] > 1.0);
-        c.step(1.0, &CabinInputs { vehicle: 2, ..inputs() });
+        c.step(
+            1.0,
+            &CabinInputs {
+                vehicle: 2,
+                ..inputs()
+            },
+        );
         assert!(c.film[1] < 0.1 && c.temp < 8.0, "{c:?}");
         let mut c = run(inputs(), 15.0);
-        c.step(1.0, &CabinInputs { position: glam::DVec3::new(500.0, 0.0, 0.0), ..inputs() });
+        c.step(
+            1.0,
+            &CabinInputs {
+                position: glam::DVec3::new(500.0, 0.0, 0.0),
+                ..inputs()
+            },
+        );
         assert!(c.film[1] < 0.1, "{c:?}");
     }
 
     #[test]
     fn a_door_that_is_entry_and_exit_counts_once() {
         let d = |x: f32, open| (glam::Vec3::new(x, 5.0, 0.0), glam::DVec3::ZERO, 1.0, open);
-        assert_eq!(open_doors(&[d(1.0, true), d(1.3, true), d(1.0, false), d(1.2, true)]), 1);
+        assert_eq!(
+            open_doors(&[d(1.0, true), d(1.3, true), d(1.0, false), d(1.2, true)]),
+            1
+        );
         assert_eq!(open_doors(&[d(1.0, true), d(-1.0, false)]), 1);
-        let far = (glam::Vec3::new(1.0, -4.0, 0.0), glam::DVec3::ZERO, 1.0, true);
+        let far = (
+            glam::Vec3::new(1.0, -4.0, 0.0),
+            glam::DVec3::ZERO,
+            1.0,
+            true,
+        );
         assert_eq!(open_doors(&[d(1.0, true), far]), 2);
     }
 }

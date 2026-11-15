@@ -870,7 +870,7 @@ pub struct StagedTile {
     pub(super) base_terrain: Terrain,
     /// `[spline_terrain_align]` splines: (index into `splines`, reach in metres).
     pub(super) align: Vec<(usize, f32)>,
-    /// The hole boundaries in world space, including the profile's authored height.
+    /// Original OMSI outlines, used only when terrain fitting fails. World coordinates.
     pub(super) hole_rims: Vec<Vec<DVec3>>,
     pub(super) water: Option<[f32; 4]>,
     /// `[variable_terrainlightmap]`: the tile's light map is baked from the lamps around it
@@ -1067,6 +1067,12 @@ pub(super) struct Placing {
     pub(super) splines: usize,
     pub(super) trees: usize,
     pub(super) objects: usize,
+    pub(super) ground_mesh: Option<MeshId>,
+    pub(super) ground_wall: Option<MeshId>,
+    pub(super) ground_light: Option<TextureId>,
+    pub(super) ground_paint_next: usize,
+    pub(super) wall_paint_next: usize,
+    pub(super) ground_water_done: bool,
     /// Seconds per phase (OMSI_PROFILE).
     pub(super) secs: [f64; 4],
     /// `[terrainmapping]` uses the first [groundtex], without the roads' cut (which

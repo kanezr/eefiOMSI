@@ -4,6 +4,121 @@ Releases are started by hand from `main` as the beta `MAJOR.MINOR.PATCH`, and te
 promoted to stable releases (see [docs/VERSIONING.md](docs/VERSIONING.md)); the downloads are on the
 [Releases](https://github.com/kanezr/eefiOMSI/releases) page.'
 
+## eefiOMSI v0.3.0
+## New
+- **Improved physics (experimental), used to be bouncier physics**: the optional wheel-mass
+  suspension now also enables per-tyre surface and puddle grip, an open differential, load- 
+  and speed-dependent rolling resistance, painted terrain classification and a friction-circle 
+  lateral limit. Standard physics remains unchanged; `OMSI_UNIFORM_GRIP`, `OMSI_NO_DIFF` and
+  `OMSI_NO_FRICTION_CIRCLE` restore the corresponding legacy behavior for A/B checks.
+
+## Performance
+- **Reduced navigator memory use**: map cells now index their source triangles instead of
+  copying every ground vertex, navigator maps use single-sample rendering, and city-map
+  render targets and geometry buffers are released when the city map closes.
+- **City-map opening no longer builds its first ground mesh on the frame thread**: the
+  initial ground and house geometry is built and uploaded on the existing worker path.
+- **First-use traffic sound setup no longer reads sound configuration files on the frame thread**s:
+  sound configs are loaded in the background, and tree placement checks the streaming deadline between instances.
+- **Runtime tile preparation uses one lower-priority worker**: reduces CPU and memory
+  bandwidth contention from scenery loading while driving, particularly on integrated GPUs.
+- **Map passenger textures start preloading during normal view sync**, rather than waiting
+  for the first body operation, giving the worker time to finish before first appearances.
+- **Reduced recurring simulation and rendering allocations**: culling, pedestrian crowd
+  steps, and traffic lane occupancy now reuse working buffers across frames.
+- **Reduced repeated crowd and passenger scans in larger scenes**: nearby vehicle indexing
+  and bus-level aggregation are used when workloads justify their setup cost.
+- **Cone-filtered raycasts respect non-uniform transforms**: cone filtering now checks
+  transformed triangle bounds in world space, avoiding false rejections when meshes are
+  scaled unevenly.
+- **Passenger texture decoding is moved off the frame**: map-human textures are read ahead
+  on the lower-priority background pool, up to a bounded 160 MiB, avoiding first-appearance
+  stalls without competing with frame work at normal thread priority; textures that support
+  worker-side GPU preparation are prepared there too, rather than at first appearance.
+- **Tile ground paint is placed incrementally**: painted ground and wall layers now share
+  the tile streamer's per-frame deadline instead of all being added in one placement step.
+- **Dynamic mip updates reuse GPU resources**: mip-level views and bind groups are cached
+  and reused instead of being recreated for each update.
+
+## Fixes
+- **Vehicle parts behind depth-writing glass stay hidden**: pane materials that intentionally
+  suppress ordinary depth writes but opt back in for OMSI compatibility now trigger model-order
+  rendering, so later parts cannot appear in front of the glass.
+- **Dates can be set after a map's declared final year**: the launcher's `[years]` upper
+  bound no longer prevents selecting a later year, and "Start on today's date" uses the
+  computer's actual year.
+- **Depth captures match the output image size**: depth from the renderer's scaled
+  prepass is resized with nearest-neighbour sampling, preserving depth discontinuities.
+- **Texture updates reject invalid rectangle bounds safely**: bounds checks no longer risk
+  integer overflow, and empty updates are rejected.
+- **The outside view (F3) starts straight behind the bus**, a little above it, as in OMSI 2,
+  instead of three quarters from the side. It still keeps the angle you leave it at, and Space
+  puts it back behind the bus.
+
+## Additions, performance and fixes from openOMSI latest version
+- **Map-specific natural-weather climate**: maps may include an `openomsi_climate.cfg` beside
+  `global.cfg` with monthly mean temperatures and optional precipitation data. Natural
+  weather uses the configured temperatures; maps without a valid file keep the existing
+  climate model.
+- **AI reaction time**: the new `ai_reaction` setting (25 to 200 %, default 100 %, a slider in 
+  the launcher's Traffic settings) scales how long the AI drivers wait before moving off, so 
+  a queue at a light pulls away closer together at a lower value. It never goes under 0.4 s, 
+  the shortest reaction the junction code is built for.
+- **The driver can sit as in OMSI 2**: Settings → Camera → Driver's view (and the options menu in the game) 
+  has *Driver sits as in OMSI 2*, off by default. On, the driver sits back on his seat with his hands 
+  off the wheel, as in OMSI 2; off, he moves up and leans forward to hold the wheel, as before. 
+  It can be switched while driving.
+- **Faster frames from the driver's seat with MSAA.** Most of the player's own bus had been 
+  left out of the MSAA depth prefill since 0.2.46 and 0.3.34, so the world behind the 
+  cab's walls, roof and dashboard was shaded in full before the bus covered it. 
+  The bus goes back into the prefill, except behind see-through covers, which keep their 
+  earlier behaviour. This was worth about 10 fps on DirectX 12 and 12 on Vulkan on 
+  the RX 7900 XT. It needs multisampled shading and a 17th texture slot; Android and Apple 
+  devices keep the previous prefill. It costs one extra multisampled depth texture, 
+  about 59 MB at 2560x1440 with 4x MSAA. Nothing changes on screen.
+- **Enhanced runs faster on Vulkan with an AMD card.** The enhanced shader reads occlusion 
+  and bounced light in a form AMD's Vulkan compiler handles better.
+- **Auto opens Vulkan on an AMD Radeon.** On Windows, when the first discrete card is an AMD one,  
+  the Graphics API setting Auto opens Vulkan on that card instead of DirectX 12; 
+  other cards keep DirectX 12 first. If Vulkan loses the device in game, the game restarts 
+  on DirectX 12 and writes ~/.openomsi/vulkan-lost, so Auto keeps to DirectX 12 for that card 
+  until the next version (deleting the file also resets it). An explicit Graphics API setting 
+  or OMSI_BACKEND is unchanged-
+- Passengers seen from far away, no sun glare flicker behind the visor, signs keep their 
+  colour at night.
+- **A junction left deep under the ground no longer digs a pit**: a `[terrainhole]` cutter that lies
+  wholly more than ten metres under the ground cuts nothing now. Berlin-Spandau has a stray
+  copy of `Einm_Poststr_Poststr` at height zero in the corner of a tile near Falkensee Bahnhof;
+  its cutter opened a pit thirty metres deep in the field, walled with tall strips of ground.
+  Tunnels and underpasses, whose cutters reach the ground or lie a few metres under it, cut as before.
+- **Vehicle-actuated traffic lights wait before the stop, not in the yellow**: a stop whose
+  request is present now holds the clock at the phase before it, so a queue can no longer
+  leave a light stuck on yellow; an exact stop time still holds, and a jump at the same time
+  is taken first. This fixes the traffic light at Ahlheim V5's Eichenhöhe Bahnhof
+- **Vehicle identity no longer leaks across placements**: newly placed vehicles use their
+  own fleet number and registration rules, while reloading the driven vehicle preserves its
+  current number and plate.
+- **Pass-through timetable stops no longer appear as the next passenger stop**: announcements, 
+  the information bar, passenger information and Lua plugin next-stop fields use the next 
+  calling stop. The timetable index and IBIS stop list remain unchanged; depot runs fall 
+  back to their current station.
+- **AI traffic proceeds on green-with-yellow state 8**: state 8 is treated as a go phase 
+  for vehicles and pedestrians, fixing AI traffic that otherwise waited 
+  through the arrow-light phase.
+- **Situations with no player vehicle load without panicking**: negative or out-of-range 
+  `[my_vehicle]` indices are handled as having no selected player vehicle, 
+  while non-player vehicles are retained.
+- **Timetable buses keep their layover**: a bus that has finished its trip is no longer 
+  removed as stuck after waiting out of sight for four minutes, so it remains 
+  in place for its next scheduled trip.
+- **Static buses of Praha 200 no longer lose their outer skin**: a mesh from the Blender 
+  exporter was turned round as a mirrored one when its matrix (the quarter turn about 
+  x that thousands of ordinary meshes carry) was positive and its normals faced 
+  against its faces, so the IVECO buses at Letnany station showed their inside; 
+  Omsi.exe draws such a mesh as wound.
+- AMD ultra artifacts fixed
+- A plugin can load its DLL from beside its .opl in a subfolder
+
 ## eefiOMSI v0.2.1
 ## Fixes
 - **Security**: updated packages to a newer version for security purposes (#7, @kanezr).

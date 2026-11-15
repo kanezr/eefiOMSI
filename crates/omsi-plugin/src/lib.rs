@@ -139,6 +139,21 @@ pub fn resolve_path(base: &Path, rel: &str) -> Option<PathBuf> {
     Some(cur)
 }
 
+fn plugin_opls(dirs: &[PathBuf]) -> Vec<(PathBuf, &PathBuf)> {
+    let name = |o: &Path| (o.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()), std::fs::read(o).ok().map(|t| parse_opl(&String::from_utf8_lossy(&t)).dll.rsplit(['\\', '/']).next().unwrap_or("").trim().to_ascii_lowercase()));
+    let (mut earlier, mut out) = (std::collections::HashSet::new(), Vec::new());
+    for dir in dirs {
+        let found: Vec<PathBuf> = find_opls(dir).into_iter().filter(|o| !earlier.contains(&name(o))).collect();
+        earlier.extend(found.iter().map(|o| name(o)));
+        out.extend(found.into_iter().map(|o| (o, dir)));
+    }
+    out
+}
+
+fn library_path(opl_path: &Path, plugins_dir: &Path, dll: &str) -> Option<PathBuf> {
+    resolve_path(plugins_dir, dll).or_else(|| opl_path.parent().and_then(|d| resolve_path(d, dll)))
+}
+
 /// What one frame hands a plugin and what it gives back.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Frame {
@@ -886,7 +901,7 @@ impl Plugin {
         if opl.dll.is_empty() {
             return Err("no [dll]".into());
         }
-        let dll = resolve_path(plugins_dir, &opl.dll).ok_or_else(|| format!("{} not found", opl.dll))?;
+        let dll = library_path(opl_path, plugins_dir, &opl.dll).ok_or_else(|| format!("{} not found", opl.dll))?;
         let (backend, procs) = match Library::load(&dll) {
             Ok(lib) => {
                 lib.start();
@@ -1073,20 +1088,13 @@ impl Plugins {
     /// `.opl` name wins).
     pub fn load(dirs: &[PathBuf], hosts: &HostConfig) -> Plugins {
         let mut loaded: Vec<Plugin> = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for dir in dirs {
-            for opl in find_opls(dir) {
-                let key = opl.strip_prefix(dir).unwrap_or(&opl).to_string_lossy().to_ascii_lowercase();
-                if !seen.insert(key) {
-                    continue;
+        for (opl, dir) in plugin_opls(dirs) {
+            match Plugin::load(&opl, dir, hosts) {
+                Ok(p) => {
+                    log::info!("plugin {} loaded ({} variables, {} strings, {} system variables, {} triggers, {} script textures{})", p.opl.dll, p.opl.vars.len(), p.opl.string_vars.len(), p.opl.system_vars.len(), p.opl.triggers.len(), if p.procs.texture { p.opl.script_textures.len() } else { 0 }, if p.procs.ticket { ", passengers' tickets" } else { "" });
+                    loaded.push(p);
                 }
-                match Plugin::load(&opl, dir, hosts) {
-                    Ok(p) => {
-                        log::info!("plugin {} loaded ({} variables, {} strings, {} system variables, {} triggers, {} script textures{})", p.opl.dll, p.opl.vars.len(), p.opl.string_vars.len(), p.opl.system_vars.len(), p.opl.triggers.len(), if p.procs.texture { p.opl.script_textures.len() } else { 0 }, if p.procs.ticket { ", passengers' tickets" } else { "" });
-                        loaded.push(p);
-                    }
-                    Err(e) => log::warn!("Could not load plugin {}: {e}", opl.display()),
-                }
+                Err(e) => log::warn!("Could not load plugin {}: {e}", opl.display()),
             }
         }
         let mut lua = Vec::new();
@@ -1229,6 +1237,26 @@ impl Drop for Plugins {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_library_beside_its_opl_in_a_subfolder_is_found() {
+        let dir = std::env::temp_dir().join(format!("omsi-opl-lib-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("Pablo")).unwrap();
+        ["Pablo/MBASNE.dll", "top.dll"].map(|f| std::fs::write(dir.join(f), b"x").unwrap());
+        let opl = dir.join("Pablo/MBAS.opl");
+        assert_eq!(library_path(&opl, &dir, "MBASNE.dll"), Some(dir.join("Pablo/MBASNE.dll")));
+        assert_eq!(library_path(&opl, &dir, "top.dll"), Some(dir.join("top.dll")));
+        assert_eq!(library_path(&opl, &dir, "none.dll"), None);
+        let other = std::env::temp_dir().join(format!("omsi-opl-lib-b-{}", std::process::id()));
+        std::fs::create_dir_all(&other).unwrap();
+        for (f, dll) in [(&opl, "MBASNE.dll"), (&other.join("mbas.opl"), "x\\MBASNE.dll"), (&dir.join("Pablo/Config.opl"), "a.dll"), (&other.join("Config.opl"), "b.dll")] {
+            std::fs::write(f, format!("[dll]\r\n{dll}\r\n")).unwrap();
+        }
+        let mut found: Vec<PathBuf> = plugin_opls(&[other.clone(), dir.clone()]).into_iter().map(|(p, _)| p).collect();
+        found.sort();
+        assert_eq!(found, vec![dir.join("Pablo/Config.opl"), other.join("Config.opl"), other.join("mbas.opl")], "a later folder's copy of the same plugin is not loaded again");
+        let _ = (std::fs::remove_dir_all(&dir), std::fs::remove_dir_all(&other));
+    }
 
     #[test]
     fn opl_lists() {

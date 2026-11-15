@@ -45,6 +45,8 @@ pub const BUMP: f32 = 0.24;
 const UNSPRUNG: f32 = 0.12;
 const TYRE_K: f32 = 900_000.0;
 const TYRE_C: f32 = 3_000.0;
+const TYRE_DAMPING_RATIO: f32 = 0.3;
+const BOUNCY_SUSPENSION_DAMPING_RATIO: f32 = 0.3;
 /// The frame OMSI's per-frame damping of the body's pitch and roll is measured in (see
 /// `RigidBus::step`): a thirtieth of a second, the rate its options.cfg caps OMSI at.
 const OMSI_FRAME: f32 = 1.0 / 30.0;
@@ -53,14 +55,18 @@ static BOUNCY_SUSPENSION: AtomicBool = AtomicBool::new(false);
 /// The suspension as Omsi.exe has it (see `step_slice`); `OMSI_TYRE_SUSPENSION=1` gives
 /// the old one with a wheel mass, a tyre and bump stops (A/B), as does the optional
 /// bouncier suspension setting.
-fn omsi_suspension() -> bool {
-    !omsi_cfg::flags::OMSI_TYRE_SUSPENSION.is_set()
-        && !BOUNCY_SUSPENSION.load(Ordering::Relaxed)
+fn omsi_suspension(bouncy_suspension: bool) -> bool {
+    !omsi_cfg::flags::OMSI_TYRE_SUSPENSION.is_set() && !bouncy_suspension
 }
 
-/// Select the optional wheel-mass suspension model for newly started game sessions.
-pub fn set_bouncy_suspension(enabled: bool) {
+/// Select the optional experimental vehicle physics model for new sessions.
+pub fn set_improved_physics(enabled: bool) {
     BOUNCY_SUSPENSION.store(enabled, Ordering::Relaxed);
+}
+
+/// Compatibility alias for callers using the former setting name.
+pub fn set_bouncy_suspension(enabled: bool) {
+    set_improved_physics(enabled);
 }
 
 /// What is left of the body's pitch and roll rate after `dt` seconds of OMSI's damping.
@@ -127,6 +133,15 @@ pub struct GroundProbe {
     pub above: Option<f64>,
 }
 
+/// Physical surface and standing-water sample at one tyre contact.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct GroundSample {
+    pub kind: omsi_geometry::SurfaceKind,
+    pub puddle: f32,
+    pub depth: f32,
+    pub wet: f32,
+}
+
 /// What the wheels of a vehicle stand on.
 pub trait Ground: Send + Sync {
     /// The faces at world (x, y): the highest at or below `top` and the lowest above it.
@@ -136,6 +151,11 @@ pub trait Ground: Send + Sync {
     /// it looked up (the tiles under the vehicle) until it is dropped.
     fn session(&self) -> Box<dyn Fn(f64, f64, f64) -> GroundProbe + '_> {
         Box::new(move |x, y, top| self.probe(x, y, top))
+    }
+
+    /// A one-slice-per-wheel physical surface query. Legacy grounds provide no extra data.
+    fn surface_session(&self, _wetness: f32) -> Box<dyn Fn(f64, f64, f64) -> GroundSample + '_> {
+        Box::new(|_, _, _| GroundSample::default())
     }
 }
 
@@ -226,6 +246,10 @@ pub struct RigidWheel {
     pub walls: Vec<WallFace>,
     /// Horizontal push (N) of a step the tyre climbs or a wall it stands against.
     pub step_force: f32,
+    /// The physical classification and water under the wheel this slice.
+    pub surface_kind: omsi_geometry::SurfaceKind,
+    pub surface_wetness: f32,
+    pub puddle_depth: f32,
 }
 
 fn sign(x: f32) -> f32 {
@@ -334,6 +358,7 @@ struct Contact {
     /// What the brake (and the rolling resistance) can hold.
     brake: f32,
     grip: f32,
+    lateral_cap: f32,
     v_long: f32,
     /// Takes side forces (a coupled part's joint does not).
     lateral: bool,
@@ -390,6 +415,8 @@ pub struct CoupledPart {
     /// What its brakes and its rolling resistance hold (N), and the static load on all its
     /// wheels (N).
     pub brake: f32,
+    /// Unladen rolling resistance force, as read from the section's vehicle definition.
+    pub rolling_resistance: f32,
     pub load: f32,
     /// The weight it hangs on the coupling (N), pressing the body down there.
     pub joint_load: f32,
@@ -431,6 +458,8 @@ pub struct RigidBody {
     /// Body-frame acceleration of the last step (m/s²), for `A_Trans_*`.
     pub accel_body: Vec3,
     pub friction: f32,
+    /// `StreetCond`, used to scale snow rolling resistance.
+    pub street_cond: f32,
     /// Wheels a face stopped during the last step, one entry per wheel.
     pub wheel_impacts: Vec<Impact>,
     /// The parts coupled behind (see [`CoupledPart`]); `drive_torque` is shared by their
@@ -446,4 +475,7 @@ pub struct RigidBody {
     /// as OMSI's do - its wheels know no faces - and a step nobody sees (a height profile
     /// over the drawn road, a helper object's collision box) is no invisible wall.
     pub wheel_walls: bool,
+    /// Suspension model selected when this vehicle was created; the setting takes effect
+    /// for a new session, not halfway through a physics step.
+    pub(crate) bouncy_suspension: bool,
 }

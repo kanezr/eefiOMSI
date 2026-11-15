@@ -5,6 +5,7 @@
 //! (`window_drops`). Nothing here draws or plays anything: the game reads this state each
 //! frame and hands it to the renderer and the sound.
 
+pub mod climate;
 pub mod condensation;
 pub mod conditions;
 pub mod season_phase;

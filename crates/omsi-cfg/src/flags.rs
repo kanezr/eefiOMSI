@@ -348,9 +348,11 @@ flags! {
     OMSI_NO_CLOUDS: Bool, Switch, Use, "off", "No clouds.";
     OMSI_NO_CORONAS: Bool, Switch, Frame, "off", "No light coronas.";
     OMSI_NO_CULL: Bool, Switch, Once, "off", "Draw every mesh from both sides (A/B).";
+    OMSI_NO_DIFF: Bool, Switch, Use, "off", "Disable the improved open differential (A/B).";
     OMSI_NO_DRAW_ORDER_DEPTH: Bool, Switch, Once, "off", "An object's surfaces in one plane without the draw order's depth step (A/B).";
     OMSI_NO_ENHANCED: Bool, Switch, Frame, "off", "Enhanced settings drawn with the plain path.";
     OMSI_NO_ENVMAP: Bool, Switch, Use, "off", "No environment maps.";
+    OMSI_NO_FRICTION_CIRCLE: Bool, Switch, Use, "off", "Disable the improved tyre friction circle (A/B).";
     OMSI_NO_FXAA: Bool, Switch, Frame, "off", "No FXAA.";
     OMSI_NO_GLARE: Bool, Switch, Frame, "off", "No sun glare.";
     OMSI_NO_GLASS_PICTURE: Bool, Switch, Frame, "off", "No picture behind the glass (rain films).";
@@ -369,6 +371,7 @@ flags! {
     OMSI_NO_MSAA_PREPASS: Bool, Switch, Frame, "off", "No depth prepass with multisampling.";
     OMSI_NO_NAV_CULL: Bool, Switch, Use, "off", "The navigator draws all of its ground and houses every frame, not only what its camera sees (A/B).";
     OMSI_NO_OWN_VEHICLE_LAMP_BLOCK: Bool, Switch, Frame, "off", "Other vehicles' lamps light the player's vehicle inside and the street beyond it through its body again (A/B).";
+    OMSI_NO_PAINTED_GROUND_GRIP: Bool, Switch, Use, "off", "Use the previous soft-ground grip on unpaved terrain, ignoring painted terrain classes (A/B).";
     OMSI_NO_PBR: Bool, Switch, Use, "off", "No PBR materials.";
     OMSI_NO_PIPELINE_CACHE: Bool, Switch, Use, "off", "Compile every pipeline at each start (no ~/.openomsi/cache/pipelines-*.bin).";
     OMSI_NO_PLUGINS: Bool, Switch, Use, "off", "No plugins loaded.";
@@ -380,6 +383,7 @@ flags! {
     OMSI_NO_PUDDLE_VEHICLE: Bool, Switch, Use, "off", "No vehicles in puddle reflections.";
     OMSI_NO_RAIN: Bool, Switch, Frame, "off", "No rainfall.";
     OMSI_NO_RENDER_POOL: Bool, Switch, Use, "off", "No encoding thread pool for rendering.";
+    OMSI_NO_ROLLING_RESISTANCE: Bool, Switch, Use, "off", "Use the previous constant rolling resistance in improved physics (A/B).";
     OMSI_NO_RT: Bool, Switch, Use, "off", "No ray queries (Enhanced+ draws as Enhanced).";
     OMSI_NO_RT_FRAME: Bool, Switch, Frame, "off", "Ray queries kept but nothing traced.";
     OMSI_NO_RT_GRADE: Bool, Switch, Frame, "off", "Enhanced+ without its colour grade.";
@@ -479,6 +483,7 @@ flags! {
     OMSI_TRIGGER_ALL: Bool, Test, Use, "off", "Check: fire every [mouseevent] of the model and compare the variables before and after.";
     OMSI_TYRE_SUSPENSION: Bool, Switch, Once, "off", "The old suspension with wheel mass, tyre and bump stops (A/B).";
     OMSI_UI_PREVIEW: Text, Test, Use, "target/ui-preview.png", "Plugin UI preview test: the picture's path.";
+    OMSI_UNIFORM_GRIP: Bool, Switch, Use, "off", "Use uniform grip for all tyres in improved physics (A/B).";
     OMSI_UPDATE_URL: Text, Setup, Use, "built-in", "Another release description (URL or file:///...json) for the update check.";
     OMSI_VIDEO_MEMORY: Num, Tuning, Use, "settings", "What the game may hold on the graphics card all together (textures, meshes, render targets), in MB.";
     OMSI_WARM_FRAMES: Num, Test, Use, "0", "Offscreen: frames drawn before the picture.";

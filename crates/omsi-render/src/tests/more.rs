@@ -597,6 +597,18 @@ fn origin_lookup_keeps_float_equality_and_large_coordinates() {
     assert_eq!(distances[&origin_key(c)], 5.0);
 }
 
+#[test]
+fn every_backend_form_of_the_scene_shader_validates() {
+    use wgpu::naga;
+    for (amd_vulkan, multisampled_shading) in [(false, false), (true, false), (false, true), (true, true)] {
+        let src = arrays_as_textures(&crate::shaders::scene_shader_forms(false, amd_vulkan, multisampled_shading), array_path());
+        let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("AMD Vulkan {amd_vulkan}, multisampled shading {multisampled_shading}: {}", e.emit_to_string(&src)));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("AMD Vulkan {amd_vulkan}, multisampled shading {multisampled_shading}: {e:?}"));
+    }
+}
+
 /// Every shader module parses and validates as the device will see it, translates to
 /// Metal and Vulkan SPIR-V, and its uniform structs are laid out as the Rust side writes them.
 #[test]
@@ -1046,6 +1058,27 @@ fn metering_defaults_are_gentle() {
     // a snow field metered 1.5 EV over the target is darkened by well under a stop
     let ev = ((m[1] - (m[1] + 1.5)) * m[0]).clamp(-m[2], m[3]);
     assert!(ev < 0.0 && ev >= -0.75, "{ev}");
+}
+
+#[test]
+fn depth_capture_resizes_nearest_to_the_output_dimensions() {
+    assert_eq!(
+        crate::render::resize_depth_nearest(vec![1.0, 2.0, 3.0, 4.0], (2, 2), (4, 4)),
+        Some(vec![
+            1.0, 1.0, 2.0, 2.0, //
+            1.0, 1.0, 2.0, 2.0, //
+            3.0, 3.0, 4.0, 4.0, //
+            3.0, 3.0, 4.0, 4.0,
+        ])
+    );
+    assert_eq!(
+        crate::render::resize_depth_nearest(vec![1.0, 2.0, 3.0, 4.0], (2, 2), (1, 1)),
+        Some(vec![4.0])
+    );
+    assert_eq!(
+        crate::render::resize_depth_nearest(vec![1.0], (2, 2), (1, 1)),
+        None
+    );
 }
 
 #[test]

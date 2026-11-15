@@ -20,7 +20,11 @@ impl ScheduleSim {
             Vec<omsi_map::DepotEntry>,
             Option<Arc<omsi_vehicle::Hof>>,
         ) = match (&train, self.depots.get(&group).filter(|v| !v.is_empty())) {
-            (Some(cars), _) => (cars[0].0.clone(), Vec::new(), None),
+            (Some(cars), _) => {
+                let ty = cars[0].0.clone();
+                let hof = self.pool_hof(ty.def.dir(), world);
+                (ty, Vec::new(), hof)
+            }
             (None, Some(vehicles)) => {
                 // The depot's types come out in proportion to their fleets: a typgroup
                 // listing 40 fleet numbers appears eight times as often as one with
@@ -176,7 +180,7 @@ impl ScheduleSim {
         self.pools.get(group).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
-    /// The depot file a bus of a plain `[aigroup_2]` group runs with (see [`pool_depot`]),
+    /// The depot file a plain `[aigroup_2]` vehicle or `.zug` train runs with (see [`pool_depot`]),
     /// looked up once per vehicle folder.
     pub fn pool_hof(&mut self, dir: &Path, world: &dyn TimetableWorld) -> Option<Arc<omsi_vehicle::Hof>> {
         if let Some(h) = self.pool_hofs.get(dir) {
@@ -248,4 +252,120 @@ pub fn depot_file(
     let h = found.map(Arc::new);
     cache.insert(key, h.clone());
     h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestWorld {
+        path: PathBuf,
+        ai: omsi_map::AiLists,
+        positions: crate::world_data::ObjectPlaces,
+    }
+
+    impl TimetableWorld for TestWorld {
+        fn root(&self) -> &Path {
+            &self.path
+        }
+
+        fn map_dir(&self) -> &Path {
+            &self.path
+        }
+
+        fn chrono_dirs(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+
+        fn ailists(&self) -> &omsi_map::AiLists {
+            &self.ai
+        }
+
+        fn raw_tiles(&self) -> Vec<(i32, i32)> {
+            Vec::new()
+        }
+
+        fn has_tile(&self, _: (i32, i32)) -> bool {
+            false
+        }
+
+        fn date(&self) -> i32 {
+            20221010
+        }
+
+        fn object_positions(&self) -> &crate::world_data::ObjectPlaces {
+            &self.positions
+        }
+
+        fn stop_side(&self, _: i64) -> f32 {
+            0.0
+        }
+    }
+
+    #[test]
+    fn zug_choice_supplies_hof_for_destination_texture() {
+        static NEXT_DIR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("omsi_zug_hof_{}_{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("rail.hof"),
+            concat!(
+                "[name]\nRail depot\n",
+                "stringcount_terminus\n1\n",
+                "[addterminus]\n0\nDepot\nblank.bmp\n",
+                "[addterminus]\n42\nAirport\nairport.bmp\n",
+            ),
+        )
+        .unwrap();
+        let world = TestWorld {
+            path: dir.clone(),
+            ai: Default::default(),
+            positions: Default::default(),
+        };
+        let mut vehicle = crate::timetable_run::tests::script_test_vehicle(
+            "{trigger:ai_scheduled_settarget}\n\
+             (L.L.AI_target_index) 0 (M.V.GetTerminusString) (S.$.destination_texture)\n\
+             {end}\n",
+            "AI_target_index\nSetLineTo\n",
+            "destination_texture\n",
+        );
+        Arc::make_mut(&mut vehicle.ty).def.path = dir.join("car.ovh");
+
+        let mut sim = ScheduleSim::new(&dir, &world, &crate::SimClock::default());
+        sim.departures.push(Departure {
+            time: 0.0,
+            trip: 0,
+            profile: 0,
+            line: "R1".into(),
+            ai_group: "Rail".into(),
+            tour: "1".into(),
+            mask: 1023,
+            spawned: false,
+            yesterday: false,
+        });
+        sim.trains
+            .insert("rail".into(), vec![vec![(vehicle.ty.clone(), false)]]);
+
+        let choice = sim.choose(0, &world).unwrap();
+        assert!(choice.train.is_some());
+        let hof = choice.hof.expect("a train needs its car's depot");
+        assert_eq!(hof.name, "Rail depot");
+
+        vehicle.host.hof = Some(hof.clone());
+        set_ai_destination(&mut vehicle, Some(&hof), "R1", "Airport", &[]);
+        assert_eq!(vehicle.var("AI_target_index"), Some(1.0));
+        let slot = vehicle.ty.program.str_var("destination_texture").unwrap() as usize;
+        assert_eq!(vehicle.state.str_vars[slot], "airport.bmp");
+
+        let cached = sim.choose(0, &world).unwrap().hof.unwrap();
+        assert!(Arc::ptr_eq(&hof, &cached));
+
+        std::fs::remove_file(dir.join("rail.hof")).unwrap();
+        sim.pool_hofs.clear();
+        let without_hof = sim.choose(0, &world).unwrap();
+        assert!(without_hof.train.is_some());
+        assert!(without_hof.hof.is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

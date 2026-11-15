@@ -440,7 +440,7 @@ pub(crate) fn make_app(mut args: Args, server_cfg: Option<server::ServerCfg>) ->
     // the window's simulation beside the picture or inline, for the whole session (an
     // offscreen run - a dedicated server, a picture - steps inline and never asks)
     let settings = settings::Settings::load();
-    omsi_sim::rigid::set_bouncy_suspension(settings.bouncy_suspension);
+    omsi_sim::rigid::set_improved_physics(settings.bouncy_suspension);
     if args.offscreen.is_none() {
         let sim_thread = omsi_sim::sim_thread::set_enabled(settings.sim_thread);
         log::info!("sim thread: {}", if sim_thread { "the AI traffic, the people and the scenery scripts step beside the picture" } else { "off: every step on the main thread" });

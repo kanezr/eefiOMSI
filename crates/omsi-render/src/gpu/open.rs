@@ -33,11 +33,15 @@ impl Renderer {
     /// The adapters of `instance` that can show `surface`, the ones worth trying first first:
     /// a graphics card of its own, then the processor's graphics, then anything else (a
     /// software renderer last).
-    pub fn adapters_for(instance: &wgpu::Instance, surface: &wgpu::Surface<'_>) -> Vec<wgpu::Adapter> {
-        let mut v: Vec<wgpu::Adapter> = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
-            .into_iter()
-            .filter(|a| a.is_surface_supported(surface))
-            .collect();
+    pub fn adapters_for(
+        instance: &wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+    ) -> Vec<wgpu::Adapter> {
+        let mut v: Vec<wgpu::Adapter> =
+            pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+                .into_iter()
+                .filter(|a| a.is_surface_supported(surface))
+                .collect();
         let rank = |a: &wgpu::Adapter| match a.get_info().device_type {
             wgpu::DeviceType::DiscreteGpu => 0,
             wgpu::DeviceType::IntegratedGpu => 1,
@@ -55,7 +59,10 @@ impl Renderer {
         format: Option<wgpu::TextureFormat>,
         options: RenderOptions,
     ) -> Result<Renderer> {
-        Self::open_on(adapter, surface, format, options).await?.finish().await
+        Self::open_on(adapter, surface, format, options)
+            .await?
+            .finish()
+            .await
     }
 
     /// The graphics device for a renderer on this adapter, its pipelines not built yet: see
@@ -71,8 +78,16 @@ impl Renderer {
         // test hooks for an adapter that cannot be opened: an error, or wgpu going down
         #[cfg(feature = "test-hooks")]
         match omsi_cfg::flags::OMSI_FAKE_GPU_ERROR.var() {
-            Some("open") => return Err(anyhow!("test: {} refused (OMSI_FAKE_GPU_ERROR=open)", info.name)),
-            Some("open-panic") => panic!("test: {} went down while being opened (OMSI_FAKE_GPU_ERROR=open-panic)", info.name),
+            Some("open") => {
+                return Err(anyhow!(
+                    "test: {} refused (OMSI_FAKE_GPU_ERROR=open)",
+                    info.name
+                ))
+            }
+            Some("open-panic") => panic!(
+                "test: {} went down while being opened (OMSI_FAKE_GPU_ERROR=open-panic)",
+                info.name
+            ),
             _ => {}
         }
         // What the textures may take on this adapter (wgpu does not tell a card's memory):
@@ -86,9 +101,17 @@ impl Renderer {
         let discrete_vram = gpu_memory::own_card_vram_mb(&info, vram);
         ADAPTER_VRAM_MB.store(discrete_vram, std::sync::atomic::Ordering::Relaxed);
         *ADAPTER_INFO.lock().unwrap_or_else(|e| e.into_inner()) = Some(info.clone());
-        log::info!("graphics adapter: {} ({:?}, {:?}{}), texture memory taken for it: {guess_mb} MB", info.name, info.device_type, info.backend, vram.map(|v| format!(", {v} MB of its own")).unwrap_or_default());
+        log::info!(
+            "graphics adapter: {} ({:?}, {:?}{}), texture memory taken for it: {guess_mb} MB",
+            info.name,
+            info.device_type,
+            info.backend,
+            vram.map(|v| format!(", {v} MB of its own"))
+                .unwrap_or_default()
+        );
         if let Some(m) = mem {
-            let mb = |b: Option<u64>| b.map_or_else(|| "-".to_string(), |b| format!("{} MB", b >> 20));
+            let mb =
+                |b: Option<u64>| b.map_or_else(|| "-".to_string(), |b| format!("{} MB", b >> 20));
             log::info!("graphics memory as {:?} reports it: {} MB its own, {} MB shared, budget {}, in use {}", info.backend, m.dedicated_bytes >> 20, m.shared_bytes >> 20, mb(m.budget_bytes), mb(m.usage_bytes));
         }
         // The legacy Intel Windows Vulkan branch has repeatedly crashed inside igvk64.dll
@@ -116,10 +139,35 @@ impl Renderer {
             options
         };
         // a small or shared graphics chip gets a lighter picture (see `lighter_picture`)
-        GL_BACKEND.store(info.backend == wgpu::Backend::Gl, std::sync::atomic::Ordering::Relaxed);
+        GL_BACKEND.store(
+            info.backend == wgpu::Backend::Gl,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        AMD_VULKAN.store(
+            info.backend == wgpu::Backend::Vulkan && info.vendor == 0x1002,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        MULTISAMPLED_SHADING.store(
+            !cfg!(any(target_os = "android", target_vendor = "apple"))
+                && info.backend != wgpu::Backend::Gl
+                && adapter
+                    .get_downlevel_capabilities()
+                    .flags
+                    .contains(wgpu::DownlevelFlags::MULTISAMPLED_SHADING),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         let (options, lighter) = gpu_memory::lighter_picture(&info, vram, options);
         let most = gpu_memory::ceiling(&info, vram);
-        *CEILING.lock().unwrap_or_else(|e| e.into_inner()) = Some(if intel_vulkan_safe { gpu_memory::Ceiling { msaa: 1, ssao: false, shadow_size: most.shadow_size.min(2048), ..most } } else { most });
+        *CEILING.lock().unwrap_or_else(|e| e.into_inner()) = Some(if intel_vulkan_safe {
+            gpu_memory::Ceiling {
+                msaa: 1,
+                ssao: false,
+                shadow_size: most.shadow_size.min(2048),
+                ..most
+            }
+        } else {
+            most
+        });
         let shadow_size = options
             .shadow_size
             .clamp(512, if intel_vulkan_safe { 2048 } else { 8192 });
@@ -134,11 +182,21 @@ impl Renderer {
             limits.max_storage_buffer_binding_size =
                 adapter.limits().max_storage_buffer_binding_size;
             limits.max_buffer_size = adapter.limits().max_buffer_size;
+            limits.max_sampled_textures_per_shader_stage =
+                limits.max_sampled_textures_per_shader_stage.max(
+                    adapter
+                        .limits()
+                        .max_sampled_textures_per_shader_stage
+                        .min(crate::pipelines::scene::PANE_MASK_TEXTURES),
+                );
         }
         // an older or smaller graphics chip (an OpenGL one, a GT 530) does not reach the
         // WebGPU defaults: asked for them anyway, the device was never opened
         if !limits.check_limits(&adapter.limits()) {
-            log::warn!("{}: below the standard limits; using what it has", info.name);
+            log::warn!(
+                "{}: below the standard limits; using what it has",
+                info.name
+            );
             limits = adapter.limits();
         }
         // OMSI_GPU_LIMITS=default|downlevel: the WebGPU defaults (or the downlevel ones) and
@@ -149,7 +207,9 @@ impl Renderer {
             _ => {}
         }
         // the shadow atlas is two maps wide: no wider than the card draws
-        let shadow_size = shadow_size.min(limits.max_texture_dimension_2d / 2).max(256);
+        let shadow_size = shadow_size
+            .min(limits.max_texture_dimension_2d / 2)
+            .max(256);
         let format = format
             .or_else(|| {
                 surface.map(|s| {
@@ -178,7 +238,12 @@ impl Renderer {
             1 | 2 | 4 | 8 => options.msaa,
             _ => MSAA,
         };
-        let targets = [format, wgpu::TextureFormat::Rgba16Float, DEPTH_FORMAT, MASK_FORMAT];
+        let targets = [
+            format,
+            wgpu::TextureFormat::Rgba16Float,
+            DEPTH_FORMAT,
+            MASK_FORMAT,
+        ];
         let takes = |flags: wgpu::TextureFormatFeatureFlags, f: wgpu::TextureFormat, n: u32| {
             flags.sample_count_supported(n)
                 && (n == 1
@@ -206,7 +271,9 @@ impl Renderer {
         if !omsi_cfg::flags::OMSI_NO_BC.is_set() && options.gpu_texture_compression {
             required_features |= adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC;
         } else if !options.gpu_texture_compression {
-            log::info!("GPU texture compression off in the settings: DXT/BC textures are decoded to RGBA");
+            log::info!(
+                "GPU texture compression off in the settings: DXT/BC textures are decoded to RGBA"
+            );
         }
         if intel_vulkan_safe {
             // Keep vkCreateDevice entirely free of optional extensions. Compressed source
@@ -224,13 +291,18 @@ impl Renderer {
         let ray_query = options.ray_tracing
             && !intel_vulkan_safe
             && info.backend != wgpu::Backend::Noop
-            && adapter.features().contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
+            && adapter
+                .features()
+                .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY)
             && !omsi_cfg::flags::OMSI_NO_RT.is_set();
         if ray_query {
             required_features |= wgpu::Features::EXPERIMENTAL_RAY_QUERY;
             limits = limits.using_acceleration_structure_values(adapter.limits());
         } else if options.ray_tracing {
-            log::warn!("{}: no hardware ray queries; Enhanced+ is drawn as Enhanced", info.name);
+            log::warn!(
+                "{}: no hardware ray queries; Enhanced+ is drawn as Enhanced",
+                info.name
+            );
         }
         device_selection::select_array_path(&adapter, &limits, &info);
         log::info!("opening graphics device: {} ({:?}, vendor {:#06x}, device {:#06x}), features {:?}, max buffer {} MB, max storage binding {} MB", info.name, info.backend, info.vendor, info.device, required_features, limits.max_buffer_size / 1_000_000, limits.max_storage_buffer_binding_size as u64 / 1_000_000);
@@ -243,9 +315,17 @@ impl Renderer {
                 // left hundreds of MB reserved and unused, and 2 GB cards lost the device to
                 // "Out of memory" in the first frames with the textures well under budget,
                 // #332, #295)
-                memory_hints: if lighter || vram.is_some_and(|v| v <= 4200) { wgpu::MemoryHints::MemoryUsage } else { wgpu::MemoryHints::Performance },
+                memory_hints: if lighter || vram.is_some_and(|v| v <= 4200) {
+                    wgpu::MemoryHints::MemoryUsage
+                } else {
+                    wgpu::MemoryHints::Performance
+                },
                 // (the ray queries are still an experimental feature of wgpu)
-                experimental_features: if ray_query { unsafe { wgpu::ExperimentalFeatures::enabled() } } else { wgpu::ExperimentalFeatures::disabled() },
+                experimental_features: if ray_query {
+                    unsafe { wgpu::ExperimentalFeatures::enabled() }
+                } else {
+                    wgpu::ExperimentalFeatures::disabled()
+                },
                 ..Default::default()
             })
             .await
@@ -280,7 +360,10 @@ impl Renderer {
             .find(|&n| supported(n))
             .unwrap_or(1);
         if let Some(c) = CEILING.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
-            c.sample_counts = [1, 2, 4, 8].into_iter().filter(|&n| supported(n)).fold(0, |m, n| m | n);
+            c.sample_counts = [1, 2, 4, 8]
+                .into_iter()
+                .filter(|&n| supported(n))
+                .fold(0, |m, n| m | n);
         }
         if msaa != wanted {
             log::warn!("{}x MSAA is not supported by {} (the device takes {:?} samples for {:?}, {:?} for the HDR target, {:?} for depth); using {}x", wanted, info.name, flags_of(format).supported_sample_counts(), format, flags_of(targets[1]).supported_sample_counts(), flags_of(DEPTH_FORMAT).supported_sample_counts(), msaa);
@@ -312,9 +395,22 @@ impl Renderer {
         // validation errors only, it went by, the pipeline stayed invalid and the first frame
         // stopped on "RenderPipeline with 'omsi' label is invalid" (#1663, #1664 - Adreno
         // 740/830 since 0.2.0), and the retry without multisampling was not checked at all.
-        let mesh_pages = adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::BASE_VERTEX);
+        let mesh_pages = adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::BASE_VERTEX);
         let name = format!("{} ({:?})", info.name, info.backend);
-        Ok(Opened { adapter, info, device, queue, format, options, asked_options, mesh_pages, name })
+        Ok(Opened {
+            adapter,
+            info,
+            device,
+            queue,
+            format,
+            options,
+            asked_options,
+            mesh_pages,
+            name,
+        })
     }
 }
 
@@ -356,8 +452,21 @@ impl Opened {
     /// The renderer: its pipelines built on this device (on another one when the device was
     /// lost meanwhile, see below).
     pub async fn finish(self) -> Result<Renderer> {
-        let Opened { adapter, info, device, queue, format, options, asked_options, mesh_pages, name } = self;
-        let mut made = Renderer::build_with_fallbacks(&device, &queue, &info, &name, format, options, mesh_pages).await;
+        let Opened {
+            adapter,
+            info,
+            device,
+            queue,
+            format,
+            options,
+            asked_options,
+            mesh_pages,
+            name,
+        } = self;
+        let mut made = Renderer::build_with_fallbacks(
+            &device, &queue, &info, &name, format, options, mesh_pages,
+        )
+        .await;
         // (its own adapter, asked what the game holds on it: with several renderers in one
         // process a shared one asked another's)
         if let Ok(r) = made.as_mut() {
@@ -371,9 +480,15 @@ impl Opened {
         // graphics interface is tried.
         // (test hook: OMSI_FAKE_GPU_ERROR=lost-build loses the first device so)
         #[cfg(feature = "test-hooks")]
-        if let (Ok(r), Some("lost-build")) = (made.as_ref(), omsi_cfg::flags::OMSI_FAKE_GPU_ERROR.var()) {
+        if let (Ok(r), Some("lost-build")) =
+            (made.as_ref(), omsi_cfg::flags::OMSI_FAKE_GPU_ERROR.var())
+        {
             if !basic_pipelines() {
-                *r.errors.device_lost.lock().unwrap_or_else(|e| e.into_inner()) = Some("test (OMSI_FAKE_GPU_ERROR=lost-build)".into());
+                *r.errors
+                    .device_lost
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) =
+                    Some("test (OMSI_FAKE_GPU_ERROR=lost-build)".into());
             }
         }
         if let Some(why) = made.as_ref().ok().and_then(|r| r.device_lost()) {
@@ -384,16 +499,20 @@ impl Opened {
             // basic pipelines at 1x, which it never needed)
             if MSAA_RETRY.swap(false, std::sync::atomic::Ordering::Relaxed) {
                 log::warn!("{}: the graphics device was lost while the chosen MSAA was tried again ({why}); keeping to what worked before", info.name);
-                return Box::pin(Renderer::new_on(adapter, None, Some(format), asked_options)).await;
+                return Box::pin(Renderer::new_on(adapter, None, Some(format), asked_options))
+                    .await;
             }
             if basic_pipelines() && rainfall_pipeline() {
                 log::warn!("{}: the graphics device was lost while the basic pipelines were made ({why}); opening it again without the rainfall", info.name);
                 RAINFALL_LEFT_OUT.store(true, std::sync::atomic::Ordering::Relaxed);
                 fallback_store(&name, Some((1, true)));
-                return Box::pin(Renderer::new_on(adapter, None, Some(format), asked_options)).await;
+                return Box::pin(Renderer::new_on(adapter, None, Some(format), asked_options))
+                    .await;
             }
             if basic_pipelines() {
-                return Err(anyhow!("the graphics device was lost while the pipelines were made: {why}"));
+                return Err(anyhow!(
+                    "the graphics device was lost while the pipelines were made: {why}"
+                ));
             }
             log::warn!("{}: the graphics device was lost while the pipelines were made ({why}); opening it again without the snowfall, the lamps in the fog and the street lamps' shadows", info.name);
             BASIC_PIPELINES.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -435,7 +554,11 @@ impl Renderer {
             // remembered for good, one failure - a driver of the time, a device lost once -
             // took the snowfall off DirectX 12 for ever; a phone keeps to what worked, its
             // second build took long enough for Android to close the app, #1708)
-            Some((m, true, false)) if !cfg!(any(target_os = "android", target_os = "ios")) => vec![(m.min(options.msaa).max(1), false), (m.min(options.msaa).max(1), true), (1, true)],
+            Some((m, true, false)) if !cfg!(any(target_os = "android", target_os = "ios")) => vec![
+                (m.min(options.msaa).max(1), false),
+                (m.min(options.msaa).max(1), true),
+                (1, true),
+            ],
             // (and the multisampling chosen: one failure of it - a driver of the time, a
             // device lost while building - kept a computer at 1x MSAA for good, whatever the
             // options said, #2597)
@@ -443,7 +566,9 @@ impl Renderer {
             // once per version whatever comes of it: failed, it is not made again at every
             // start; crashing the driver or losing the device, the next start keeps to what
             // worked (see the device-lost path in `new_on`).
-            Some((m, b, false)) if !cfg!(any(target_os = "android", target_os = "ios")) && m < options.msaa => {
+            Some((m, b, false))
+                if !cfg!(any(target_os = "android", target_os = "ios")) && m < options.msaa =>
+            {
                 fallback_store(name, Some((m, b)));
                 MSAA_RETRY.store(true, std::sync::atomic::Ordering::Relaxed);
                 vec![(options.msaa, b), (m.max(1), b), (1, true)]
@@ -451,14 +576,17 @@ impl Renderer {
             Some((m, b, _)) => vec![(m.min(options.msaa).max(1), b), (1, true)],
             // (a phone starts with the basic set: the full one failed on Adreno and the
             // second build after it took long enough for Android to close the app)
-            None if cfg!(any(target_os = "android", target_os = "ios")) => vec![(options.msaa, true), (1, true)],
+            None if cfg!(any(target_os = "android", target_os = "ios")) => {
+                vec![(options.msaa, true), (1, true)]
+            }
             None => vec![(options.msaa, false), (1, false), (1, true)],
         };
         attempts.dedup();
         let mut made: Result<Renderer> = Err(anyhow!("renderer pipelines: not built"));
         let mut tried: Vec<String> = Vec::new();
         for (msaa, basic) in attempts {
-            if tried.iter().any(|t| t == &format!("{msaa}{basic}")) || (!basic && basic_pipelines()) {
+            if tried.iter().any(|t| t == &format!("{msaa}{basic}")) || (!basic && basic_pipelines())
+            {
                 continue;
             }
             tried.push(format!("{msaa}{basic}"));
@@ -472,15 +600,34 @@ impl Renderer {
                 let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
                 let memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
                 let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-                let (renderer, caught) = pipelines::parallel::catching(|| Self::build(device.clone(), queue.clone(), name.to_string(), format, RenderOptions { msaa, ..options }));
+                let (renderer, caught) = pipelines::parallel::catching(|| {
+                    Self::build(
+                        device.clone(),
+                        queue.clone(),
+                        name.to_string(),
+                        format,
+                        RenderOptions { msaa, ..options },
+                    )
+                });
                 // (test hook: OMSI_FAKE_GPU_ERROR=pipeline fails a pipeline until the basic ones)
                 #[cfg(feature = "test-hooks")]
                 if !basic && omsi_cfg::flags::OMSI_FAKE_GPU_ERROR.var() == Some("pipeline") {
-                    let _ = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("test"), source: wgpu::ShaderSource::Wgsl("fn broken( {".into()) });
+                    let _ = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                        label: Some("test"),
+                        source: wgpu::ShaderSource::Wgsl("fn broken( {".into()),
+                    });
                 }
-                (renderer, [validation.pop(), memory.pop(), internal.pop()], caught)
+                (
+                    renderer,
+                    [validation.pop(), memory.pop(), internal.pop()],
+                    caught,
+                )
             };
-            let (renderer, scopes, caught) = if is_angle(info) { angle::compile(device, build) } else { build() };
+            let (renderer, scopes, caught) = if is_angle(info) {
+                angle::compile(device, build)
+            } else {
+                build()
+            };
             let [validation, memory, internal] = scopes;
             let errors = [validation.await, memory.await, internal.await];
             match errors.iter().flatten().chain(&caught).next() {
@@ -494,14 +641,28 @@ impl Renderer {
                     }
                     // (a fallback that worked is the first try next time; the full set
                     // working again forgets it)
-                    if remembered != Some((msaa, basic)) && (msaa != options.msaa || basic || remembered.is_some()) {
-                        fallback_store(name, (msaa != options.msaa || basic).then_some((msaa, basic)));
+                    if remembered != Some((msaa, basic))
+                        && (msaa != options.msaa || basic || remembered.is_some())
+                    {
+                        fallback_store(
+                            name,
+                            (msaa != options.msaa || basic).then_some((msaa, basic)),
+                        );
                     }
-                    made = Ok(Renderer { mesh_pages, ..renderer });
+                    made = Ok(Renderer {
+                        mesh_pages,
+                        ..renderer
+                    });
                     break;
                 }
                 Some(e) => {
-                    log::error!("{}: the renderer's pipelines failed ({}x MSAA{}): {}", info.name, msaa, if basic { ", basic pipelines" } else { "" }, gpu_error_text(e));
+                    log::error!(
+                        "{}: the renderer's pipelines failed ({}x MSAA{}): {}",
+                        info.name,
+                        msaa,
+                        if basic { ", basic pipelines" } else { "" },
+                        gpu_error_text(e)
+                    );
                     made = Err(anyhow!("renderer pipelines: {}", gpu_error_text(e)));
                     drop(renderer);
                 }
@@ -518,7 +679,10 @@ impl Renderer {
         format: wgpu::TextureFormat,
         options: RenderOptions,
     ) -> Renderer {
-        use pipelines::{coronas, defaults, enhanced, errors, mip, overlays, passes, post, scene, shadows, sky, ssao, upscale};
+        use pipelines::{
+            coronas, defaults, enhanced, errors, mip, overlays, passes, post, scene, shadows, sky,
+            ssao, upscale,
+        };
         let (msaa, shadow_size) = (options.msaa, options.shadow_size);
         RT_GBUF.store(options.ray_tracing, std::sync::atomic::Ordering::Relaxed);
         let errors = errors::install(&device, format, &options);
@@ -536,8 +700,16 @@ impl Renderer {
         let rain = coronas::Precip::rain(&device, &scene.camera_layout, &precip.view);
         drop(corona_texture);
         let sky = sky::SkyBase::new(&device, &queue, &scene.camera_layout, !leave_out_enhanced);
-        let passes = passes::PassKit { device: &device, scene: &scene, coronas: &coronas, snow: &snow, rain: &rain, sky: &sky, msaa }
-            .build(format, hdr_format, leave_out_enhanced);
+        let passes = passes::PassKit {
+            device: &device,
+            scene: &scene,
+            coronas: &coronas,
+            snow: &snow,
+            rain: &rain,
+            sky: &sky,
+            msaa,
+        }
+        .build(format, hdr_format, leave_out_enhanced);
         let (sky_sampler, sky_mesh) = sky::dome(&device, &queue);
         let overlays = overlays::Overlays::new(&device, format, msaa);
         let gl = GL_BACKEND.load(std::sync::atomic::Ordering::Relaxed);
@@ -546,13 +718,25 @@ impl Renderer {
         let prepass = scene::prepass(&device, &scene, msaa, !leave_out_enhanced);
         let mip = mip::build(&device);
         let post = post::build(&device, format, hdr_format, &defaults.white_texture);
-        let enhanced = enhanced::build(&device, &queue, hdr_format, &defaults.camera_buf, &sky, !leave_out_enhanced);
+        let enhanced = enhanced::build(
+            &device,
+            &queue,
+            hdr_format,
+            &defaults.camera_buf,
+            &sky,
+            !leave_out_enhanced,
+        );
         let (overlay_pipeline_1x, xr_ui_pipeline) = overlays.single_sampled(&device, format);
         let upscale = upscale::build(&device, format);
         let gpu_timers = [GpuTimers::new(&device), GpuTimers::new(&device)];
         // GLES cannot reliably read the depth buffer (the same limitation as SSAO).
         let puddles = (!gl && !passes.leave_out_enhanced).then(|| {
-            puddles::Pipelines::new(&device, &scene.shader, &scene.camera_layout, &scene.material_layout)
+            puddles::Pipelines::new(
+                &device,
+                &scene.shader,
+                &scene.camera_layout,
+                &scene.material_layout,
+            )
         });
         let rt = options.ray_tracing.then(|| rt::RayTracer::new(&device));
         let cookie_atlas = cookies::CookieAtlas::new();
@@ -594,7 +778,9 @@ impl Renderer {
                 sky_mesh,
             },
             lights: LightRes {
-                lm_atlas_view: scene.lm_atlas.create_view(&wgpu::TextureViewDescriptor::default()),
+                lm_atlas_view: scene
+                    .lm_atlas
+                    .create_view(&wgpu::TextureViewDescriptor::default()),
                 lm_atlas: scene.lm_atlas,
                 lm_uniform: scene.lm_uniform,
                 lm_place: std::cell::Cell::new((0.0, 0.0, 0.0)),
@@ -632,8 +818,18 @@ impl Renderer {
                 enh_last: bytemuck::Zeroable::zeroed(),
             },
             shadows: ShadowRes {
-                shadow_far_cache: std::cell::Cell::new((Mat4::IDENTITY, 0, DVec3::ZERO, Vec3::ZERO)),
-                shadow_near_cache: std::cell::Cell::new((Mat4::IDENTITY, 0, DVec3::ZERO, Vec3::ZERO)),
+                shadow_far_cache: std::cell::Cell::new((
+                    Mat4::IDENTITY,
+                    0,
+                    DVec3::ZERO,
+                    Vec3::ZERO,
+                )),
+                shadow_near_cache: std::cell::Cell::new((
+                    Mat4::IDENTITY,
+                    0,
+                    DVec3::ZERO,
+                    Vec3::ZERO,
+                )),
                 xr_shadow_cache: std::cell::Cell::new(None),
                 shadow_clear_pipeline: shadows.clear_pipeline,
                 lamp_tiles: Default::default(),
@@ -653,6 +849,8 @@ impl Renderer {
                 cull_drawn: std::cell::RefCell::new(Vec::new()),
                 object_sizes: Default::default(),
                 object_sizes_scratch: Default::default(),
+                cull_parts: Vec::new(),
+                cull_visible: Vec::new(),
             },
             errors: GpuErrors {
                 gpu_error: errors.gpu_error,
@@ -681,7 +879,13 @@ impl Renderer {
             // (OMSI_RENDER_CLOCK=<s>: the animations' clock starts that far on - offscreen
             // stills of moving things, the windy trees, at different moments)
             started: std::time::Instant::now()
-                .checked_sub(std::time::Duration::from_secs_f64(omsi_cfg::flags::OMSI_RENDER_CLOCK.var().and_then(|v| v.trim().parse::<f64>().ok()).filter(|s| s.is_finite() && *s >= 0.0).unwrap_or(0.0)))
+                .checked_sub(std::time::Duration::from_secs_f64(
+                    omsi_cfg::flags::OMSI_RENDER_CLOCK
+                        .var()
+                        .and_then(|v| v.trim().parse::<f64>().ok())
+                        .filter(|s| s.is_finite() && *s >= 0.0)
+                        .unwrap_or(0.0),
+                ))
                 .unwrap_or_else(std::time::Instant::now),
             tree_gust_drift: std::cell::Cell::new((glam::DVec2::ZERO, 0.0)),
             ao_sampler: ssao.sampler,
@@ -689,6 +893,8 @@ impl Renderer {
             ao_buf: ssao.buf,
             prepass_pipelines: prepass.pipelines,
             prepass_msaa_pipelines: prepass.msaa_pipelines,
+            pane_mask: prepass.pane_mask,
+            pane_depth: None,
             ssao_pipeline: ssao.ssao_pipeline,
             blur_pipeline: ssao.blur_pipeline,
             device,
@@ -721,10 +927,15 @@ impl Renderer {
             encoding_pool: if omsi_cfg::flags::OMSI_NO_RENDER_POOL.is_set() {
                 None
             } else {
-                let workers = std::thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(2).clamp(2, 8);
-                rayon::ThreadPoolBuilder::new().num_threads(workers)
+                let workers = std::thread::available_parallelism()
+                    .map(|n| n.get() / 2)
+                    .unwrap_or(2)
+                    .clamp(2, 8);
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(workers)
                     .thread_name(|i| format!("omsi-render-{i}"))
-                    .build().ok()
+                    .build()
+                    .ok()
             },
             pending_meshes: Default::default(),
             freed: std::cell::OnceCell::new(),

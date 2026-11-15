@@ -64,6 +64,11 @@ pub struct Traffic {
     pub(crate) riding_sounds: Option<(u64, omsi_audio::SoundSet)>,
     /// `[sound_ai]` configurations by file.
     pub(crate) sound_cfgs: HashMap<std::path::PathBuf, Option<Arc<omsi_vehicle::SoundCfg>>>,
+    /// Configurations being loaded without blocking the frame thread.
+    pub(crate) sound_cfg_jobs: HashMap<
+        std::path::PathBuf,
+        std::sync::mpsc::Receiver<Option<Arc<omsi_vehicle::SoundCfg>>>,
+    >,
     /// Shared script environment for existing AI and for their next `{init}`.
     pub script_environment: Option<([f32; 22], glam::Vec3, f32)>,
     /// What each vehicle definition (by its file) is heard with, its paths resolved once:
@@ -103,6 +108,7 @@ impl Traffic {
             orphan_sounds: Vec::new(),
             riding_sounds: None,
             sound_cfgs: HashMap::new(),
+            sound_cfg_jobs: HashMap::new(),
             script_environment: None,
             sound_plans: HashMap::new(),
             lamp_turn: 0,

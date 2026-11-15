@@ -45,6 +45,8 @@ pub struct VehicleHost {
     /// `WetLane_2.wav` over 1 … 2, and `spray.osc` raises the wheel spray while it is
     /// between 1 and 2.
     pub street_cond: f32,
+    /// Renderer-matched road wetness (0..1), shared with the tyre puddle mask.
+    pub road_wetness: f32,
     /// How much of the vehicle rolls off the road (0..1): its wheels' share on grass, earth
     /// or gravel, a muddy one counted whole (set from what the wheels roll on, see
     /// `omsi_scene::wheel_surface`). The body soils with it (`update_dirt`).

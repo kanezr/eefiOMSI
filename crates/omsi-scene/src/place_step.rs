@@ -124,10 +124,57 @@ impl World {
             match phase {
                 0 => {
                     if let (Some(mesh), false) = (&p.terrain, only_object) {
-                        self.place_ground(renderer, scene, gpu, p, tg, pl, mesh, &ground);
+                        if pl.ground_mesh.is_none() {
+                            let (id, wall, light) =
+                                self.place_ground(renderer, scene, gpu, p, tg, pl, mesh, &ground);
+                            pl.ground_mesh = Some(id);
+                            pl.ground_wall = wall;
+                            pl.ground_light = light;
+                        } else if pl.ground_paint_next < p.paint.len() {
+                            let (layer, mask, painted) = &p.paint[pl.ground_paint_next];
+                            self.place_ground_layer(
+                                renderer,
+                                scene,
+                                gpu,
+                                p,
+                                tg,
+                                *layer,
+                                mask,
+                                Some(*painted),
+                                pl.ground_mesh.unwrap(),
+                                pl.ground_light,
+                            );
+                            pl.ground_paint_next += 1;
+                        } else if pl.wall_paint_next < p.wall_paint.len() {
+                            let (layer, mask) = &p.wall_paint[pl.wall_paint_next];
+                            if let Some(wall) = pl.ground_wall {
+                                self.place_ground_layer(
+                                    renderer,
+                                    scene,
+                                    gpu,
+                                    p,
+                                    tg,
+                                    *layer,
+                                    mask,
+                                    None,
+                                    wall,
+                                    pl.ground_light,
+                                );
+                            }
+                            pl.wall_paint_next += 1;
+                        } else if !pl.ground_water_done {
+                            place_water(renderer, scene, gpu, p, tg, ground.water_mat);
+                            pl.ground_water_done = true;
+                        } else {
+                            pl.phase = 1;
+                            pl.next = 0;
+                            continue;
+                        }
+                    } else {
+                        pl.phase = 1;
+                        pl.next = 0;
+                        continue;
                     }
-                    pl.phase = 1;
-                    pl.next = 0;
                     done_some = true;
                 }
                 1 => {
@@ -162,7 +209,7 @@ impl World {
                         pl.next = 0;
                         continue;
                     }
-                    self.place_trees(renderer, scene, gpu, p, tg, pl, ground.tree_mesh);
+                    self.place_trees(renderer, scene, gpu, p, tg, pl, ground.tree_mesh, deadline);
                     done_some = true;
                 }
                 _ => {
@@ -195,8 +242,8 @@ impl World {
         pl: &mut Placing,
         mesh: &MeshData,
         g: &GroundIds,
-    ) {
-        let GroundIds { ground_id, plain_terrain_mat, ground_detail, ground_repeats, ground_wet, water_mat, .. } = *g;
+    ) -> (MeshId, Option<MeshId>, Option<TextureId>) {
+        let GroundIds { ground_id, plain_terrain_mat, ground_detail, ground_repeats, ground_wet, .. } = *g;
         let id = gpu.add_mesh(renderer, scene, mesh);
         tg.meshes.push(id);
         // the tile's night light map (lamp light pools on the ground)
@@ -285,123 +332,72 @@ impl World {
             }
             Some(wall)
         };
-        self.place_ground_paint(renderer, scene, gpu, p, tg, id, wall_id, lm);
-        place_water(renderer, scene, gpu, p, tg, water_mat);
+        (id, wall_id, lm)
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn place_ground_paint(
+    fn place_ground_layer(
         &self,
         renderer: &Renderer,
         scene: &mut Scene,
         gpu: &mut GpuCache,
         p: &Prepared,
         tg: &mut TileGpu,
-        id: MeshId,
-        wall_id: Option<MeshId>,
+        layer: usize,
+        mask: &TextureData,
+        painted: Option<f32>,
+        mesh_id: MeshId,
         lm: Option<TextureId>,
     ) {
         let images: &HashMap<PathBuf, Arc<TextureData>> = &p.images;
         let ground_dirs = vec![self.root.clone()];
-        // The painted ground: every further [groundtex] the editor's brush put on this
-        // tile is the same tile mesh once more, blended in through its own mask - which
-        // is how OMSI's car parks get their asphalt, its side streets their cobbles and
-        // its meadows their fields.
-        let no_paint = omsi_cfg::flags::OMSI_NO_GROUND_PAINT.is_set();
-        for (layer, mask, painted) in p.paint.iter().filter(|_| !no_paint) {
-            let Some(gt) = self.global.ground_textures.get(*layer) else {
-                continue;
-            };
-            let tex = gpu.add_data(renderer, scene, mask);
-            tg.textures.push(tex);
-            let layer_tex = gpu
-                .texture(renderer, scene, &gt.texture, &ground_dirs, images)
-                .map(|(id, path)| {
-                    tg.shared_textures.push(path);
-                    id
-                });
-            let detail = gpu
-                .texture(renderer, scene, &gt.detail_texture, &ground_dirs, images)
-                .map(|(id, path)| {
-                    tg.shared_textures.push(path);
-                    (id, gt.detail_repeats())
-                });
-            let gdirs: Vec<&Path> =
-                ground_dirs.iter().map(|p| p.as_path()).collect();
-            let gcfg = self.textures.cfg(&gt.texture, &gdirs);
-            let wet = gcfg.wetness_kind();
-            let m = renderer.add_terrain_layer_material(
-                scene,
-                layer_tex,
-                tex,
-                detail,
-                gt.repeats(),
-                lm,
-                wet,
-            );
-            let m = gpu.material(renderer, scene, m);
-            tg.materials.push(m);
-            let li = instance!(gpu, renderer, scene, tg; renderer.add_surface_instance(
-                scene,
-                id,
-                p.origin,
-                Mat4::IDENTITY,
-                vec![m]
-            ));
-            if let Some(inst) = scene.instances.get_mut(li) {
-                inst.ground_layer = true;
-                inst.render_phase = RenderPhase::Terrain;
-            }
+        if omsi_cfg::flags::OMSI_NO_GROUND_PAINT.is_set() {
+            return;
+        }
+        let Some(gt) = self.global.ground_textures.get(layer) else {
+            return;
+        };
+        let tex = gpu.add_data(renderer, scene, mask);
+        tg.textures.push(tex);
+        let layer_tex = gpu
+            .texture(renderer, scene, &gt.texture, &ground_dirs, images)
+            .map(|(id, path)| {
+                tg.shared_textures.push(path);
+                id
+            });
+        let detail = gpu
+            .texture(renderer, scene, &gt.detail_texture, &ground_dirs, images)
+            .map(|(id, path)| {
+                tg.shared_textures.push(path);
+                (id, gt.detail_repeats())
+            });
+        let gdirs: Vec<&Path> = ground_dirs.iter().map(|p| p.as_path()).collect();
+        let cfg = self.textures.cfg(&gt.texture, &gdirs);
+        let m = renderer.add_terrain_layer_material(
+            scene,
+            layer_tex,
+            tex,
+            detail,
+            gt.repeats(),
+            lm,
+            cfg.wetness_kind(),
+        );
+        let m = gpu.material(renderer, scene, m);
+        tg.materials.push(m);
+        let i = instance!(gpu, renderer, scene, tg; renderer.add_surface_instance(
+            scene,
+            mesh_id,
+            p.origin,
+            Mat4::IDENTITY,
+            vec![m]
+        ));
+        if let Some(inst) = scene.instances.get_mut(i) {
+            inst.ground_layer = true;
+            inst.render_phase = RenderPhase::Terrain;
+        }
+        if let Some(painted) = painted {
             if omsi_cfg::flags::OMSI_DEBUG_SURFACES.is_set() {
                 log::info!("tile ({}, {}): ground layer {layer} '{}' painted on {:.1} % of the tile, mask {:?}", p.tx, p.ty, gt.texture, painted * 100.0, mask.format);
-            }
-        }
-        // Exposed sides keep the original brush layers. The horizontal ground's
-        // masks include the hole cut and would erase these vertical faces again.
-        if let Some(wall) = wall_id {
-            for (layer, mask) in p.wall_paint.iter().filter(|_| !no_paint) {
-                let Some(gt) = self.global.ground_textures.get(*layer) else {
-                    continue;
-                };
-                let tex = gpu.add_data(renderer, scene, mask);
-                tg.textures.push(tex);
-                let layer_tex = gpu
-                    .texture(renderer, scene, &gt.texture, &ground_dirs, images)
-                    .map(|(id, path)| {
-                        tg.shared_textures.push(path);
-                        id
-                    });
-                let detail = gpu
-                    .texture(renderer, scene, &gt.detail_texture, &ground_dirs, images)
-                    .map(|(id, path)| {
-                        tg.shared_textures.push(path);
-                        (id, gt.detail_repeats())
-                    });
-                let gdirs: Vec<&Path> =
-                    ground_dirs.iter().map(|p| p.as_path()).collect();
-                let cfg = self.textures.cfg(&gt.texture, &gdirs);
-                let m = renderer.add_terrain_layer_material(
-                    scene,
-                    layer_tex,
-                    tex,
-                    detail,
-                    gt.repeats(),
-                    lm,
-                    cfg.wetness_kind(),
-                );
-                let m = gpu.material(renderer, scene, m);
-                tg.materials.push(m);
-                let wi = instance!(gpu, renderer, scene, tg; renderer.add_surface_instance(
-                    scene,
-                    wall,
-                    p.origin,
-                    Mat4::IDENTITY,
-                    vec![m]
-                ));
-                if let Some(inst) = scene.instances.get_mut(wi) {
-                    inst.ground_layer = true;
-                    inst.render_phase = RenderPhase::Terrain;
-                }
             }
         }
     }
@@ -560,11 +556,15 @@ impl World {
         tg: &mut TileGpu,
         pl: &mut Placing,
         tree_mesh: MeshId,
+        deadline: Option<std::time::Instant>,
     ) {
         let images: &HashMap<PathBuf, Arc<TextureData>> = &p.images;
-        // trees are cheap: a few dozen at a time
-        let end = (pl.next + 64).min(p.trees.len());
-        for (ot, texture, pos, height, width, heading) in &p.trees[pl.next..end] {
+        let start = pl.next;
+        let end = (start + 64).min(p.trees.len());
+        for (i, (ot, texture, pos, height, width, heading)) in p.trees[start..end].iter().enumerate() {
+            if i > 0 && deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                break;
+            }
             let tkey = texture.to_ascii_lowercase();
             if !gpu.trees.contains_key(&tkey) {
                 let dirs = ot.texture_dirs(&self.root);
@@ -613,8 +613,8 @@ impl World {
             let _ =
                 instance!(gpu, renderer, scene, tg; renderer.add_instance(scene, tree_mesh, *pos, xf, vec![mat]));
             pl.trees += 1;
+            pl.next += 1;
         }
-        pl.next = end;
     }
 
     /// One object of the tile: its meshes and lower levels, its lamp or its script, and

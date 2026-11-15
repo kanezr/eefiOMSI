@@ -3,12 +3,68 @@
 //! stands, whether a puddle could lie there.
 
 use super::{WorldCell, WorldData};
-use crate::rigid::GroundProbe;
+use crate::rigid::{GroundProbe, GroundSample};
 use glam::DVec3;
 use hashbrown::HashMap;
 use omsi_geometry::TileSurface;
 use omsi_map::{tile_size, Terrain};
 use std::sync::Arc;
+
+/// Water coverage at a world-space point, evaluated with the renderer's puddle mask.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PuddleWater {
+    pub puddle: f32,
+    pub depth: f32,
+    pub wet: f32,
+}
+
+/// Evaluate the same periodic value-noise mask used by the road puddle shaders.
+pub fn puddle_water_at(x: f64, y: f64, wet_road: f32) -> PuddleWater {
+    if wet_road <= 0.0 {
+        return PuddleWater::default();
+    }
+    const PERIOD: f64 = 1000.0;
+    const SPREAD: f32 = 0.37;
+    let (px, py) = (x.rem_euclid(PERIOD) as f32, y.rem_euclid(PERIOD) as f32);
+    let noise = |freq: f32, ox: f32, oy: f32| {
+        let (qx, qy) = (px * freq + ox, py * freq + oy);
+        let cells = (PERIOD as f32 * freq).round();
+        let (ix, iy) = (qx.floor(), qy.floor());
+        let (fx, fy) = (qx - ix, qy - iy);
+        let (ux, uy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
+        let hash = |cx: f32, cy: f32| {
+            let wx = cx - cells * (cx / cells).floor();
+            let wy = cy - cells * (cy / cells).floor();
+            const M: u32 = 1664525;
+            let mut a = (wx as u32).wrapping_mul(M).wrapping_add(1013904223);
+            let mut b = (wy as u32).wrapping_mul(M).wrapping_add(1013904223);
+            a = a.wrapping_add(b.wrapping_mul(M));
+            b = b.wrapping_add(a.wrapping_mul(M));
+            a ^= a >> 16;
+            b ^= b >> 16;
+            a = a.wrapping_add(b.wrapping_mul(M));
+            a ^= a >> 16;
+            (a >> 8) as f32 / 16777215.0
+        };
+        let a = hash(ix, iy);
+        let b = hash(ix + 1.0, iy);
+        let c = hash(ix, iy + 1.0);
+        let d = hash(ix + 1.0, iy + 1.0);
+        let top = a + (b - a) * ux;
+        let bottom = c + (d - c) * ux;
+        top + (bottom - top) * uy
+    };
+    let pattern = noise(0.35, 17.3, -9.1) * 0.6
+        + noise(1.6, -4.0, 8.0) * 0.3
+        + noise(5.0, 2.7, 11.3) * 0.1;
+    let threshold = 1.0 - wet_road * SPREAD;
+    let t = ((pattern - (threshold - 0.02)) / 0.04).clamp(0.0, 1.0);
+    PuddleWater {
+        puddle: t * t * (3.0 - 2.0 * t),
+        depth: ((pattern - threshold) / 0.15).clamp(0.0, 1.0),
+        wet: wet_road,
+    }
+}
 
 /// The ground of the loaded tiles: terrain and surface rasters (roads) by tile coordinate.
 /// A tile's terrain comes when it is placed, its surface when its ground has been cut.
@@ -358,6 +414,33 @@ impl crate::rigid::Ground for LiveGround {
             };
             let (_, surface, terrain) = &tiles[i];
             probe_tile(surface.as_deref(), terrain.as_deref(), key, x, y, top)
+        })
+    }
+
+    fn surface_session(&self, wetness: f32) -> Box<dyn Fn(f64, f64, f64) -> GroundSample + '_> {
+        let world = self.0.snapshot();
+        let tiles: std::cell::RefCell<Vec<TileRefs>> = std::cell::RefCell::new(Vec::with_capacity(4));
+        Box::new(move |x, y, z| {
+            let key = tile_key(x, y);
+            let mut tiles = tiles.borrow_mut();
+            let i = match tiles.iter().position(|t| t.0 == key) {
+                Some(i) => i,
+                None => {
+                    let (surface, terrain) = world.ground.tile(key);
+                    tiles.push((key, surface.cloned(), terrain.cloned()));
+                    tiles.len() - 1
+                }
+            };
+            let (_, surface, terrain) = &tiles[i];
+            let (lx, ly) = local(key, x, y);
+            let terrain_z = terrain.as_ref().map(|t| omsi_geometry::terrain_height(t, lx, ly));
+            let use_ground_paint = !omsi_cfg::flags::OMSI_NO_PAINTED_GROUND_GRIP.is_set();
+            let kind = surface.as_ref()
+                .map(|s| s.surface_kind_under_with_ground_paint(lx, ly, z as f32, terrain_z, use_ground_paint))
+                .unwrap_or(omsi_geometry::SurfaceKind::Unknown);
+            let wet = world.wet_road_at(x, y, wetness);
+            let water = puddle_water_at(x, y, wet);
+            GroundSample { kind, puddle: water.puddle, depth: water.depth, wet: water.wet }
         })
     }
 }

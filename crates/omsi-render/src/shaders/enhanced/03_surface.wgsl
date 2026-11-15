@@ -79,6 +79,8 @@ var<private> rt_aux: vec4<f32>;
 
 @fragment
 fn fs_enhanced(in: FsIn) -> EnhancedOut {
+    rt_gbuf = vec4<f32>(0.0);
+    rt_aux = vec4<f32>(0.0);
     var puddle_weight = vec2<f32>(0.0);
     let c = shade_enhanced(in, &puddle_weight, false, camera.cam_pos.xyz);
     let screen = material.flags.x > 0.5;

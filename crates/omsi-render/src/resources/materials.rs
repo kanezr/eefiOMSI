@@ -3,6 +3,15 @@
 
 use crate::*;
 
+const fn blend_writes_depth(
+    alpha: AlphaMode,
+    no_z_write: bool,
+    writes_depth: bool,
+    no_z_check: bool,
+) -> bool {
+    matches!(alpha, AlphaMode::Blend) && (!no_z_write || writes_depth) && !no_z_check
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct MaterialUniform {
@@ -86,9 +95,9 @@ pub struct Material {
     pub alpha: AlphaMode,
     pub color: [f32; 4],
     pub unlit: bool,
-    /// `[matl_noZwrite]`: a blended surface (glass, rain film, dirt) that must not write
-    /// depth, or everything blended behind it is thrown away - which is what punched holes
-    /// into the world seen through a window or a mirror.
+    /// `[matl_noZwrite]`: a blended surface (glass, rain film, dirt) that normally must not
+    /// write depth, or everything blended behind it is thrown away. `writes_depth` can
+    /// explicitly restore depth writes for OMSI-compatible model ordering.
     pub no_z_write: bool,
     /// See [`MaterialExtra::writes_depth`].
     pub writes_depth: bool,
@@ -121,6 +130,18 @@ pub struct Material {
 }
 
 impl Material {
+    /// Whether a blended material writes depth in the colour pass. Some vehicle panes
+    /// suppress depth writes in ordinary draws but explicitly opt back in for OMSI model
+    /// ordering (`MaterialExtra::writes_depth`).
+    pub fn blend_writes_depth(&self) -> bool {
+        blend_writes_depth(
+            self.alpha,
+            self.no_z_write,
+            self.writes_depth,
+            self.no_z_check,
+        )
+    }
+
     /// Whether the material samples texture `id`.
     pub fn uses_texture(&self, id: TextureId) -> bool {
         self.texture == Some(id)
@@ -274,6 +295,7 @@ impl Renderer {
         if let Some(m) = scene.materials.get_mut(id) {
             m.no_z_write = on;
         }
+
     }
 
     pub fn add_material(
@@ -979,5 +1001,19 @@ impl Renderer {
                 },
             ],
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicitly_depth_writing_blends_are_not_treated_as_no_write() {
+        assert!(blend_writes_depth(AlphaMode::Blend, true, true, false));
+        assert!(blend_writes_depth(AlphaMode::Blend, false, false, false));
+        assert!(!blend_writes_depth(AlphaMode::Blend, true, false, false));
+        assert!(!blend_writes_depth(AlphaMode::Blend, false, true, true));
+        assert!(!blend_writes_depth(AlphaMode::Opaque, false, false, false));
     }
 }

@@ -15,6 +15,9 @@ pub struct GpuTexture {
     #[allow(dead_code)]
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
+    /// Reused mip destinations and source bind groups for dynamic mipmapped textures.
+    pub(crate) mip_targets: Vec<wgpu::TextureView>,
+    pub(crate) mip_groups: Vec<wgpu::BindGroup>,
     pub(crate) size: (u32, u32),
     /// Bytes the texture takes on the GPU, all levels (0 for a freed slot's placeholder).
     pub(crate) bytes: u64,
@@ -33,7 +36,7 @@ impl GpuTexture {
     /// A slot showing `view` (a picture the renderer draws: the one behind the rain on the
     /// glass), with `texture` a small stand-in the slot's bookkeeping asks about.
     pub(crate) fn showing(texture: wgpu::Texture, view: wgpu::TextureView, size: (u32, u32)) -> GpuTexture {
-        GpuTexture { texture, view, size, bytes: 0, gen: next_gen() }
+        GpuTexture { texture, view, mip_targets: Vec::new(), mip_groups: Vec::new(), size, bytes: 0, gen: next_gen() }
     }
 
     pub(crate) fn new(texture: wgpu::Texture, size: (u32, u32), bytes: u64) -> GpuTexture {
@@ -41,6 +44,8 @@ impl GpuTexture {
         GpuTexture {
             texture,
             view,
+            mip_targets: Vec::new(),
+            mip_groups: Vec::new(),
             size,
             bytes,
             gen: next_gen(),
@@ -119,6 +124,13 @@ pub(crate) fn texture_bytes(format: wgpu::TextureFormat, w: u32, h: u32, levels:
     (0..levels)
         .map(|l| ((w >> l).max(1).div_ceil(bw) * (h >> l).max(1).div_ceil(bh)) as u64 * block)
         .sum()
+}
+
+fn rect_in_bounds(width: u32, height: u32, [x, y, w, h]: [u32; 4]) -> bool {
+    x.checked_add(w).is_some_and(|right| right <= width)
+        && y.checked_add(h).is_some_and(|bottom| bottom <= height)
+        && w > 0
+        && h > 0
 }
 
 /// A texture on the GPU, made on a worker thread; [`Renderer::add_prepared_texture`] puts it
@@ -329,6 +341,8 @@ pub(crate) fn upload_texture_format(
     GpuTexture {
         texture,
         view,
+        mip_targets: Vec::new(),
+        mip_groups: Vec::new(),
         size: (img.width, img.height),
         bytes: texture_bytes(
             format,
@@ -416,6 +430,15 @@ pub(crate) mod fit_tests {
         assert_eq!(super::fit_size(5000, 300, 2048), (1250, 75));
         assert_eq!(super::fit_size(2048, 16, 2048), (2048, 16));
         assert!(super::fit_image(&small, 2048).is_none());
+    }
+
+    #[test]
+    fn texture_rect_bounds_reject_overflow_and_empty_updates() {
+        assert!(super::rect_in_bounds(16, 8, [4, 2, 12, 6]));
+        assert!(!super::rect_in_bounds(16, 8, [u32::MAX, 0, 1, 1]));
+        assert!(!super::rect_in_bounds(16, 8, [0, u32::MAX, 1, 1]));
+        assert!(!super::rect_in_bounds(16, 8, [0, 0, 0, 1]));
+        assert!(!super::rect_in_bounds(16, 8, [0, 0, 1, 0]));
     }
 }
 
@@ -602,11 +625,14 @@ impl Renderer {
             },
             size,
         );
-        self.generate_mip_chain(&texture, mip_count, average);
+        let (mip_targets, mip_groups) = self.mip_resources(&texture, mip_count);
+        self.generate_mip_chain(&mip_targets, &mip_groups, average);
         let view = texture.create_view(&Default::default());
         GpuTexture {
             texture,
             view,
+            mip_targets,
+            mip_groups,
             size: (img.width, img.height),
             bytes: texture_bytes(
                 wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -621,25 +647,25 @@ impl Renderer {
     /// Build all lower levels of `texture` by rendering each level from the last. The
     /// texture has already received its level-zero pixels and was created with render-attach
     /// usage by [`upload_rgba_gpu_mips`].
-    pub(crate) fn generate_mip_chain(&self, texture: &wgpu::Texture, mip_count: u32, average: MipAverage) {
-        let pipeline = if average == MipAverage::Independent { &self.mip_text_pipeline } else { &self.mip_pipeline };
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("mips"),
-            });
+    fn mip_resources(
+        &self,
+        texture: &wgpu::Texture,
+        mip_count: u32,
+    ) -> (Vec<wgpu::TextureView>, Vec<wgpu::BindGroup>) {
+        let mut targets = Vec::with_capacity(mip_count.saturating_sub(1) as usize);
+        let mut groups = Vec::with_capacity(mip_count.saturating_sub(1) as usize);
         for level in 1..mip_count {
             let src = texture.create_view(&wgpu::TextureViewDescriptor {
                 base_mip_level: level - 1,
                 mip_level_count: Some(1),
                 ..Default::default()
             });
-            let dst = texture.create_view(&wgpu::TextureViewDescriptor {
+            targets.push(texture.create_view(&wgpu::TextureViewDescriptor {
                 base_mip_level: level,
                 mip_level_count: Some(1),
                 ..Default::default()
-            });
-            let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            }));
+            groups.push(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("mip"),
                 layout: &self.mip_layout,
                 entries: &[
@@ -652,11 +678,28 @@ impl Renderer {
                         resource: wgpu::BindingResource::Sampler(&self.mip_sampler),
                     },
                 ],
+            }));
+        }
+        (targets, groups)
+    }
+
+    pub(crate) fn generate_mip_chain(
+        &self,
+        targets: &[wgpu::TextureView],
+        groups: &[wgpu::BindGroup],
+        average: MipAverage,
+    ) {
+        let pipeline = if average == MipAverage::Independent { &self.mip_text_pipeline } else { &self.mip_pipeline };
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("mips"),
             });
+        for (dst, bg) in targets.iter().zip(groups) {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("mip"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &dst,
+                    view: dst,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -670,7 +713,7 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &bg, &[]);
+            pass.set_bind_group(0, bg, &[]);
             pass.draw(0..3, 0..1);
         }
         self.queue.submit([encoder.finish()]);
@@ -735,6 +778,8 @@ impl Renderer {
         scene.textures.push(GpuTexture {
             texture,
             view,
+            mip_targets: Vec::new(),
+            mip_groups: Vec::new(),
             size: (width, height),
             bytes,
             gen: next_gen(),
@@ -797,7 +842,16 @@ impl Renderer {
 
     pub fn update_texture_rect(&self, scene: &Scene, id: TextureId, img: &omsi_texture::Image, [x, y, w, h]: [u32; 4]) {
         let Some(gt) = scene.textures.get(id) else { return };
-        if (img.width, img.height) != gt.size || x + w > img.width || y + h > img.height || img.rgba.len() < (img.width * img.height * 4) as usize {
+        let Some(bytes) = (img.width as usize)
+            .checked_mul(img.height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+        else {
+            return;
+        };
+        if (img.width, img.height) != gt.size
+            || !rect_in_bounds(img.width, img.height, [x, y, w, h])
+            || img.rgba.len() < bytes
+        {
             return;
         }
         self.queue.write_texture(
@@ -837,13 +891,17 @@ impl Renderer {
         let fitted = fit_image(img, self.device.limits().max_texture_dimension_2d);
         let img = fitted.as_ref().unwrap_or(img);
         let levels = (32 - img.width.max(img.height).leading_zeros()).max(1);
-        if old.size != (img.width, img.height) || old.texture.mip_level_count() != levels {
+        if old.size != (img.width, img.height)
+            || old.texture.mip_level_count() != levels
+            || old.mip_targets.len() != levels.saturating_sub(1) as usize
+        {
             scene.textures[id] = self.upload_rgba_mips_with(img.width, img.height, &img.rgba, MipAverage::Independent);
             return true;
         }
         self.update_texture(scene, id, img);
         if levels > 1 {
-            self.generate_mip_chain(&scene.textures[id].texture, levels, MipAverage::Independent);
+            let texture = &scene.textures[id];
+            self.generate_mip_chain(&texture.mip_targets, &texture.mip_groups, MipAverage::Independent);
         }
         false
     }

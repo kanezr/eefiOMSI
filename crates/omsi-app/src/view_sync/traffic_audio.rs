@@ -2,7 +2,6 @@
 
 use crate::traffic::Traffic;
 use glam::DVec3;
-use hashbrown::HashMap;
 use std::sync::Arc;
 
 /// A vehicle definition's `[sound_ai]` (else `[sound]`) configuration, the folder its clips
@@ -13,36 +12,65 @@ pub(crate) struct SoundPlan {
     clips: Vec<std::path::PathBuf>,
 }
 
-/// The `SoundPlan` of `def`, made the first time it is asked for (None, remembered too: the
-/// definition names no sound, or its configuration does not load).
-fn sound_plan(
-    plans: &mut HashMap<std::path::PathBuf, Option<Arc<SoundPlan>>>,
-    cfgs: &mut HashMap<std::path::PathBuf, Option<Arc<omsi_vehicle::SoundCfg>>>,
-    def: &omsi_vehicle::Vehicle,
-) -> Option<Arc<SoundPlan>> {
-    if let Some(plan) = plans.get(def.path.as_path()) {
-        return plan.clone();
+impl Traffic {
+    fn sound_cfg(&mut self, path: std::path::PathBuf) -> Option<Arc<omsi_vehicle::SoundCfg>> {
+        if let Some(cfg) = self.sound_cfgs.get(&path) {
+            return cfg.clone();
+        }
+        if let Some(job) = self.sound_cfg_jobs.remove(&path) {
+            match job.try_recv() {
+                Ok(cfg) => {
+                    self.sound_cfgs.insert(path, cfg.clone());
+                    return cfg;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    self.sound_cfg_jobs.insert(path, job);
+                    return None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.sound_cfgs.insert(path, None);
+                    return None;
+                }
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let load_path = path.clone();
+        omsi_scene::threads::background_pool().spawn(move || {
+            let cfg = omsi_vehicle::SoundCfg::load(&load_path)
+                .map_err(|e| log::warn!("{e}"))
+                .ok()
+                .map(Arc::new);
+            let _ = tx.send(cfg);
+        });
+        self.sound_cfg_jobs.insert(path, rx);
+        None
     }
-    let plan = def.sound_ai.as_ref().or(def.sound.as_ref()).and_then(|rel| {
+
+    /// Start or poll the first-use sound configuration load. Filesystem reads and parsing can
+    /// otherwise stall the first frame in which a vehicle comes within earshot.
+    fn sound_plan(&mut self, def: &omsi_vehicle::Vehicle) -> Option<Arc<SoundPlan>> {
+        let key = def.path.clone();
+        if let Some(plan) = self.sound_plans.get(&key) {
+            return plan.clone();
+        }
+        let Some(rel) = def.sound_ai.as_ref().or(def.sound.as_ref()) else {
+            self.sound_plans.insert(key, None);
+            return None;
+        };
         let path = omsi_cfg::resolve_path(def.dir(), rel);
-        let cfg = cfgs
-            .entry(path.clone())
-            .or_insert_with(|| {
-                omsi_vehicle::SoundCfg::load(&path)
-                    .map_err(|e| log::warn!("{e}"))
-                    .ok()
-                    .map(Arc::new)
-            })
-            .clone()?;
+        let Some(cfg) = self.sound_cfg(path.clone()) else {
+            if self.sound_cfgs.contains_key(&path) {
+                self.sound_plans.insert(key, None);
+            }
+            return None;
+        };
         let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let clips = omsi_audio::SoundSet::clip_paths(&cfg, &dir);
-        Some(Arc::new(SoundPlan { cfg, dir, clips }))
-    });
-    plans.insert(def.path.clone(), plan.clone());
-    plan
-}
+        let plan = Arc::new(SoundPlan { cfg, dir, clips });
+        self.sound_plans.insert(key, Some(plan.clone()));
+        Some(plan)
+    }
 
-impl Traffic {
     pub(crate) fn has_sound_set(&self, id: u64) -> bool {
         self.sounds.contains_key(&id) || self.riding_sounds.as_ref().is_some_and(|r| r.0 == id)
     }
@@ -90,17 +118,21 @@ impl Traffic {
             }
             let d = (c.position - listener).length();
             if !self.sounds.contains_key(&c.id) && d < near {
-                let plan = sound_plan(&mut self.sound_plans, &mut self.sound_cfgs, &c.ty.def);
+                let plan = self.sound_plan(&c.ty.def);
                 if let Some(plan) = plan {
                     // an articulated bus's rear section sounds too (its engine, on a pusher)
                     let mut parts = Vec::new();
+                    let mut parts_ready = true;
                     for (i, t) in c.part_types.iter().enumerate() {
-                        if let Some(part) = sound_plan(&mut self.sound_plans, &mut self.sound_cfgs, &t.def) {
+                        if let Some(part) = self.sound_plan(&t.def) {
                             parts.push((i, part));
+                        } else if !self.sound_plans.contains_key(&t.def.path) {
+                            parts_ready = false;
                         }
                     }
                     // the clips are read in the background the first time; silent till then
-                    let ready = audio.clips_ready(&plan.clips)
+                    let ready = parts_ready
+                        && audio.clips_ready(&plan.clips)
                         && parts.iter().all(|(_, part)| audio.clips_ready(&part.clips));
                     if ready {
                         let number = &c.number;
@@ -148,7 +180,11 @@ impl Traffic {
             if (*position - listener).length() > 250.0 {
                 continue;
             }
-            let own = sound_plan(&mut self.sound_plans, &mut self.sound_cfgs, &ty.def)
+            let plan = self.sound_plan(&ty.def);
+            if plan.is_none() && !self.sound_plans.contains_key(&ty.def.path) {
+                continue;
+            }
+            let own = plan
                 .is_some_and(|p| p.cfg.sounds.iter().any(|s| s.triggers.iter().any(|t| t.trim().eq_ignore_ascii_case("ev_AI_Horn"))));
             if own {
                 continue;
@@ -183,7 +219,13 @@ impl Traffic {
             }
         }
         let Some(id) = riding else { return };
-        let Some(c) = self.sim.cars.iter_mut().find(|c| c.id == id) else {
+        let Some((def, number)) = self
+            .sim
+            .cars
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| (c.vehicle.ty.def.clone(), c.vehicle.number()))
+        else {
             if let Some((_, mut s)) = self.riding_sounds.take() {
                 s.stop_all(audio);
             }
@@ -193,25 +235,22 @@ impl Traffic {
             s.stop_all(audio);
         }
         if self.riding_sounds.is_none() {
-            let def = &c.vehicle.ty.def;
             let Some(rel) = def.sound.clone().or_else(|| def.sound_ai.clone()) else { return };
             let path = omsi_cfg::resolve_path(def.dir(), &rel);
-            let Some(cfg) = self
-                .sound_cfgs
-                .entry(path.clone())
-                .or_insert_with(|| omsi_vehicle::SoundCfg::load(&path).map_err(|e| log::warn!("{e}")).ok().map(Arc::new))
-                .clone()
-            else {
+            let Some(cfg) = self.sound_cfg(path.clone()) else {
                 return;
             };
             let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
             if !audio.clips_ready(&omsi_audio::SoundSet::clip_paths(&cfg, &dir)) {
                 return;
             }
-            let mut ss = omsi_audio::SoundSet::new(audio, &cfg.chosen_for(&c.vehicle.number()), &dir);
+            let mut ss = omsi_audio::SoundSet::new(audio, &cfg.chosen_for(&number), &dir);
             ss.master = volume;
             self.riding_sounds = Some((id, ss));
         }
+        let Some(c) = self.sim.cars.iter_mut().find(|c| c.id == id) else {
+            return;
+        };
         if let Some((_, ss)) = self.riding_sounds.as_mut() {
             let fired = std::mem::take(&mut c.vehicle.host.fired_triggers);
             let fired_vars = std::mem::take(&mut c.vehicle.host.fired_trigger_vars);

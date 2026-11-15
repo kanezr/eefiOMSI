@@ -233,6 +233,7 @@ const camera = {
         { type: 'toggle', key: 'head_movement', label: 'Head moves with the bus' },
         { type: 'toggle', key: 'driverview_smooth', label: 'Camera glides between viewpoints' },
         { type: 'toggle', key: 'hands_in_cab', label: "Driver's hands in the cab view" },
+        { type: 'toggle', key: 'driver_like_omsi', label: 'Driver sits as in OMSI 2' },
         { type: 'toggle', key: 'alt_view', label: 'Right mouse button turns the view, Shift+right zooms (off: right zooms as in OMSI, the wheel button turns)' },
         { type: 'toggle', key: 'precision_zoom', label: 'Precision mouse zoom (FOV curve instead of the linear way)' },
       ],
@@ -340,6 +341,7 @@ const gameplay = {
         { type: 'toggle', key: 'trip_summary', label: 'Trip summary' },
         { type: 'section', title: 'Traffic' },
         { type: 'select', key: 'ai_unsched_factor', label: 'Random traffic', options: [['25', '25%'], ['50', '50%'], ['75', '75%'], ['100', '100%'], ['150', '150%'], ['200', '200%']] },
+        { type: 'slider', key: 'ai_reaction', label: 'AI reaction time', min: 25, max: 200, step: 5, def: 100, format: offPct100, store: snap(5) },
         { type: 'select', key: 'ai_max_scheduled', label: 'Timetable vehicles', options: [['0', 'All'], ['10', 'At most 10'], ['25', 'At most 25'], ['50', 'At most 50']] },
         { type: 'select', key: 'ai_max_parked', label: 'Parked cars', options: [['-1', 'None'], ['0', 'Every space'], ['35', 'At most 35'], ['100', 'At most 100'], ['250', 'At most 250']] },
         // (OMSI's AIMaxHumans, #2087)
@@ -352,7 +354,7 @@ const gameplay = {
       // OMSI's own options (options.cfg)
       title: 'Simulation',
       rows: [
-        { type: 'select', key: 'bouncy_suspension', label: 'Suspension feel', options: [['0', 'Standard'], ['1', 'Bouncier']], help: 'Bouncier uses the experimental wheel-mass and tyre suspension for a livelier response to bumps. Restart the game for this setting to take effect.' },
+        { type: 'select', key: 'bouncy_suspension', label: 'Improved physics (experimental)', options: [['0', 'Standard'], ['1', 'Improved physics (experimental)']], help: 'Enables experimental suspension, per-tyre grip, differential, rolling resistance, terrain paint and friction-circle physics. Restart the game for this setting to take effect.' },
         { type: 'select', key: 'maintenance', label: 'Maintenance', options: [['0', 'Infinite (no wear)'], ['1', 'Very bad'], ['2', 'Bad'], ['3', 'Normal'], ['4', 'Good']] },
         { type: 'toggle', key: 'collision_vehicles', label: 'Collisions with vehicles' },
         { type: 'toggle', key: 'collision_objects', label: 'Collisions with objects (walls, poles)' },

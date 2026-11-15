@@ -91,6 +91,8 @@ impl Renderer {
             *t = GpuTexture {
                 texture: self.white_texture.texture.clone(),
                 view: self.white_texture.view.clone(),
+                mip_targets: Vec::new(),
+                mip_groups: Vec::new(),
                 size: (1, 1),
                 bytes: 0,
                 gen: next_gen(),

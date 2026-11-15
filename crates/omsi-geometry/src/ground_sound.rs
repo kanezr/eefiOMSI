@@ -2,7 +2,57 @@
 //! map's painted ground layers over its base texture), the trees standing on it, and how
 //! built-up it is.
 
-use crate::{TileSurface, tile_size};
+use crate::{SurfaceKind, TileSurface, tile_size};
+
+/// A compact per-tile physical classification of painted ground.
+#[derive(Debug, Clone, Default)]
+pub struct GroundPaint {
+    pub size: usize,
+    pub kinds: Vec<SurfaceKind>,
+}
+
+impl GroundPaint {
+    /// Resolve base and painted layers in order. Any source alpha >= 128 within an output
+    /// cell paints that cell, so thin painted strips survive the downsample.
+    pub fn from_layers(
+        size: usize,
+        base: SurfaceKind,
+        layers: &[(SurfaceKind, usize, usize, &[u8])],
+    ) -> Self {
+        let size = size.max(1);
+        let mut kinds = vec![base; size * size];
+        for (kind, width, height, rgba) in layers {
+            if *width == 0 || *height == 0 || rgba.len() < *width * *height * 4 {
+                continue;
+            }
+            for j in 0..size {
+                let y0 = j * *height / size;
+                let y1 = ((j + 1) * *height).div_ceil(size).min(*height);
+                for i in 0..size {
+                    let x0 = i * *width / size;
+                    let x1 = ((i + 1) * *width).div_ceil(size).min(*width);
+                    let painted = (y0..y1.max(y0 + 1)).any(|y| {
+                        (x0..x1.max(x0 + 1)).any(|x| rgba[(y.min(*height - 1) * *width + x.min(*width - 1)) * 4 + 3] >= 128)
+                    });
+                    if painted {
+                        kinds[j * size + i] = *kind;
+                    }
+                }
+            }
+        }
+        Self { size, kinds }
+    }
+
+    pub fn at(&self, x: f32, y: f32) -> SurfaceKind {
+        if self.size == 0 || self.kinds.len() < self.size * self.size {
+            return SurfaceKind::Unknown;
+        }
+        let t = tile_size() as f32;
+        let i = ((x / t * self.size as f32).floor().max(0.0) as usize).min(self.size - 1);
+        let j = ((y / t * self.size as f32).floor().max(0.0) as usize).min(self.size - 1);
+        self.kinds[j * self.size + i]
+    }
+}
 
 /// The ground's surfaces and the trees of one tile.
 #[derive(Debug, Clone, Default)]
@@ -115,6 +165,31 @@ impl TileSurface {
             (None, None) => 0,
         }
     }
+
+    /// The physical class under a tyre, using the face nearest its contact height.
+    pub fn surface_kind_under(&self, x: f32, y: f32, z: f32, terrain: Option<f32>) -> crate::SurfaceKind {
+        self.surface_kind_under_with_ground_paint(x, y, z, terrain, true)
+    }
+
+    /// Like [`TileSurface::surface_kind_under`], optionally reverting bare terrain to its
+    /// pre-painted-physics classification.
+    pub fn surface_kind_under_with_ground_paint(
+        &self,
+        x: f32,
+        y: f32,
+        z: f32,
+        terrain: Option<f32>,
+        use_ground_paint: bool,
+    ) -> crate::SurfaceKind {
+        let face = self.drive.surface_sample_at(x, y, z + 0.3);
+        match (face, terrain) {
+            (Some((fz, _, kind)), Some(tz)) if (z - fz).abs() <= (z - tz).abs() + 0.15 => kind,
+            (Some((_, _, kind)), None) => kind,
+            (_, Some(_)) if use_ground_paint => self.ground_paint.at(x, y),
+            (_, Some(_)) => crate::SurfaceKind::SoftGround,
+            (None, None) => crate::SurfaceKind::Unknown,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -138,6 +213,55 @@ mod tests {
     }
 
     #[test]
+    fn thin_painted_strips_survive_ground_physics_downsampling() {
+        let mut mask = vec![0u8; 4 * 4 * 4];
+        mask[(1 * 4 + 1) * 4 + 3] = 255;
+        let paint = GroundPaint::from_layers(
+            2,
+            SurfaceKind::SoftGround,
+            &[(SurfaceKind::Paving, 4, 4, &mask)],
+        );
+        let tile = tile_size() as f32;
+        assert_eq!(paint.at(tile * 0.25, tile * 0.25), SurfaceKind::Paving);
+        assert_eq!(paint.at(tile * 0.75, tile * 0.75), SurfaceKind::SoftGround);
+    }
+
+    #[test]
+    fn painted_ground_grip_can_be_disabled_without_changing_road_classes() {
+        let tile = tile_size() as f32;
+        let paint = GroundPaint {
+            size: 1,
+            kinds: vec![SurfaceKind::Paving],
+        };
+        let mut ts = TileSurface::new(32);
+        ts.ground_paint = paint;
+        assert_eq!(
+            ts.surface_kind_under_with_ground_paint(1.0, 1.0, 0.0, Some(0.0), true),
+            SurfaceKind::Paving
+        );
+        assert_eq!(
+            ts.surface_kind_under_with_ground_paint(tile, tile, 0.0, Some(0.0), false),
+            SurfaceKind::SoftGround
+        );
+
+        let a = Vec3::new(10.0, 10.0, 0.0);
+        let (b, c, d) = (
+            Vec3::new(20.0, 10.0, 0.0),
+            Vec3::new(20.0, 20.0, 0.0),
+            Vec3::new(10.0, 20.0, 0.0),
+        );
+        for tri in [[a, b, c], [a, c, d]] {
+            assert!(ts.drive.push_kind(tri, false));
+            ts.drive.tag_last_kind(0, SurfaceKind::Concrete);
+        }
+        ts.finish();
+        assert_eq!(
+            ts.surface_kind_under_with_ground_paint(15.0, 15.0, 0.0, Some(-0.2), false),
+            SurfaceKind::Concrete
+        );
+    }
+
+    #[test]
     fn a_road_face_wins_over_the_ground_below_it() {
         let mut ts = TileSurface::new(32);
         ts.sound = GroundSound { size: 1, ids: vec![4], ..Default::default() };
@@ -146,10 +270,11 @@ mod tests {
         let (b, c, d) = (Vec3::new(20.0, 10.0, 0.2), Vec3::new(20.0, 20.0, 0.2), Vec3::new(10.0, 20.0, 0.2));
         for tri in [[a, b, c], [a, c, d]] {
             assert!(ts.drive.push_kind(tri, false));
-            ts.drive.tag_last(2);
+            ts.drive.tag_last_kind(2, SurfaceKind::Paving);
         }
         ts.finish();
         assert_eq!(ts.surface_under(15.0, 15.0, 0.2, Some(0.0)), 2, "on the road");
+        assert_eq!(ts.drive.surface_sample_at(15.0, 15.0, 0.5).unwrap().2, SurfaceKind::Paving);
         assert_eq!(ts.surface_under(30.0, 30.0, 0.0, Some(0.0)), 4, "on the grass beside it");
         // the bare ground over the plate (a buried face): the ground's
         assert_eq!(ts.surface_under(15.0, 15.0, 1.0, Some(1.0)), 4);

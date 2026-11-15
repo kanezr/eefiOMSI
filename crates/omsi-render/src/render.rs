@@ -91,7 +91,9 @@ impl ExposureLog {
                 if ev.is_finite() {
                     self.ev = ev;
                 }
-                if self.log { log::info!("exposure t={:.2}s: light model {:+.2} EV, metered picture log2 {:+.2}, correction {:+.2} EV, total {:+.2} EV", self.started.elapsed().as_secs_f32(), pre, metered, ev, pre + ev); }
+                if self.log {
+                    log::info!("exposure t={:.2}s: light model {:+.2} EV, metered picture log2 {:+.2}, correction {:+.2} EV, total {:+.2} EV", self.started.elapsed().as_secs_f32(), pre, metered, ev, pre + ev);
+                }
             }
             self.buf.unmap();
             self.waiting = false;
@@ -139,6 +141,26 @@ pub(crate) fn half_to_f32(b: u16) -> f32 {
         31 => sign * f32::INFINITY,
         _ => sign * (1.0 + m / 1024.0) * 2f32.powi(e - 15),
     }
+}
+
+pub(crate) fn resize_depth_nearest(depth: Vec<f32>, from: (u32, u32), to: (u32, u32)) -> Option<Vec<f32>> {
+    let (sw, sh) = (from.0 as usize, from.1 as usize);
+    let (tw, th) = (to.0 as usize, to.1 as usize);
+    if sw == 0 || sh == 0 || tw == 0 || th == 0 || depth.len() != sw.checked_mul(sh)? {
+        return None;
+    }
+    if from == to {
+        return Some(depth);
+    }
+    let mut resized = Vec::with_capacity(tw.checked_mul(th)?);
+    for y in 0..th {
+        let sy = (((y as f64 + 0.5) * sh as f64 / th as f64).floor() as usize).min(sh - 1);
+        for x in 0..tw {
+            let sx = (((x as f64 + 0.5) * sw as f64 / tw as f64).floor() as usize).min(sw - 1);
+            resized.push(depth[sy * sw + sx]);
+        }
+    }
+    Some(resized)
 }
 
 impl Renderer {
@@ -190,7 +212,12 @@ impl Renderer {
     /// `Self::build` again with `options`: on ANGLE on the compiler thread of its own (see
     /// `angle::compile`: on this thread's stack the D3D compiler overflowed it).
     pub(crate) fn rebuilt(&self, options: RenderOptions) -> Renderer {
-        let (device, queue, name, format) = (self.device.clone(), self.queue.clone(), self.adapter_name.clone(), self.format);
+        let (device, queue, name, format) = (
+            self.device.clone(),
+            self.queue.clone(),
+            self.adapter_name.clone(),
+            self.format,
+        );
         let build = move || Self::build(device, queue, name, format, options);
         if cfg!(windows) && gl_backend() && self.adapter_name.contains("ANGLE") {
             angle::compile(&self.device, build)
@@ -201,12 +228,21 @@ impl Renderer {
 
     /// Rebuild without the ray tracing after a GPU error while it was on (see `rt_error`).
     pub(crate) fn fall_back_without_ray_tracing(&mut self, scene: &mut Scene) {
-        log::error!("ray tracing failed on {}; Enhanced+ draws as Enhanced from now on", self.adapter_name);
-        let options = RenderOptions { ray_tracing: false, ..self.options };
+        log::error!(
+            "ray tracing failed on {}; Enhanced+ draws as Enhanced from now on",
+            self.adapter_name
+        );
+        let options = RenderOptions {
+            ray_tracing: false,
+            ..self.options
+        };
         RT_BUFFERS.store(false, std::sync::atomic::Ordering::Relaxed);
         // (the meshes' shared pages stay on, as after the multisampling fallback below)
         let mesh_pages = self.mesh_pages;
-        *self = Renderer { mesh_pages, ..self.rebuilt(options) };
+        *self = Renderer {
+            mesh_pages,
+            ..self.rebuilt(options)
+        };
         scene.dirty = true;
         scene.model_buf = None;
         scene.params_buf = None;
@@ -237,14 +273,31 @@ impl Renderer {
 
     pub fn rebuild_with(&mut self, scene: &mut Scene, options: RenderOptions) -> bool {
         let options = match ceiling() {
-            Some(c) => RenderOptions { msaa: c.msaa_for(options.msaa), ssao: options.ssao && c.ssao, shadow_size: options.shadow_size.clamp(512, c.shadow_size), ..options },
+            Some(c) => RenderOptions {
+                msaa: c.msaa_for(options.msaa),
+                ssao: options.ssao && c.ssao,
+                shadow_size: options.shadow_size.clamp(512, c.shadow_size),
+                ..options
+            },
             None => options,
         };
-        let options = if options.ray_tracing && options.msaa > 4 && !omsi_cfg::flags::OMSI_FULL_GPU.is_set() { RenderOptions { msaa: 4, ..options } } else { options };
+        let options = if options.ray_tracing
+            && options.msaa > 4
+            && !omsi_cfg::flags::OMSI_FULL_GPU.is_set()
+        {
+            RenderOptions { msaa: 4, ..options }
+        } else {
+            options
+        };
         if options == self.options {
             return false;
         }
-        log::info!("graphics rebuilt: {}x MSAA, shadow map {}, SSAO {}", options.msaa, options.shadow_size, options.ssao);
+        log::info!(
+            "graphics rebuilt: {}x MSAA, shadow map {}, SSAO {}",
+            options.msaa,
+            options.shadow_size,
+            options.ssao
+        );
         self.rebuild_in_place(scene, options);
         true
     }
@@ -254,6 +307,7 @@ impl Renderer {
         // targets alive while the new renderer is built can turn a recoverable OOM into
         // another allocation failure.
         self.targets.depth = None;
+        self.pane_depth = None;
         self.targets.msaa_targets.clear();
         self.targets.ao = None;
         self.targets.hdr_targets.clear();
@@ -262,7 +316,10 @@ impl Renderer {
         self.targets.glass_picture = None;
         self.targets.target_use.clear();
         let mesh_pages = self.mesh_pages;
-        *self = Renderer { mesh_pages, ..self.rebuilt(options) };
+        *self = Renderer {
+            mesh_pages,
+            ..self.rebuilt(options)
+        };
         scene.dirty = true;
         scene.model_buf = None;
         scene.params_buf = None;
@@ -285,7 +342,9 @@ impl Renderer {
         if self.targets.triple_targets.take().is_some() {
             self.history.triple_culling = Default::default();
         }
-        self.render_inner(scene, target, width, height, camera, lighting, true, None, None, false);
+        self.render_inner(
+            scene, target, width, height, camera, lighting, true, None, None, false,
+        );
     }
 
     /// Three independently culled and shaded physical panels, composited into a
@@ -414,7 +473,11 @@ impl Renderer {
                 // (the right panel loses its last pixel or two at the window's edge)
                 let [x, y, w, h] = v.viewport;
                 pass.set_scissor_rect(x, y, w.min(width - x), h);
-                pass.set_bind_group(0, &self.targets.triple_targets.as_ref().unwrap().1[i].1, &[]);
+                pass.set_bind_group(
+                    0,
+                    &self.targets.triple_targets.as_ref().unwrap().1[i].1,
+                    &[],
+                );
                 pass.draw(0..3, 0..1);
             }
             pass.set_scissor_rect(0, 0, width, height);
@@ -433,7 +496,10 @@ impl Renderer {
         let history = &mut self.history.triple_culling[panel];
         std::mem::swap(self.history.cull_drawn.get_mut(), &mut history.drawn);
         std::mem::swap(self.history.object_sizes.get_mut(), &mut history.sizes);
-        std::mem::swap(self.history.object_sizes_scratch.get_mut(), &mut history.scratch);
+        std::mem::swap(
+            self.history.object_sizes_scratch.get_mut(),
+            &mut history.scratch,
+        );
     }
 
     /// Render one OpenXR view using the headset's asymmetric projection matrix.
@@ -450,7 +516,18 @@ impl Renderer {
         projection: Mat4,
         second_eye: bool,
     ) {
-        self.render_inner(scene, target, width, height, camera, lighting, false, None, Some(projection), second_eye);
+        self.render_inner(
+            scene,
+            target,
+            width,
+            height,
+            camera,
+            lighting,
+            false,
+            None,
+            Some(projection),
+            second_eye,
+        );
     }
 
     /// Composite the shared game menu and a world-positioned pointer into each eye.
@@ -468,7 +545,9 @@ impl Renderer {
         cursor_transforms: [Option<Mat4>; 2],
         navigator: Option<(TextureId, [Mat4; 2])>,
     ) {
-        let Some(menu) = scene.overlays.get(menu_range) else { return };
+        let Some(menu) = scene.overlays.get(menu_range) else {
+            return;
+        };
         if menu.is_empty() && cursor_transforms.iter().all(Option::is_none) && navigator.is_none() {
             return;
         }
@@ -481,14 +560,29 @@ impl Renderer {
                 uniform[index * 4..index * 4 + 4].copy_from_slice(&corner.to_array());
             }
             uniform[16] = scene.premultiplied.contains(id) as u8 as f32;
-            let buffer = buffer_init(&self.device, &self.queue, Some("OpenXR menu rectangle"), bytemuck::cast_slice(&uniform), wgpu::BufferUsages::UNIFORM);
+            let buffer = buffer_init(
+                &self.device,
+                &self.queue,
+                Some("OpenXR menu rectangle"),
+                bytemuck::cast_slice(&uniform),
+                wgpu::BufferUsages::UNIFORM,
+            );
             let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("OpenXR menu rectangle"),
                 layout: &self.overlay_layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&texture.view) },
-                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sky.sky_sampler) },
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&texture.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sky.sky_sampler),
+                    },
                 ],
             });
             Some((buffer, group))
@@ -496,15 +590,26 @@ impl Renderer {
         let mut prepared = [Vec::new(), Vec::new()];
         for eye in 0..2 {
             if let Some((id, transforms)) = navigator.as_ref() {
-                let quad = [Vec4::new(-1.0, 1.0, 0.0, 1.0), Vec4::new(1.0, 1.0, 0.0, 1.0),
-                            Vec4::new(1.0, -1.0, 0.0, 1.0), Vec4::new(-1.0, -1.0, 0.0, 1.0)]
-                    .map(|p| transforms[eye] * p);
-                if let Some(item) = prepare(id, quad) { prepared[eye].push(item); }
+                let quad = [
+                    Vec4::new(-1.0, 1.0, 0.0, 1.0),
+                    Vec4::new(1.0, 1.0, 0.0, 1.0),
+                    Vec4::new(1.0, -1.0, 0.0, 1.0),
+                    Vec4::new(-1.0, -1.0, 0.0, 1.0),
+                ]
+                .map(|p| transforms[eye] * p);
+                if let Some(item) = prepare(id, quad) {
+                    prepared[eye].push(item);
+                }
             }
             for (index, (id, rect)) in menu.iter().enumerate() {
                 // The first rectangle dims the view. Every other rectangle is
                 // projected from the same menu plane in world space.
-                let transform = if index == 0 && rect[0] <= 0.0 && rect[1] <= 0.0 && rect[2] >= w && rect[3] >= h {
+                let transform = if index == 0
+                    && rect[0] <= 0.0
+                    && rect[1] <= 0.0
+                    && rect[2] >= w
+                    && rect[3] >= h
+                {
                     Mat4::IDENTITY
                 } else {
                     menu_transforms[eye]
@@ -519,7 +624,9 @@ impl Renderer {
                     transform * Vec4::new(x1, y1, 0.0, 1.0),
                     transform * Vec4::new(x0, y1, 0.0, 1.0),
                 ];
-                if let Some(item) = prepare(id, quad) { prepared[eye].push(item); }
+                if let Some(item) = prepare(id, quad) {
+                    prepared[eye].push(item);
+                }
             }
             if let (Some(index), Some(transform)) = (cursor_overlay, cursor_transforms[eye]) {
                 if let Some((id, rect)) = scene.overlays.get(index) {
@@ -531,10 +638,16 @@ impl Renderer {
                         transform * Vec4::new(half_x, -half_y, 0.0, 1.0),
                         transform * Vec4::new(-half_x, -half_y, 0.0, 1.0),
                     ];
-                    if let Some(item) = prepare(id, quad) { prepared[eye].push(item); }
+                    if let Some(item) = prepare(id, quad) {
+                        prepared[eye].push(item);
+                    }
                 }
                 if let Some((id, rect)) = tooltip_overlay.and_then(|i| scene.overlays.get(i)) {
-                    let pointer_width = scene.overlays.get(index).map(|(_, r)| r[2] - r[0]).unwrap_or(24.0);
+                    let pointer_width = scene
+                        .overlays
+                        .get(index)
+                        .map(|(_, r)| r[2] - r[0])
+                        .unwrap_or(24.0);
                     let left = (pointer_width * 0.5 + 8.0) * 2.0 / eye_w;
                     let right = left + (rect[2] - rect[0]) * 2.0 / eye_w;
                     let bottom = -(rect[3] - rect[1]) * 2.0 / eye_h;
@@ -544,11 +657,17 @@ impl Renderer {
                         transform * Vec4::new(right, bottom, 0.0, 1.0),
                         transform * Vec4::new(left, bottom, 0.0, 1.0),
                     ];
-                    if let Some(item) = prepare(id, quad) { prepared[eye].push(item); }
+                    if let Some(item) = prepare(id, quad) {
+                        prepared[eye].push(item);
+                    }
                 }
             }
         }
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("OpenXR menu") });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("OpenXR menu"),
+            });
         for (eye, target) in eyes.iter().enumerate() {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("OpenXR menu"),
@@ -556,7 +675,10 @@ impl Renderer {
                     view: target,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -662,7 +784,17 @@ impl Renderer {
         };
         // OMSI_PROFILE: time per stage, the mirrors apart from the window's picture
         let mut clock = StageClock::new(with_overlays);
-        let args = FrameArgs { target, width, height, camera, lighting, with_overlays, exclude_texture, projection, second_eye };
+        let args = FrameArgs {
+            target,
+            width,
+            height,
+            camera,
+            lighting,
+            with_overlays,
+            exclude_texture,
+            projection,
+            second_eye,
+        };
         let f = self.begin_frame(scene, env, args, &mut clock);
         let sh = self.plan_shadow_cache(scene, &f);
         let (vp_mat, cu, probe_redraw) = self.frame_uniforms(scene, &f, &sh, &mut clock);
@@ -683,6 +815,7 @@ impl Renderer {
         }
         plan.list.extend_from_slice(&shadow_list);
         self.count_draws(scene, with_overlays, visible.len(), &plan, &shadow_batches);
+        self.history.cull_visible = visible;
         clock.stage(self, "items", "mirror.items");
         plan.split_rain(scene, f.glass_on);
         self.upload_draw_list(scene, &plan.list);
@@ -713,29 +846,59 @@ impl Renderer {
         self.encode_shadow_maps(&mut enc.shadow, scene, &sh, &shadow_batches, &mut timers);
         self.encode_lamp_shadows(&mut enc.shadow, scene, &f, &shadow_batches, &mut timers);
         self.encode_precip_map(&mut enc.shadow, scene, &sh, &shadow_batches, &mut timers);
-        let prepass_batches = if self.shares_prepass_depth(&f, &plan) { plan.prefill_batches() } else { &plan.prepass_batches };
+        let prepass_batches = if self.shares_prepass_depth(&f, &plan) {
+            plan.prefill_batches()
+        } else {
+            &plan.prepass_batches
+        };
         self.encode_depth_prepass(&mut enc.prepass, scene, &f, prepass_batches, &mut timers);
         if f.enhanced && f.lead_view && f.prepass_on && self.device_lost().is_none() {
             if let (Some(s), Some(ao)) = (self.tone.lamp_sight.as_mut(), self.targets.ao.as_ref()) {
-                s.encode(&self.device, &self.queue, &mut enc.prepass, &ao.depth_view, vp_mat, f.ro, f.cam_rel);
+                s.encode(
+                    &self.device,
+                    &self.queue,
+                    &mut enc.prepass,
+                    &ao.depth_view,
+                    vp_mat,
+                    f.ro,
+                    f.cam_rel,
+                );
             }
         }
         if f.rt_frame {
-            self.encode_ray_tracing(&mut enc.prepass, scene, timers.set.as_ref(), &mut timers.timed);
+            self.encode_ray_tracing(
+                &mut enc.prepass,
+                scene,
+                timers.set.as_ref(),
+                &mut timers.timed,
+            );
         }
         self.encode_sky_cube(&mut enc.prepass, scene, &f, probe_redraw, &mut timers);
         self.encode_probe(&mut enc.prepass, scene, probe_redraw, &mut timers);
-        let mut main_parts = self.encode_main_pass(&mut enc.picture, scene, &f, &plan, &main_bundles, &mut timers);
+        let mut main_parts = self.encode_main_pass(
+            &mut enc.picture,
+            scene,
+            &f,
+            &plan,
+            &main_bundles,
+            &mut timers,
+        );
         // Turning the recorded passes into Metal commands is the costliest CPU step of a
         // frame (wgpu checks every draw): the shadow maps, the prepass, the main pass and
         // the passes after it are finished side by side on helper threads and this one.
         let big =
-            shadow_batches.iter().map(|b| b.len()).sum::<usize>() + plan.prepass_batches.len() > 64 || !main_parts.is_empty();
+            shadow_batches.iter().map(|b| b.len()).sum::<usize>() + plan.prepass_batches.len() > 64
+                || !main_parts.is_empty();
         if big && !f.env.no_post_split {
-            let rest = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("after the main pass") });
+            let rest = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("after the main pass"),
+                });
             main_parts.push(std::mem::replace(&mut enc.picture, rest));
         }
-        let puddles_on = self.encode_scene_reflections(&mut enc.picture, scene, &f, &plan, &cu, &mut timers);
+        let puddles_on =
+            self.encode_scene_reflections(&mut enc.picture, scene, &f, &plan, &cu, &mut timers);
         self.encode_fog_lamps(&mut enc.picture, scene, &f, vp_mat, puddles_on, &mut timers);
         self.encode_rain_film(&mut enc.picture, scene, &f, &plan.rain_batches, puddles_on);
         self.encode_classic_present(&mut enc.picture, scene, &f, puddles_on);
@@ -773,9 +936,13 @@ impl Renderer {
         let px = self.render_image(scene, width, height, camera, lighting, None);
         self.depth_readback = false;
         let px = px?;
-        let tex = self.targets.ao.as_ref().filter(|a| a.size == (width, height)).map(|a| a.depth_tex.clone());
+        let tex = self
+            .targets
+            .ao
+            .as_ref()
+            .map(|a| (a.depth_tex.clone(), a.size));
         let depth = match tex {
-            Some(t) => {
+            Some((t, source_size)) => {
                 // (a backend that cannot copy depth back: the picture without it)
                 match self.read_texture(&t, wgpu::TextureAspect::DepthOnly) {
                     Ok(raw) => {
@@ -784,10 +951,17 @@ impl Renderer {
                         // the view
                         let (near, far) = (camera.near as f64, camera.far as f64);
                         let r = near / (far - near);
-                        Some(raw.chunks_exact(4).take((width * height) as usize).map(|b| {
-                            let d = f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64;
-                            (r * far / (d + r)).min(far) as f32
-                        }).collect())
+                        let source_count =
+                            (source_size.0 as usize).saturating_mul(source_size.1 as usize);
+                        let source: Vec<f32> =
+                            raw.chunks_exact(4)
+                                .take(source_count)
+                                .map(|b| {
+                                    let d = f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64;
+                                    (r * far / (d + r)).min(far) as f32
+                                })
+                                .collect();
+                        resize_depth_nearest(source, source_size, (width, height))
                     }
                     Err(e) => {
                         log::warn!("the depth could not be read back: {e}");
@@ -860,9 +1034,17 @@ impl Renderer {
         Ok(out)
     }
 
-    pub(crate) fn read_texture(&self, texture: &wgpu::Texture, aspect: wgpu::TextureAspect) -> Result<Vec<u8>> {
+    pub(crate) fn read_texture(
+        &self,
+        texture: &wgpu::Texture,
+        aspect: wgpu::TextureAspect,
+    ) -> Result<Vec<u8>> {
         let (width, height) = (texture.width(), texture.height());
-        let row_bytes = width * texture.format().block_copy_size(Some(aspect)).context("unsupported readback format")?;
+        let row_bytes = width
+            * texture
+                .format()
+                .block_copy_size(Some(aspect))
+                .context("unsupported readback format")?;
         let bpr = row_bytes.div_ceil(256) * 256;
         let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),

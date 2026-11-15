@@ -18,12 +18,15 @@ impl App {
         let paint = p.vehicle.host.paint_scheme.flatten().and_then(|i| p.vehicle.ty.paint_schemes.get(i)).map(|s| s.name.clone());
         // (the depot file by its file name, as `find_hof` looks for it)
         let hof = p.vehicle.host.hof.as_ref().and_then(|h| h.path.file_stem().map(|s| s.to_string_lossy().to_string()).or_else(|| Some(h.name.clone())));
+        let identity = (p.vehicle.number(), p.vehicle.str_var("ident"));
         let idle = self.menus.pending_placement.is_none();
         self.menus.swap_pending = true;
         self.place_vehicle(&bus, paint, hof);
         // (said when it is in place, see `placement`)
-        if let Some(p) = self.menus.pending_placement.as_mut().filter(|_| idle) {
-            p.reload = true;
+        if let Some(pending) = self.menus.pending_placement.as_mut().filter(|_| idle) {
+            pending.args.number = Some(identity.0);
+            pending.args.plate = Some(identity.1);
+            pending.reload = true;
         }
     }
 
@@ -61,24 +64,7 @@ impl App {
                 (at.x, at.y, p.vehicle.heading)
             }
         };
-        let one = Args {
-            bus: Some(bus.clone()),
-            spawn: Some(format!("{x},{y},{heading}")),
-            // a bus placed now is a new one, also in a session started from a situation
-            // (a full tank if wanted, none of the situation's script pictures)
-            situation: None,
-            situation_vars: Vec::new(),
-            situation_strvars: Vec::new(),
-            situation_odometer_km: None,
-            situation_others: Vec::new(),
-            line: None,
-            tour: None,
-            trip: None,
-            autostart: false,
-            paint,
-            hof: hof.or(self.args.hof.clone()),
-            ..self.args.clone()
-        };
+        let one = placement_args(&self.args, bus.clone(), format!("{x},{y},{heading}"), paint, hof);
         let prefetch = w.placement_prefetch(r);
         let worker_args = one.clone();
         let (tx, receiver) = std::sync::mpsc::channel();
@@ -150,6 +136,87 @@ impl App {
         crate::admin::teleport(self, pos, heading);
         self.service_msg = Some(("The bus stands where the map was clicked".into(), 3.0));
         self.service_event("teleport", "player", None);
+    }
+}
+
+fn placement_args(
+    args: &Args,
+    bus: String,
+    spawn: String,
+    paint: Option<String>,
+    hof: Option<String>,
+) -> Args {
+    Args {
+        bus: Some(bus),
+        spawn: Some(spawn),
+        number: None,
+        plate: None,
+        // A placed bus is a new instance, including when the session began from a situation.
+        situation: None,
+        situation_vars: Vec::new(),
+        situation_strvars: Vec::new(),
+        situation_odometer_km: None,
+        situation_others: Vec::new(),
+        line: None,
+        tour: None,
+        trip: None,
+        autostart: false,
+        paint,
+        hof: hof.or(args.hof.clone()),
+        ..args.clone()
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn fresh_placement_does_not_inherit_identity_or_situation_state() {
+        let mut args = Args::parse_from([
+            "openomsi",
+            "--bus",
+            "Vehicles/old.bus",
+            "--number",
+            "4711",
+            "--plate",
+            "OLD 123",
+            "--hof",
+            "old-depot",
+        ]);
+        args.situation = Some("saved.osn".into());
+        args.situation_strvars = vec![
+            ("number".into(), "9999".into()),
+            ("ident".into(), "SAVED 123".into()),
+        ];
+        args.situation_vars = vec![("engine".into(), 1.0)];
+        args.situation_odometer_km = Some(1234.0);
+
+        for bus in ["Vehicles/new.bus", "Vehicles/old.bus"] {
+            let placed = placement_args(
+                &args,
+                bus.into(),
+                "1,2,90".into(),
+                Some("new-paint".into()),
+                Some("new-hof".into()),
+            );
+            assert_eq!(placed.number, None);
+            assert_eq!(placed.plate, None);
+            assert!(!placed.is_resuming());
+            assert!(placed.situation_strvars.is_empty());
+            assert!(placed.situation_vars.is_empty());
+            assert_eq!(placed.situation_odometer_km, None);
+            assert_eq!(placed.bus.as_deref(), Some(bus));
+            assert_eq!(placed.spawn.as_deref(), Some("1,2,90"));
+            assert_eq!(placed.paint.as_deref(), Some("new-paint"));
+            assert_eq!(placed.hof.as_deref(), Some("new-hof"));
+        }
+        let placed = placement_args(&args, "Vehicles/new.bus".into(), "1,2,90".into(), None, None);
+        assert_eq!(placed.hof.as_deref(), Some("old-depot"));
+
+        assert_eq!(args.number.as_deref(), Some("4711"));
+        assert_eq!(args.plate.as_deref(), Some("OLD 123"));
     }
 }
 

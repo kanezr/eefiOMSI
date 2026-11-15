@@ -26,23 +26,7 @@
 use glam::{DVec3, Mat4, Vec3};
 use omsi_render::SmokeParticle;
 
-/// How far the puddle threshold drops with the wetness (`PUDDLE_SPREAD` in `enhanced.wgsl`
-/// and `shader.wgsl`): a road wet through has standing water on about a fifth of it, the
-/// rest is wet asphalt.
-const PUDDLE_SPREAD: f32 = 0.37;
-/// The procedural patterns repeat every `PATTERN_PERIOD` metres (`shader.wgsl`).
-const PATTERN_PERIOD: f64 = 1000.0;
-
-/// The water on the road at a point, as the renderer draws it there.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct Water {
-    /// The puddle mask (0 none .. 1 standing water), the shader's `road_puddle_coverage`.
-    pub puddle: f32,
-    /// How deep into the puddle the point lies: 0 at its rim .. 1 well inside it.
-    pub depth: f32,
-    /// How wet the road is there (0 dry or no `[moisture]` road .. 1 wet through).
-    pub wet: f32,
-}
+pub use omsi_sim::world_data::PuddleWater as Water;
 
 /// The water at world (x, y): `wet_road` is the moisture-weighted wetness there (global
 /// wetness where the surface is a `[moisture]` road, 0 elsewhere - a puddle never lies on
@@ -50,48 +34,7 @@ pub struct Water {
 /// the same two octaves of the same integer-hashed value noise over the same map-space
 /// coordinate - so a tyre throws water exactly where the reflection shows it.
 pub fn water_at(x: f64, y: f64, wet_road: f32) -> Water {
-    if wet_road <= 0.0 {
-        return Water::default();
-    }
-    // `world_pattern_xy`: the map coordinate, which the shader takes modulo the pattern's
-    // period (a whole number of cells of every octave)
-    let (px, py) = (x.rem_euclid(PATTERN_PERIOD) as f32, y.rem_euclid(PATTERN_PERIOD) as f32);
-    let pn = vnoise_f(px, py, 0.35, 17.3, -9.1) * 0.6 + vnoise_f(px, py, 1.6, -4.0, 8.0) * 0.3 + vnoise_f(px, py, 5.0, 2.7, 11.3) * 0.1;
-    let t = 1.0 - wet_road * PUDDLE_SPREAD;
-    Water { puddle: smoothstep(t - 0.02, t + 0.02, pn), depth: ((pn - t) / 0.15).clamp(0.0, 1.0), wet: wet_road }
-}
-
-/// `hash_cell` of `shader.wgsl`: the lattice cell as an exact integer modulo the lattice's
-/// cells per period, through two rounds of a PCG-style mix.
-fn hash_cell(cx: f32, cy: f32, cells: f32) -> f32 {
-    let wx = cx - cells * (cx / cells).floor();
-    let wy = cy - cells * (cy / cells).floor();
-    const M: u32 = 1664525;
-    let mut x = (wx as u32).wrapping_mul(M).wrapping_add(1013904223);
-    let mut y = (wy as u32).wrapping_mul(M).wrapping_add(1013904223);
-    x = x.wrapping_add(y.wrapping_mul(M));
-    y = y.wrapping_add(x.wrapping_mul(M));
-    x ^= x >> 16;
-    y ^= y >> 16;
-    x = x.wrapping_add(y.wrapping_mul(M));
-    x ^= x >> 16;
-    (x >> 8) as f32 / 16777215.0
-}
-
-/// `vnoise_f` of `shader.wgsl`: `freq` lattice cells a metre, shifted by the offset.
-fn vnoise_f(px: f32, py: f32, freq: f32, ox: f32, oy: f32) -> f32 {
-    let (qx, qy) = (px * freq + ox, py * freq + oy);
-    let cells = (PATTERN_PERIOD as f32 * freq).round();
-    let (ix, iy) = (qx.floor(), qy.floor());
-    let (fx, fy) = (qx - ix, qy - iy);
-    let (ux, uy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
-    let a = hash_cell(ix, iy, cells);
-    let b = hash_cell(ix + 1.0, iy, cells);
-    let c = hash_cell(ix, iy + 1.0, cells);
-    let d = hash_cell(ix + 1.0, iy + 1.0, cells);
-    let ab = a + (b - a) * ux;
-    let cd = c + (d - c) * ux;
-    ab + (cd - ab) * uy
+    omsi_sim::world_data::puddle_water_at(x, y, wet_road)
 }
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
@@ -746,9 +689,9 @@ mod tests {
             let b = water_at(x + 1000.0, y - 3000.0, 1.0);
             assert!((a.puddle - b.puddle).abs() < 1e-3 && (a.depth - b.depth).abs() < 1e-3, "{x}, {y}: {a:?} vs {b:?}");
         }
-        // and the hash is the shader's integer one: cells a period apart are the same cell
-        assert_eq!(hash_cell(3.0, 5.0, 220.0), hash_cell(223.0, -215.0, 220.0));
-        assert!((0.0..=1.0).contains(&hash_cell(17.0, 4.0, 900.0)));
+        let water = water_at(91.4, 28.7, 1.0);
+        assert!((0.0..=1.0).contains(&water.puddle));
+        assert!((0.0..=1.0).contains(&water.depth));
     }
 
     #[test]

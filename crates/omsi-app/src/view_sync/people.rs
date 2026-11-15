@@ -187,6 +187,7 @@ pub(crate) fn apply_people(h: &mut Humans, view: &mut PeopleView, world: &World,
 impl Humans {
     /// Bring the renderer up to what the simulation did (see [`BodyOp`]).
     pub(crate) fn show_bodies(&mut self, view: &mut PeopleView, world: &World, renderer: &Renderer, scene: &mut Scene) {
+        view.warm.map_figures(&self.sim.types, &world.root, renderer);
         self.replay_bodies(view, Some(world), renderer, scene);
     }
 
@@ -317,6 +318,7 @@ impl PeopleView {
                     let found_path = found.clone();
                     // (read ahead on a worker for an avatar, see `avatars::Warm`)
                     let mut pre = found.as_ref().and_then(|p| self.warm.prepared.remove(p));
+                    let prepared_texture = pre.as_mut().and_then(|p| p.2.take());
                     let tex = match found {
                         Some(path) => match self.gpu_textures.get(&path) {
                             Some(t) => *t,
@@ -325,7 +327,13 @@ impl PeopleView {
                                     Some(d) => Some(d),
                                     None => world.textures.get_gpu_fast(&path).map(|(img, _)| img),
                                 };
-                                let t = data.map(|img| renderer.add_texture_data(scene, &img));
+                                let t = match (prepared_texture, data) {
+                                    (Some(texture), _) => {
+                                        Some(renderer.add_prepared_texture(scene, texture))
+                                    }
+                                    (None, Some(img)) => Some(renderer.add_texture_data(scene, &img)),
+                                    (None, None) => None,
+                                };
                                 world.textures.release(&path);
                                 self.gpu_textures.insert(path, t);
                                 t
@@ -342,7 +350,7 @@ impl PeopleView {
                     if let (Some(t), Some(path), true) = (tex, found_path.as_ref(), ty.face.is_some()) {
                         if self.pbr_done.insert(path.clone()) {
                             let set = match pre {
-                                Some((_, set)) => set,
+                                Some((_, set, _)) => set,
                                 None => omsi_texture::pbr::load_set(&omsi_texture::pbr::find(path)),
                             };
                             if let Some(set) = set {
@@ -360,6 +368,10 @@ impl PeopleView {
             let id = renderer.add_mesh(scene, &hm.data);
             let inst = renderer.add_instance(scene, id, position, Mat4::IDENTITY, mats);
             meshes.push((id, inst));
+        }
+        let radius = person_radius(ty);
+        for &(_, inst) in &meshes {
+            renderer.set_object_culling(scene, inst, radius, ty.model.detail_factor, ty.model.no_distance_check);
         }
         meshes
     }
@@ -433,6 +445,7 @@ impl Humans {
     /// who went since first, then what the posing reads of them is taken into the view's
     /// `PeopleFrame` and posed from it ([`PeopleView::pose`]).
     pub(super) fn sync(&mut self, view: &mut PeopleView, world: &World, renderer: &Renderer, scene: &mut Scene, camera: DVec3) {
+        view.warm.map_figures(&self.sim.types, &world.root, renderer);
         self.catch_up_bodies(view, renderer, scene);
         self.sim.snapshot_into(&mut view.frame);
         view.pose(world, renderer, scene, camera);
@@ -849,4 +862,8 @@ impl PeopleView {
         self.pose_stats.2 += started.elapsed().as_secs_f64() * 1000.0;
         self.pose_stats.3 += upload.elapsed().as_secs_f64() * 1000.0;
     }
+}
+
+fn person_radius(ty: &HumanType) -> f32 {
+    ty.meshes.iter().flat_map(|m| &m.data.positions).map(|p| p.length()).fold(0.0f32, f32::max)
 }

@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn assembled_shaders_match_their_fingerprints() {
         let (scene, enhanced) = (super::SCENE.replace("\r\n", "\n"), super::ENHANCED.replace("\r\n", "\n"));
-        assert_eq!((scene.len(), fnv1a(&scene)), (124_586, 0x74bf_122b_26ac_9da3));
-        assert_eq!((enhanced.len(), fnv1a(&enhanced)), (88_274, 0xfb91_a09b_8be5_10c9));
+        assert_eq!((scene.len(), fnv1a(&scene)), (124_885, 0x13eb_88d6_06b3_1d29));
+        assert_eq!((enhanced.len(), fnv1a(&enhanced)), (88_369, 0x2742_7187_4248_4fc0));
     }
 }

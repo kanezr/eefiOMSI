@@ -31,7 +31,7 @@ include!("passenger_animation_tests.rs");
 fn the_games_options_survive_a_save() {
     // what the pause menu's Options change, read back as they were set
     let mut v = settings_from_text(None);
-    for (k, x) in [("steer_look", json!(true)), ("discord_status", json!(false)), ("voice_chat", json!(false)), ("launcher_rest", json!(false)), ("camera_collision", json!(false)), ("brake_hold", json!(false)), ("auto_clutch", json!(false)), ("momentary_gears", json!(true)), ("ff_enabled", json!(false)), ("head_tracking", json!(true)), ("collision_objects", json!(false)), ("led_mips", json!(2.5)), ("led_glow", json!(11)), ("look_sens", json!(0.5)), ("look_smoothing_ms", json!(120.0)), ("blinker_cancel", json!(false)), ("pedal_brake", json!(1.5)), ("mouse_pedal_strength", json!(1.75)), ("head_idle", json!(0.35)), ("head_idle_pace", json!(1.5)), ("seat_y", json!(-0.1)), ("seat_pitch_deg", json!(8.0)), ("bouncy_suspension", json!(true))] {
+    for (k, x) in [("steer_look", json!(true)), ("discord_status", json!(false)), ("voice_chat", json!(false)), ("launcher_rest", json!(false)), ("camera_collision", json!(false)), ("brake_hold", json!(false)), ("auto_clutch", json!(false)), ("momentary_gears", json!(true)), ("ff_enabled", json!(false)), ("head_tracking", json!(true)), ("collision_objects", json!(false)), ("led_mips", json!(2.5)), ("led_glow", json!(11)), ("look_sens", json!(0.5)), ("look_smoothing_ms", json!(120.0)), ("blinker_cancel", json!(false)), ("pedal_brake", json!(1.5)), ("mouse_pedal_strength", json!(1.75)), ("head_idle", json!(0.35)), ("head_idle_pace", json!(1.5)), ("seat_y", json!(-0.1)), ("seat_pitch_deg", json!(8.0)), ("bouncy_suspension", json!(true)), ("driver_like_omsi", json!(true))] {
         v[k] = x;
     }
     let back = settings_from_text(Some(&settings_to_text(&v, None)));
@@ -43,7 +43,7 @@ fn the_games_options_survive_a_save() {
     assert_eq!(settings_from_text(Some(&settings_to_text(&r, None)))["resolution"], json!("1280x800"));
     assert_eq!(resolution_text("1920 x 1080"), "1920x1080");
     assert_eq!(resolution_text("huge"), "auto");
-    for k in ["steer_look", "discord_status", "voice_chat", "launcher_rest", "camera_collision", "brake_hold", "auto_clutch", "momentary_gears", "ff_enabled", "head_tracking", "collision_objects", "led_mips", "led_glow", "look_sens", "look_smoothing_ms", "blinker_cancel", "pedal_brake", "mouse_pedal_strength", "head_idle", "head_idle_pace", "seat_y", "seat_pitch_deg", "bouncy_suspension"] {
+    for k in ["steer_look", "discord_status", "voice_chat", "launcher_rest", "camera_collision", "brake_hold", "auto_clutch", "momentary_gears", "ff_enabled", "head_tracking", "collision_objects", "led_mips", "led_glow", "look_sens", "look_smoothing_ms", "blinker_cancel", "pedal_brake", "mouse_pedal_strength", "head_idle", "head_idle_pace", "seat_y", "seat_pitch_deg", "bouncy_suspension", "driver_like_omsi"] {
         assert_eq!(back[k], v[k], "{k}");
     }
     assert!(settings_from_text(None)["discord_status"].as_bool().unwrap());
@@ -412,17 +412,18 @@ fn settings_defaults_and_automatic_values() {
     assert!(text.contains("\nview_distance=900\n") && text.contains("\nvideo_memory=1500\n"), "{text}");
 }
 
-/// Dates fitted to a map's year span: moved to the nearest allowed year keeping the day,
-/// 29 February to the 28th in a year without it; inside the span, with no span, or not a
-/// date: unchanged. And the spans `[years]` gives.
+/// Dates before a map's first allowed year are moved into it, with 29 February changed to
+/// the 28th if needed. Later years are kept even when beyond the map's declared end year.
 #[test]
 fn dates_are_fitted_to_the_maps_year_span() {
     let nineties = Some((1991, 1999));
-    for (date, fitted) in [("1996-07-04", "1996-07-04"), ("2031-03-15", "1999-03-15"), ("1960-12-01", "1991-12-01"), ("1999-12-31", "1999-12-31")] {
+    for (date, fitted) in [("1996-07-04", "1996-07-04"), ("2031-03-15", "2031-03-15"), ("1960-12-01", "1991-12-01"), ("1999-12-31", "1999-12-31")] {
         assert_eq!(fit_date_to_years(date, nineties), fitted);
     }
-    assert_eq!(fit_date_to_years("2028-02-29", Some((2001, 2003))), "2003-02-28");
-    assert_eq!(fit_date_to_years("2028-02-29", Some((1979, 1980))), "1980-02-29");
+    assert_eq!(fit_date_to_years("2028-02-29", Some((2001, 2003))), "2028-02-29");
+    assert_eq!(fit_date_to_years("2014-11-08", Some((1989, 2014))), "2014-11-08");
+    assert_eq!(fit_date_to_years("2026-11-08", Some((1989, 2014))), "2026-11-08");
+    assert_eq!(fit_date_to_years("2028-02-29", Some((1979, 1980))), "2028-02-29");
     assert_eq!(fit_date_to_years("1950-06-30", Some((1972, i32::MAX))), "1972-06-30");
     assert_eq!(fit_date_to_years("2031-03-15", None), "2031-03-15");
     assert_eq!(fit_date_to_years("next tuesday", nineties), "next tuesday");

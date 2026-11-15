@@ -84,6 +84,7 @@ impl World {
         let (mut ts, hole_rims, wheel_meshes) = self.tile_surface(p, staged, layout, debug_raster);
         // (before the paint is cut: under a road the ground's layer is never asked for)
         ts.sound = self.ground_sound(p, staged.get(&key).map(|q| q.as_ref()), &ts.drive);
+        ts.ground_paint = self.ground_paint(p);
         if omsi_cfg::flags::OMSI_DEBUG_SURFACES.is_set() {
             let faces: Vec<String> = ts.drive.surface_examples().iter().map(|(id, n, m)| format!("{id}: {n} faces e.g. ({:.0}, {:.0}, {:.1})", x0 + m.x as f64, y0 + m.y as f64, m.z)).collect();
             log::info!("tile ({tx}, {ty}): wheel faces by surface {}", faces.join(", "));
@@ -241,6 +242,10 @@ impl World {
                 }
                 for h in &ot.holes {
                     if !outside(&mesh_bounds(h, &pose.rot, pose.pos)) {
+                        // (a stray junction left at height zero dug a 30 m pit: Spandau, tile 2382/11287)
+                        if hole_is_buried(h, &pose.rot, pose.pos, &|x, y| Self::base_ground(&src, x, y)) {
+                            continue;
+                        }
                         ts.rasterize_hole(h, &pose.rot, pose.pos, tx, ty);
                         // and cut exactly along its rim, as along a spline's outline:
                         // by texel alone the ground stood a metre into the road at
@@ -302,13 +307,14 @@ impl World {
                         let dirs: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
                         let maps: Vec<_> = ot.meshes.get(k).map(|m| m.1.iter().map(|m| surf_map(&m.texture, &dirs)).collect()).unwrap_or_default();
                         let ids: Vec<u8> = ot.meshes.get(k).map(|m| m.1.iter().map(|m| surface_id(&m.texture, &dirs)).collect()).unwrap_or_default();
+                        let kinds: Vec<_> = ot.meshes.get(k).map(|m| m.1.iter().map(|m| surface_kind(&m.texture, &dirs)).collect()).unwrap_or_default();
                         ts.add_drive_mesh_surf(
                             mesh,
                             &pose.rot,
                             pose.pos,
                             tx,
                             ty,
-                            omsi_geometry::SurfFaces::tagged(mesh, &maps, &ids).as_ref(),
+                            omsi_geometry::SurfFaces::tagged_kinds(mesh, &maps, &ids, &kinds).as_ref(),
                         );
                         wheel_meshes += 1;
                     }
@@ -458,6 +464,21 @@ impl World {
             log::info!("tile ({}, {}): ground surfaces {}; {} trees, {} objects; for the ambience {} buildings, {} known objects, {} lines, {} water cells (water {:?})", p.tx, p.ty, seen.join(", "), g.trees.len(), g.objects, g.buildings.len(), g.spots.len(), g.lines.len(), g.water.len(), p.water);
         }
         g
+    }
+
+    fn ground_paint(&self, p: &Prepared) -> omsi_geometry::GroundPaint {
+        let root = [self.root.as_path()];
+        let kinds: Vec<_> = self.global.ground_textures.iter()
+            .map(|g| surface_kind(&g.texture, &root))
+            .collect();
+        let base = kinds.first().copied().unwrap_or(omsi_geometry::SurfaceKind::SoftGround);
+        let layers: Vec<_> = p.paint_masks.iter().filter_map(|(layer, img)| Some((
+            *kinds.get(*layer)?,
+            img.width as usize,
+            img.height as usize,
+            img.rgba.as_slice(),
+        ))).collect();
+        omsi_geometry::GroundPaint::from_layers(128, base, &layers)
     }
 }
 
@@ -614,3 +635,60 @@ const BUILDING_HEIGHT: f32 = 4.0;
 const BUILDING_WIDTH: f32 = 4.0;
 /// Cells per tile edge where the ambience looks for water (some 19 m on a Berlin tile).
 const WATER_CELLS: usize = 16;
+/// How far (m) under the ground a whole `[terrainhole]` cutter must lie to cut nothing.
+const BURIED_HOLE: f64 = 10.0;
+
+/// Whether the cutter lies wholly `BURIED_HOLE` under the ground (never where the ground is unknown).
+fn hole_is_buried(
+    hole: &MeshData,
+    rot: &Mat4,
+    pos: DVec3,
+    ground_at: &dyn Fn(f64, f64) -> Option<f64>,
+) -> bool {
+    if hole.positions.is_empty() {
+        return false;
+    }
+    let (mut top, mut ground) = (f64::NEG_INFINITY, f64::INFINITY);
+    for v in &hole.positions {
+        let w = rot.transform_point3(*v).as_dvec3() + pos;
+        let Some(g) = ground_at(w.x, w.y) else { return false };
+        top = top.max(w.z);
+        ground = ground.min(g);
+    }
+    top + BURIED_HOLE < ground
+}
+
+#[cfg(test)]
+mod buried_hole_tests {
+    use super::*;
+
+    fn square(z: f32) -> MeshData {
+        MeshData {
+            positions: vec![
+                glam::Vec3::new(-5.0, -5.0, z),
+                glam::Vec3::new(5.0, -5.0, z),
+                glam::Vec3::new(5.0, 5.0, z),
+                glam::Vec3::new(-5.0, 5.0, z),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_cutter_thirty_metres_down_is_buried_and_a_shallow_one_is_not() {
+        let ground = |_: f64, _: f64| Some(30.0);
+        let at = |z: f64| DVec3::new(100.0, 100.0, z);
+        assert!(hole_is_buried(&square(0.0), &Mat4::IDENTITY, at(0.0), &ground));
+        assert!(!hole_is_buried(&square(0.0), &Mat4::IDENTITY, at(25.0), &ground));
+        assert!(!hole_is_buried(&square(0.0), &Mat4::IDENTITY, at(30.0), &ground));
+        let mut slope = square(0.0);
+        slope.positions[0].z = 30.0;
+        assert!(!hole_is_buried(&slope, &Mat4::IDENTITY, at(0.0), &ground));
+    }
+
+    #[test]
+    fn a_cutter_where_the_ground_is_not_known_is_not_taken_for_buried() {
+        let nowhere = |_: f64, _: f64| None;
+        assert!(!hole_is_buried(&square(0.0), &Mat4::IDENTITY, DVec3::new(0.0, 0.0, -50.0), &nowhere));
+    }
+}

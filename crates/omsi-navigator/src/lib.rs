@@ -18,7 +18,7 @@
 //!   distance and whether the bus is early or late; the speed limit sign and signals ahead
 //!   on the map.
 //!
-//! Everything is drawn with `omsi-ui` into a texture of its own (4x MSAA) that the game
+//! Everything is drawn with `omsi-ui` into a single-sample texture that the game
 //! shows as a premultiplied overlay. Roads are built once per area and kept on the GPU;
 //! their width is in metres near the camera and in pixels far away, so zooming rebuilds
 //! nothing.
@@ -493,9 +493,9 @@ pub fn placed_at(corner: &str) -> Option<[f32; 2]> {
     (x.is_finite() && y.is_finite()).then(|| [x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)])
 }
 
-/// The GPS is a separate render texture composed after the scene's post AA.
-fn map_samples(format: wgpu::TextureFormat) -> u32 {
-    if format.guaranteed_format_features(wgpu::Features::empty()).flags.sample_count_supported(4) { 4 } else { 1 }
+/// The GPS is a separate single-sample render texture composed after the scene's post AA.
+fn map_samples() -> u32 {
+    1
 }
 
 impl Navigator {
@@ -1118,6 +1118,9 @@ impl Navigator {
 
     pub fn frame(&mut self, renderer: &Renderer, scene: &mut Scene, f: &NavFrame) {
         self.panel_overlay = None;
+        if !self.city.open {
+            self.release_city_resources(renderer, scene);
+        }
         // (with the navigator off the route is still followed for OMSI 2's arrows)
         if !self.enabled && !self.city.open && !self.arrows && self.shown < 0.01 {
             return;
@@ -1234,7 +1237,7 @@ impl Navigator {
         let (x0, y0) = self.panel_origin((sw, sh), (pw, ph), f.touch, f.info_rect, f.touch_gap);
 
         if self.gpu.is_none() {
-            self.gpu = Some(Gpu::with_depth(&renderer.device, renderer.format(), map_samples(renderer.format()), self.atlas.size));
+            self.gpu = Some(Gpu::with_depth(&renderer.device, renderer.format(), map_samples(), self.atlas.size));
         }
         let resized = self.target.map(|t| (t.1, t.2) != (w, h)).unwrap_or(true);
         if resized {
@@ -1319,5 +1322,3 @@ pub use city_map::*;
 use lines_panel::*;
 #[cfg(test)]
 mod tests;
-
-

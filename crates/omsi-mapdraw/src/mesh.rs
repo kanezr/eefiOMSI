@@ -25,8 +25,8 @@ const PAVED_CELL: f32 = 2.0;
 
 #[derive(Default)]
 struct Cell {
-    land: Vec<Vec<Vec2>>,
-    paved: Vec<Vec<Vec2>>,
+    land: Vec<Vec<u32>>,
+    paved: Vec<Vec<u32>>,
     buildings: Vec<u32>,
     trees: Vec<u32>,
 }
@@ -52,15 +52,15 @@ impl MapData {
         let mut cells: HashMap<(i32, i32), Cell> = HashMap::new();
         let new_cell = || Cell { land: vec![Vec::new(); layers::LAND_CLASSES], paved: vec![Vec::new(); layers::PAVE_CLASSES], ..Default::default() };
         for (class, tris) in layers.land.iter().enumerate() {
-            for t in tris.chunks_exact(3) {
+            for (i, t) in tris.chunks_exact(3).enumerate() {
                 let c = cell_of((t[0] + t[1] + t[2]) / 3.0);
-                cells.entry(c).or_insert_with(new_cell).land[class].extend_from_slice(t);
+                cells.entry(c).or_insert_with(new_cell).land[class].push((i * 3) as u32);
             }
         }
         for (class, tris) in layers.paved.iter().enumerate() {
-            for t in tris.chunks_exact(3) {
+            for (i, t) in tris.chunks_exact(3).enumerate() {
                 let c = cell_of((t[0] + t[1] + t[2]) / 3.0);
-                cells.entry(c).or_insert_with(new_cell).paved[class].extend_from_slice(t);
+                cells.entry(c).or_insert_with(new_cell).paved[class].push((i * 3) as u32);
             }
         }
         for (i, b) in layers.buildings.iter().enumerate() {
@@ -169,7 +169,8 @@ impl MapData {
         ];
         for (class, col) in land_order {
             for cell in &cells {
-                for t in cell.land[class].chunks_exact(3) {
+                for &i in &cell.land[class] {
+                    let t = &self.layers.land[class][i as usize..i as usize + 3];
                     p.world_poly(&[v(t[0]), v(t[1]), v(t[2])], col);
                 }
             }
@@ -196,7 +197,8 @@ impl MapData {
         for (classes, fill) in [(&[layers::PAVE_GREEN][..], pal.grass), (&[layers::PAVE_AREA][..], pal.area), (&[layers::PAVE_FOOT, layers::PAVE_ROAD][..], pal.foot), (&[layers::PAVE_INNER][..], pal.road)] {
             for cell in &cells {
                 for &class in classes {
-                    for t in cell.paved[class].chunks_exact(3) {
+                    for &i in &cell.paved[class] {
+                        let t = &self.layers.paved[class][i as usize..i as usize + 3];
                         p.world_poly(&[v(t[0]), v(t[1]), v(t[2])], fill);
                     }
                 }
@@ -342,5 +344,25 @@ fn dashes(p: &mut Painter, pts: &[Vec3], on: f32, off: f32, w_m: f32, w_px: f32,
     }
     if drawing && run.len() >= 2 {
         p.ribbon(&run, w_m, w_px, c, false);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cell_triangles_reference_layer_vertices() {
+        let mut layers = Layers::empty(DVec2::ZERO);
+        layers.land[layers::LAND_GRASS] = vec![Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::ONE, Vec2::X, Vec2::Y];
+        layers.paved[layers::PAVE_ROAD] = vec![Vec2::ZERO, Vec2::X, Vec2::Y];
+        let layers = std::sync::Arc::new(layers);
+        let map = MapData::new(layers.clone());
+        let cell = map.cells.get(&(0, 0)).unwrap();
+
+        assert_eq!(cell.land[layers::LAND_GRASS], [0, 3]);
+        assert_eq!(cell.paved[layers::PAVE_ROAD], [0]);
+        assert_eq!(&layers.land[layers::LAND_GRASS][cell.land[layers::LAND_GRASS][1] as usize..][..3], &[Vec2::ONE, Vec2::X, Vec2::Y]);
+        assert_eq!(&layers.paved[layers::PAVE_ROAD][..3], &[Vec2::ZERO, Vec2::X, Vec2::Y]);
     }
 }

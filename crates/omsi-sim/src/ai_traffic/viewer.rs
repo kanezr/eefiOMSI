@@ -81,7 +81,14 @@ impl Viewer {
     /// The view of a camera at `position` looking along `forward`, with a vertical field of
     /// view of `fov_deg` and its far plane at `far`, a picture `aspect` wide to high, in fog
     /// that hides everything beyond `fog_range`.
-    pub fn from_camera(position: DVec3, forward: DVec3, fov_deg: f32, far: f32, aspect: f64, fog_range: f64) -> Viewer {
+    pub fn from_camera(
+        position: DVec3,
+        forward: DVec3,
+        fov_deg: f32,
+        far: f32,
+        aspect: f64,
+        fog_range: f64,
+    ) -> Viewer {
         let tan_y = (fov_deg as f64 * 0.5).to_radians().tan();
         Viewer {
             pos: position,

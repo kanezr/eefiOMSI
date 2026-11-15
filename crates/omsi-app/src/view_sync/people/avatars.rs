@@ -220,7 +220,11 @@ pub(super) fn material_texture(ty: &HumanType, dirs: &[std::path::PathBuf], text
 
 /// A texture of an avatar read ahead on a worker: the picture for the GPU and the PBR maps
 /// beside it.
-pub(super) type Prepared = (Option<Arc<omsi_texture::TextureData>>, Option<omsi_texture::pbr::PbrImages>);
+pub(super) type Prepared = (
+    Option<Arc<omsi_texture::TextureData>>,
+    Option<omsi_texture::pbr::PbrImages>,
+    Option<omsi_render::PreparedTexture>,
+);
 
 /// The avatars whose textures are read on the workers before anybody is drawn with them.
 /// Read on the frame, an avatar that came into view for the first time cost 25-70 ms
@@ -237,6 +241,24 @@ pub(crate) struct Warm {
     done: Arc<Mutex<Vec<(usize, Vec<(std::path::PathBuf, Prepared)>)>>>,
     /// Pictures read and not uploaded yet, by file.
     pub(super) prepared: hashbrown::HashMap<std::path::PathBuf, Prepared>,
+    /// The map's own figures being read ahead.
+    figures: Option<FigureRead>,
+}
+
+const FIGURES_AHEAD_BYTES: usize = 160 << 20;
+
+struct FigureRead {
+    figures: Vec<std::path::PathBuf>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    out: Arc<Mutex<Vec<(std::path::PathBuf, Prepared)>>>,
+    decoded: Arc<std::sync::atomic::AtomicUsize>,
+    given: Vec<std::path::PathBuf>,
+}
+
+impl Drop for FigureRead {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl Warm {
@@ -264,11 +286,133 @@ impl Warm {
                     }
                     let data = omsi_texture::gpu::load_gpu(&path).ok().map(|(t, _)| Arc::new(t));
                     let pbr = if a.face.is_some() { omsi_texture::pbr::load_set(&omsi_texture::pbr::find(&path)) } else { None };
-                    list.push((path, (data, pbr)));
+                    list.push((path, (data, pbr, None)));
                 }
                 done.lock().push((key, list));
             });
         }
         false
     }
+
+    /// Decode the map's default human textures ahead, up to a bounded memory budget.
+    pub(super) fn map_figures(
+        &mut self,
+        types: &[Arc<HumanType>],
+        root: &std::path::Path,
+        renderer: &omsi_render::Renderer,
+    ) {
+        let grown = |f: &FigureRead| {
+            f.figures.len() <= types.len()
+                && f.figures.iter().zip(types).all(|(p, t)| *p == t.def.path)
+        };
+        if self.figures.as_ref().is_some_and(|f| !grown(f)) {
+            if let Some(old) = self.figures.take() {
+                for path in &old.given {
+                    self.prepared.remove(path);
+                }
+            }
+        }
+        let f = match self.figures.as_mut() {
+            Some(f) => f,
+            None if types.is_empty() => return,
+            None => self.figures.insert(FigureRead {
+                figures: Vec::new(),
+                stop: Arc::default(),
+                out: Arc::default(),
+                decoded: Arc::default(),
+                given: Vec::new(),
+            }),
+        };
+        if f.figures.len() < types.len() {
+            let fresh = &types[f.figures.len()..];
+            f.figures.extend(fresh.iter().map(|t| t.def.path.clone()));
+            read_figures_ahead(fresh, root, renderer, f);
+        }
+        let Some(f) = self.figures.as_mut() else { return };
+        for (path, pictures) in f.out.lock().drain(..) {
+            if let hashbrown::hash_map::Entry::Vacant(entry) = self.prepared.entry(path.clone()) {
+                f.given.push(path);
+                entry.insert(pictures);
+            }
+        }
+    }
+}
+
+fn read_figures_ahead(
+    types: &[Arc<HumanType>],
+    root: &std::path::Path,
+    renderer: &omsi_render::Renderer,
+    read: &FigureRead,
+) {
+    use std::sync::atomic::Ordering;
+    let (list, root) = (types.to_vec(), root.to_path_buf());
+    let (halt, sink, decoded) = (read.stop.clone(), read.out.clone(), read.decoded.clone());
+    let device = renderer.device.clone();
+    let queue = renderer.queue.clone();
+    let prepare_gpu = !omsi_render::gl_backend();
+    omsi_scene::threads::background_pool().spawn(move || {
+        let mut seen = hashbrown::HashSet::new();
+        for ty in &list {
+            let dirs = ty.texture_dirs(&root);
+            for material in ty.meshes.iter().flat_map(|hm| hm.materials.iter()) {
+                if halt.load(Ordering::Relaxed)
+                    || decoded.load(Ordering::Relaxed) >= FIGURES_AHEAD_BYTES
+                {
+                    return;
+                }
+                let Some(path) = material_texture(ty, &dirs, &material.texture, 0) else {
+                    continue;
+                };
+                if !seen.insert(path.clone()) {
+                    continue;
+                }
+                let Ok((data, _)) = omsi_texture::gpu::load_gpu(&path) else {
+                    continue;
+                };
+                decoded.fetch_add(
+                    data.levels.iter().map(Vec::len).sum::<usize>(),
+                    Ordering::Relaxed,
+                );
+                let prepared = if prepare_gpu {
+                    prepare_human_texture(&device, &queue, &data)
+                } else {
+                    None
+                };
+                if prepared.is_some() {
+                    sink.lock().push((path, (None, None, prepared)));
+                } else {
+                    sink.lock().push((path, (Some(Arc::new(data)), None, None)));
+                }
+            }
+        }
+    });
+}
+
+fn prepare_human_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    data: &omsi_texture::TextureData,
+) -> Option<omsi_render::PreparedTexture> {
+    if data.format == omsi_texture::PixelFormat::Rgba8
+        && data.gpu_mips
+        && data.levels.len() == 1
+        && data.width > 1
+        && data.height > 1
+    {
+        let mut prepared = data.clone();
+        let mut level = prepared.levels[0].clone();
+        let mut width = prepared.width;
+        let mut height = prepared.height;
+        let mut levels = std::mem::take(&mut prepared.levels);
+        for _ in 1..omsi_texture::gpu::mip_count(width, height) {
+            let (next, next_width, next_height) =
+                omsi_texture::bc::downsample_alpha_weighted(&level, width, height);
+            levels.push(next.clone());
+            (level, width, height) = (next, next_width, next_height);
+        }
+        prepared.levels = levels;
+        prepared.gpu_mips = false;
+        return omsi_render::prepare_texture(device, queue, &prepared);
+    }
+    omsi_render::prepare_texture(device, queue, data)
 }

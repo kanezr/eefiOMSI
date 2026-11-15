@@ -3,6 +3,20 @@ use super::*;
 
 mod lods;
 
+fn vehicle_model_needs_order(slots: impl IntoIterator<Item = (AlphaMode, bool)>) -> bool {
+    let mut blended_first = false;
+    let mut ordered = false;
+    for (alpha, writes_depth) in slots {
+        match alpha {
+            AlphaMode::Blend if writes_depth => blended_first = true,
+            AlphaMode::Blend => {}
+            _ if blended_first => ordered = true,
+            _ => {}
+        }
+    }
+    ordered
+}
+
 impl World {
     /// Upload a vehicle type's meshes and create render instances for one vehicle (the
     /// player's: its set is not shared and stays).
@@ -792,24 +806,15 @@ impl World {
                 // taken as one, a bus whose glass the model lists before its saloon was
                 // drawn in model order and its saloon was gone behind every window, the
                 // panes on both sides over the street behind them coming out black)
-                .map(|m| (m.alpha, !m.no_z_write && !m.no_z_check))
+                .map(|m| (m.alpha, m.blend_writes_depth()))
                 .collect()
         };
-        let mut blended_first = false;
-        let mut ordered = false;
-        for &i in &instances {
-            if scene.instances.get(i).is_none_or(|x| x.blob) {
-                continue;
-            }
-            for (alpha, writes) in slots_in_order(i) {
-                match alpha {
-                    omsi_render::AlphaMode::Blend if writes => blended_first = true,
-                    omsi_render::AlphaMode::Blend => {}
-                    _ if blended_first => ordered = true,
-                    _ => {}
-                }
-            }
-        }
+        let ordered = vehicle_model_needs_order(
+            instances
+                .iter()
+                .filter(|&&i| scene.instances.get(i).is_some_and(|x| !x.blob))
+                .flat_map(|&i| slots_in_order(i)),
+        );
         // (the Sprinter's, the Mercus's, the Urbino 15's saloon showed through half their
         // panels drawn so while `[matl_noZcheck]` still took their inner glass out of the
         // depth test; OMSI_NO_MODEL_ORDER=1 draws opaque parts first again)
@@ -1530,4 +1535,25 @@ struct VehicleUpload<'a> {
     only: Option<String>,
     variants: Vec<VariantSlot>,
     dyn_slots: Vec<DynSlot>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_depth_writing_pane_keeps_later_vehicle_parts_in_model_order() {
+        assert!(vehicle_model_needs_order([
+            (AlphaMode::Blend, true),
+            (AlphaMode::Opaque, false),
+        ]));
+        assert!(!vehicle_model_needs_order([
+            (AlphaMode::Blend, false),
+            (AlphaMode::Opaque, false),
+        ]));
+        assert!(!vehicle_model_needs_order([
+            (AlphaMode::Opaque, false),
+            (AlphaMode::Blend, true),
+        ]));
+    }
 }

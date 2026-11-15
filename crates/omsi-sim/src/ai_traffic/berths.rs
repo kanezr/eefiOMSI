@@ -82,7 +82,10 @@ struct Berth {
 impl Berth {
     /// The asks in the order the berth is handed out: who is there, then who came first.
     fn first(&self) -> Option<u64> {
-        self.asks.iter().min_by_key(|a| (!a.there, a.since, a.dist, a.id)).map(|a| a.id)
+        self.asks
+            .iter()
+            .min_by_key(|a| (!a.there, a.since, a.dist, a.id))
+            .map(|a| a.id)
     }
 }
 
@@ -124,7 +127,8 @@ impl Berths {
         self.released += released;
         // (a berth nobody holds or asks for is forgotten, and with it since when something
         // stood in it: the next bus to come times that afresh)
-        self.berths.retain(|_, b| b.holder.is_some() || !b.asks.is_empty());
+        self.berths
+            .retain(|_, b| b.holder.is_some() || !b.asks.is_empty());
         false
     }
 
@@ -138,7 +142,13 @@ impl Berths {
                 a.seen = step;
                 a.there |= there;
             }
-            None => b.asks.push(Ask { there, since: step, seen: step, dist: (dist * 10.0).clamp(-1e6, 1e6) as i32, id }),
+            None => b.asks.push(Ask {
+                there,
+                since: step,
+                seen: step,
+                dist: (dist * 10.0).clamp(-1e6, 1e6) as i32,
+                id,
+            }),
         }
     }
 
@@ -168,12 +178,18 @@ impl Berths {
 
     /// The berths bus `id` holds.
     pub fn held_by(&self, id: u64) -> Vec<BerthKey> {
-        self.berths.iter().filter(|(_, b)| b.holder == Some(id)).map(|(k, _)| *k).collect()
+        self.berths
+            .iter()
+            .filter(|(_, b)| b.holder == Some(id))
+            .map(|(k, _)| *k)
+            .collect()
     }
 
     /// Whether bus `id` waits in the queue of berth `key`.
     pub fn queued(&self, key: BerthKey, id: u64) -> bool {
-        self.berths.get(&key).is_some_and(|b| b.asks.iter().any(|a| a.id == id))
+        self.berths
+            .get(&key)
+            .is_some_and(|b| b.asks.iter().any(|a| a.id == id))
     }
 
     /// The holder of `key` expects to stand there `secs` more.
@@ -274,7 +290,10 @@ impl TrafficSim {
     /// forget what they held.
     pub fn berths_begin_step(&mut self) {
         let alive: hashbrown::HashSet<u64> = self.cars.iter().map(|c| c.id).collect();
-        if self.berths.begin_step(self.lanes_generation, |id| alive.contains(&id)) {
+        if self
+            .berths
+            .begin_step(self.lanes_generation, |id| alive.contains(&id))
+        {
             for b in self.cars.iter_mut().filter_map(|c| c.bus.as_mut()) {
                 b.forget_berth();
             }
@@ -289,11 +308,17 @@ impl TrafficSim {
             return BerthScene::default();
         };
         let lane = st.route.get(stop.ri).copied().unwrap_or(st.lane);
-        if self.net.lanes.get(lane).is_none_or(|l| l.kind != LaneKind::Street) {
+        if self
+            .net
+            .lanes
+            .get(lane)
+            .is_none_or(|l| l.kind != LaneKind::Street)
+        {
             return BerthScene::default();
         }
         let (lo, hi) = region(stop.s, st.front, st.rear);
-        let across = |lat: f32, half_width: f32| (lat - stop.bay).abs() < half_width + car.half_width + 0.2;
+        let across =
+            |lat: f32, half_width: f32| (lat - stop.bay).abs() < half_width + car.half_width + 0.2;
         let mut free = true;
         let mut there = false;
         for &(j, s, lat, _) in ts.by_lane.get(&lane).map(Vec::as_slice).unwrap_or(&[]) {
@@ -315,12 +340,20 @@ impl TrafficSim {
                 continue;
             }
             if let Some((s, d)) = l.nearest_point(p.0) {
-                if s + p.2 >= lo && s - p.2 <= hi && (d as f32) < p.3 + car.half_width + stop.bay.abs() + 0.2 {
+                if s + p.2 >= lo
+                    && s - p.2 <= hi
+                    && (d as f32) < p.3 + car.half_width + stop.bay.abs() + 0.2
+                {
                     free = false;
                 }
             }
         }
-        BerthScene { applies: true, free, there, pull_out_blocked: self.pull_out_blocked(i, ts) }
+        BerthScene {
+            applies: true,
+            free,
+            there,
+            pull_out_blocked: self.pull_out_blocked(i, ts),
+        }
     }
 
     /// Would car `i`, standing in a bay, cut into the traffic if it pulled out now?
@@ -337,7 +370,8 @@ impl TrafficSim {
             let behind = st.s - st.rear - (s + o.state.front);
             let ahead = s - o.state.rear - (st.s + st.front);
             blocked |= (0.0..PULL_OUT_BEHIND).contains(&behind) && o.state.speed > PULL_OUT_COMING;
-            blocked |= (0.0..PULL_OUT_AHEAD).contains(&ahead) && o.state.speed < 0.3 && lat.abs() < 1.0;
+            blocked |=
+                (0.0..PULL_OUT_AHEAD).contains(&ahead) && o.state.speed < 0.3 && lat.abs() < 1.0;
         }
         blocked
     }

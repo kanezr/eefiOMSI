@@ -6,52 +6,52 @@
 //! and sound like, and taking the lanes and the vehicle types from the world, is omsi-app's
 //! `traffic` (its `Traffic` is a `TrafficSim` with its pictures and sounds).
 
-pub mod body_link;
 pub mod admission;
 pub mod berths;
+pub mod body_link;
+#[cfg(test)]
+mod body_tests;
 pub mod bus_service;
 pub mod control;
 pub mod deadlock;
-pub mod fixed_step;
-pub mod horn;
 pub mod density;
 pub mod dormant;
 pub mod emergency;
+#[cfg(test)]
+mod emergency_tests;
+pub mod fixed_step;
+pub mod foot_grid;
+pub mod horn;
+#[cfg(test)]
+mod junction_tests;
 pub mod junctions;
 pub mod lateral;
+#[cfg(test)]
+mod lateral_tests;
 pub mod light_paths;
 pub mod lights;
 pub mod mirror;
 pub mod model;
 pub mod obstacles;
-pub mod foot_grid;
 pub mod parked;
 pub mod planning;
-pub mod scenery;
-pub mod setup;
-pub mod stats;
-pub mod tick;
-pub mod viewer;
-#[cfg(test)]
-mod body_tests;
-#[cfg(test)]
-mod scenario_tests;
-#[cfg(test)]
-mod junction_tests;
-#[cfg(test)]
-mod service_tests;
 #[cfg(test)]
 mod population_tests;
 #[cfg(test)]
-mod tests;
+mod request_tests;
 #[cfg(test)]
-mod lateral_tests;
+mod scenario_tests;
+pub mod scenery;
 #[cfg(test)]
-mod emergency_tests;
+mod service_tests;
+pub mod setup;
 #[cfg(test)]
 mod signal_tests;
+pub mod stats;
 #[cfg(test)]
-mod request_tests;
+mod tests;
+pub mod tick;
+pub mod viewer;
 
 use crate::ai_motion::{
     back_in_ramp, pull_out_ramps, AiBody, MotionKind, BACK_IN_LAT_ACCEL, PULL_OUT_ACCEL,
@@ -189,6 +189,10 @@ pub struct TrafficSim {
     /// Omsi.exe, where the 20 s check (0x7d9bdc) runs against every station's time, the ones
     /// shared out by distance too (0x616afc -> 0x73b474).
     pub timed_waits_only: bool,
+    /// The `ai_reaction` setting: a factor on every AI driver's reaction time (1.0: as
+    /// `model::personality` draws it, about 0.8 s). Below 1.0 a queue pulls away closer
+    /// together; `model::scale_reaction` keeps it from going under `PULL_OUT_WAIT`.
+    pub reaction_factor: f32,
     /// `--no-timetable-buses`: the timetable runs for the player's duty, but puts no AI
     /// bus on the road (#1762).
     pub no_timetable_buses: bool,
@@ -274,6 +278,8 @@ pub struct TrafficSim {
     /// The plans of a tick's cars and the order they plan in, kept for the next tick.
     pub frames_buf: Vec<Option<AiFrame>>,
     pub order_buf: Vec<usize>,
+    pub(crate) occupancy_by_lane: tick::ByLane,
+    pub(crate) occupancy_coming: tick::Coming,
     /// `pull_out_room` by vehicle file.
     pub pull_out_rooms: HashMap<std::path::PathBuf, f32>,
     /// Timetable buses taken off the road because the tile under them was unloaded (their

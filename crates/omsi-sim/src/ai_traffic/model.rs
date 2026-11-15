@@ -31,8 +31,7 @@ impl Passing {
     /// the oncoming traffic (`half_width` its own half width).
     pub fn clear_at(&self, half_width: f32) -> f32 {
         self.until
-            + self.back
-                * crate::traffic::ramp_progress_for(self.side, half_width + ONCOMING_ROOM)
+            + self.back * crate::traffic::ramp_progress_for(self.side, half_width + ONCOMING_ROOM)
     }
 }
 
@@ -220,7 +219,10 @@ impl AiCar {
 
     /// The side's doors to open at the stop it is boarding at (`AI_Scheduled_AtStation_Side`).
     pub fn at_station_side(&self) -> f32 {
-        self.bus.as_ref().map(|b| b.at_station_side()).unwrap_or(0.0)
+        self.bus
+            .as_ref()
+            .map(|b| b.at_station_side())
+            .unwrap_or(0.0)
     }
 
     /// Standing at one of its stops (doors open, waiting for the departure, pulling out).
@@ -243,7 +245,10 @@ impl AiCar {
 
     /// Seconds it will still stand at its stop.
     pub fn standing_for(&self, day_time: f64) -> f32 {
-        self.bus.as_ref().map(|b| b.standing_for(day_time)).unwrap_or(0.0)
+        self.bus
+            .as_ref()
+            .map(|b| b.standing_for(day_time))
+            .unwrap_or(0.0)
     }
 }
 
@@ -269,7 +274,16 @@ pub fn car_foot(c: &AiCar, ahead: f32) -> Footprint {
     let h = c.vehicle.heading.to_radians();
     let (fwd, right) = (DVec2::new(h.sin(), h.cos()), DVec2::new(h.cos(), -h.sin()));
     let center = c.vehicle.position.truncate() + fwd * ((st.front + ahead - st.rear) * 0.5) as f64;
-    Footprint { car: usize::MAX, center, fwd, right, half_len: ((st.front + ahead + st.rear) * 0.5) as f64, half_w: c.half_width as f64, speed: st.speed, z: c.vehicle.position.z }
+    Footprint {
+        car: usize::MAX,
+        center,
+        fwd,
+        right,
+        half_len: ((st.front + ahead + st.rear) * 0.5) as f64,
+        half_w: c.half_width as f64,
+        speed: st.speed,
+        z: c.vehicle.position.z,
+    }
 }
 
 impl Footprint {
@@ -383,8 +397,18 @@ pub fn vehicle_bodies(v: &VehicleInstance) -> Vec<crate::collision::Obb> {
 /// bus - its saloon display stood on the first stop for the whole trip. `remaining` is the
 /// number of stops still to come.
 pub fn ibis_to_next_stop(v: &mut VehicleInstance, remaining: usize) {
-    let Some(ri) = v.var("IBIS_RouteIndex").filter(|r| *r >= 0.0) else { return };
-    let Some(n) = v.host.hof.as_ref().and_then(|h| h.info_busstop_lists.get(ri as usize)).map(|l| l.len()) else { return };
+    let Some(ri) = v.var("IBIS_RouteIndex").filter(|r| *r >= 0.0) else {
+        return;
+    };
+    let Some(n) = v
+        .host
+        .hof
+        .as_ref()
+        .and_then(|h| h.info_busstop_lists.get(ri as usize))
+        .map(|l| l.len())
+    else {
+        return;
+    };
     if n == 0 || v.var("IBIS_busstop").is_none() {
         return;
     }
@@ -406,7 +430,11 @@ pub const RAIL_TRAIL: f64 = 400.0;
 
 /// Note where an AI rail vehicle is: `odometer` (m) and the point of its way there. A jump
 /// (put somewhere else, turned round at a terminus) starts the trail afresh.
-pub fn record_rail_trail(trail: &mut std::collections::VecDeque<(f64, DVec3)>, odometer: f64, here: DVec3) {
+pub fn record_rail_trail(
+    trail: &mut std::collections::VecDeque<(f64, DVec3)>,
+    odometer: f64,
+    here: DVec3,
+) {
     if let Some(&(u, p)) = trail.back() {
         if (here - p).truncate().length() > (odometer - u).abs() + 2.0 {
             trail.clear();
@@ -428,7 +456,12 @@ pub fn record_rail_trail(trail: &mut std::collections::VecDeque<(f64, DVec3)>, o
 /// came along. (Its way knows only the lane it came off; farther back it runs straight on,
 /// and a train's last cars stood beside the track after a pair of points.) Where the trail
 /// does not reach - the last half metre, a vehicle just put there - the way.
-pub fn rail_behind(trail: &std::collections::VecDeque<(f64, DVec3)>, state: &AiState, net: &Network, d: f64) -> DVec3 {
+pub fn rail_behind(
+    trail: &std::collections::VecDeque<(f64, DVec3)>,
+    state: &AiState,
+    net: &Network,
+    d: f64,
+) -> DVec3 {
     let u = state.odometer as f64 - d;
     let newest = trail.back().map_or(f64::MIN, |b| b.0);
     if u >= newest {
@@ -484,7 +517,9 @@ pub fn extents(ty: &VehicleType, length: f32) -> (f32, f32, f32) {
         // without a `[boundingbox]` the model's own box, as Omsi.exe takes it (0x7b5da4):
         // the Berlin S-Bahn's cars, 18 m long, counted as 12 m ones
         _ => match ty.model_box() {
-            Some((lo, hi)) if hi.y - lo.y > 1.0 => (hi.y.max(0.5), (-lo.y).max(0.5), (hi.x.max(-lo.x)).max(0.5)),
+            Some((lo, hi)) if hi.y - lo.y > 1.0 => {
+                (hi.y.max(0.5), (-lo.y).max(0.5), (hi.x.max(-lo.x)).max(0.5))
+            }
             _ => (length * 0.5, length * 0.5, 0.9),
         },
     };
@@ -493,6 +528,18 @@ pub fn extents(ty: &VehicleType, length: f32) -> (f32, f32, f32) {
     } else {
         (front, rear, width)
     }
+}
+
+/// The `ai_reaction` setting applied to a driver's reaction time. Factor 1.0 leaves it as
+/// drawn; a smaller one shortens it, but never under `PULL_OUT_WAIT` (the shortest reaction
+/// the junction and pull-out code is built for), and never raises a reaction that was drawn
+/// under that floor.
+pub fn scale_reaction(reaction: f32, factor: f32) -> f32 {
+    if !factor.is_finite() || (factor - 1.0).abs() < 1e-3 {
+        return reaction;
+    }
+    let floor = crate::ai_motion::PULL_OUT_WAIT.min(reaction);
+    (reaction * factor).max(floor)
 }
 
 /// The driver of a random car: how fast, how close, how patient (see `AiState`).
@@ -543,15 +590,23 @@ impl TrafficSim {
         bus: Option<BusSetup>,
     ) -> u64 {
         let mut state = AiState::new(lane, s, seed);
-        state.veh_type = if bus.is_some() { -1 } else { ty.def.ai_veh_type };
+        state.veh_type = if bus.is_some() {
+            -1
+        } else {
+            ty.def.ai_veh_type
+        };
         if bus.is_none() {
-            state.traffic_pool = self.types.iter().find(|t| Arc::ptr_eq(&t.0, &ty))
+            state.traffic_pool = self
+                .types
+                .iter()
+                .find(|t| Arc::ptr_eq(&t.0, &ty))
                 .and_then(|t| self.group_uvg[t.3])
                 .map(|pool| (pool, self.uvg_defaults.clone()));
         }
         state.plan_next(&self.net);
         // heavy vehicles (trucks, vans) cruise slower, which is what gets them overtaken
         let heavy = ty.def.mass > 6.0 || bus.is_some();
+        state.reaction = scale_reaction(state.reaction, self.reaction_factor);
         personality(&mut state, seed, heavy);
         state.max_speed_kmh = if kind == LaneKind::Air {
             AIRCRAFT_KMH

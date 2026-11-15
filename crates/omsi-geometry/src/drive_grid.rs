@@ -22,6 +22,7 @@ fn plan_weights(a: Vec3, b: Vec3, c: Vec3, x: f32, y: f32, tol: f32) -> Option<(
     if d.abs() < 1e-9 {
         return None;
     }
+
     let l2 = (p - a).perp_dot(c - a) / d;
     let l3 = (b - a).perp_dot(p - a) / d;
     let l1 = 1.0 - l2 - l3;
@@ -108,13 +109,15 @@ pub struct SurfFaces {
     /// OMSI's `[surface]` id of each material slot's texture (asphalt past the end): what
     /// the tyres roll on there (see [`DriveGrid::surface_at`]).
     pub ids: Vec<u8>,
+    /// Broad physical classification of each material slot.
+    pub kinds: Vec<SurfaceKind>,
 }
 
 impl SurfFaces {
     /// Only where a texture has a map, and the mesh texture coordinates to lay it on.
     pub fn of(mesh: &MeshData, maps: &[Option<std::sync::Arc<HeightMap>>]) -> Option<SurfFaces> {
         (maps.iter().any(Option::is_some) && mesh.uvs.len() == mesh.positions.len())
-            .then(|| SurfFaces { uvs: mesh.uvs.clone(), ranges: mesh.ranges.clone(), maps: maps.to_vec(), ids: Vec::new() })
+            .then(|| SurfFaces { uvs: mesh.uvs.clone(), ranges: mesh.ranges.clone(), maps: maps.to_vec(), ids: Vec::new(), kinds: Vec::new() })
     }
 
     /// [`SurfFaces::of`] with the `[surface]` ids of the slots' textures: kept where a
@@ -125,7 +128,25 @@ impl SurfFaces {
         }
         let uvs = if mesh.uvs.len() == mesh.positions.len() { mesh.uvs.clone() } else { Vec::new() };
         let maps = if uvs.is_empty() { Vec::new() } else { maps.to_vec() };
-        Some(SurfFaces { uvs, ranges: mesh.ranges.clone(), maps, ids: ids.to_vec() })
+        let kinds = ids.iter().map(|id| SurfaceKind::from_id(*id)).collect();
+        Some(SurfFaces { uvs, ranges: mesh.ranges.clone(), maps, ids: ids.to_vec(), kinds })
+    }
+
+    /// [`SurfFaces::tagged`] with texture-name classification for surfaces such as kerbs.
+    pub fn tagged_kinds(
+        mesh: &MeshData,
+        maps: &[Option<std::sync::Arc<HeightMap>>],
+        ids: &[u8],
+        kinds: &[SurfaceKind],
+    ) -> Option<SurfFaces> {
+        if !ids.iter().any(|i| *i != 0)
+            && !kinds.iter().any(|kind| *kind != SurfaceKind::Asphalt)
+        {
+            return Self::of(mesh, maps);
+        }
+        let uvs = if mesh.uvs.len() == mesh.positions.len() { mesh.uvs.clone() } else { Vec::new() };
+        let maps = if uvs.is_empty() { Vec::new() } else { maps.to_vec() };
+        Some(SurfFaces { uvs, ranges: mesh.ranges.clone(), maps, ids: ids.to_vec(), kinds: kinds.to_vec() })
     }
 
     /// The `[surface]` id of face `j`.
@@ -142,6 +163,19 @@ impl SurfFaces {
             .unwrap_or(0)
     }
 
+    pub(crate) fn kind(&self, j: usize) -> SurfaceKind {
+        if self.kinds.is_empty() {
+            return SurfaceKind::from_id(self.id(j));
+        }
+        let first = (j * 3) as u32;
+        self.ranges
+            .iter()
+            .find(|r| first >= r.0 && first < r.0 + r.1)
+            .and_then(|r| self.kinds.get(r.2 as usize))
+            .copied()
+            .unwrap_or(SurfaceKind::Unknown)
+    }
+
     /// The map and corner texture coordinates of face `j` (indices `tri`).
     pub(crate) fn face(&self, j: usize, tri: &[u32]) -> Option<(&std::sync::Arc<HeightMap>, [Vec2; 3])> {
         let first = (j * 3) as u32;
@@ -153,7 +187,7 @@ impl SurfFaces {
 
     /// Bytes held on the heap (the maps are shared).
     pub fn heap_bytes(&self) -> usize {
-        self.uvs.capacity() * 8 + self.ranges.capacity() * 12 + self.maps.capacity() * 8 + self.ids.capacity()
+        self.uvs.capacity() * 8 + self.ranges.capacity() * 12 + self.maps.capacity() * 8 + self.ids.capacity() + self.kinds.capacity()
     }
 }
 
@@ -175,6 +209,8 @@ pub struct DriveGrid {
     maps: Vec<std::sync::Arc<HeightMap>>,
     /// Per triangle, the `[surface]` id of its texture (empty while every face is asphalt).
     surface: Vec<u8>,
+    /// Per-triangle broad physical classification.
+    surface_kind: Vec<SurfaceKind>,
     pub(crate) cells: usize,
     pub(crate) cell: f32,
     /// Per cell, the range of `items` that lists its triangles (`cells² + 1` offsets).
@@ -250,18 +286,32 @@ impl DriveGrid {
 
     /// Give the face added last the `[surface]` id `id`.
     pub fn tag_last(&mut self, id: u8) {
-        if id == 0 || self.tris.is_empty() {
+        self.tag_last_kind(id, SurfaceKind::from_id(id));
+    }
+
+    /// Give the face added last its `[surface]` ID and broad physical class.
+    pub fn tag_last_kind(&mut self, id: u8, kind: SurfaceKind) {
+        if self.tris.is_empty() {
             return;
         }
         self.surface.resize(self.tris.len(), 0);
+        self.surface_kind.resize(self.tris.len(), SurfaceKind::Asphalt);
         if let Some(s) = self.surface.last_mut() {
             *s = id;
+        }
+        if let Some(last) = self.surface_kind.last_mut() {
+            *last = kind;
         }
     }
 
     /// The highest face (not a wall top) at or below `top` over tile-local (x, y): its height
     /// and `[surface]` id - what the tyre standing there rolls on.
     pub fn surface_at(&self, x: f32, y: f32, top: f32) -> Option<(f32, u8)> {
+        self.surface_sample_at(x, y, top).map(|(z, id, _)| (z, id))
+    }
+
+    /// The highest face at or below `top`, with its OMSI ID and broad physical class.
+    pub fn surface_sample_at(&self, x: f32, y: f32, top: f32) -> Option<(f32, u8, SurfaceKind)> {
         if self.cells == 0 || x < 0.0 || y < 0.0 {
             return None;
         }
@@ -270,7 +320,7 @@ impl DriveGrid {
             return None;
         }
         let k = cy * self.cells + cx;
-        let mut best: Option<(f32, u8)> = None;
+        let mut best: Option<(f32, u8, SurfaceKind)> = None;
         for &i in &self.items[self.start[k] as usize..self.start[k + 1] as usize] {
             if self.ridge.get(i as usize).copied().unwrap_or(false) || !self.reaches(i, x, y) {
                 continue;
@@ -278,8 +328,10 @@ impl DriveGrid {
             let [a, b, c] = self.tris[i as usize];
             let Some((l1, l2, l3)) = plan_weights(a, b, c, x, y, SEAM_TOLERANCE) else { continue };
             let z = l1 * a.z + l2 * b.z + l3 * c.z;
-            if z <= top && best.is_none_or(|(old, _)| z > old) {
-                best = Some((z, self.surface.get(i as usize).copied().unwrap_or(0)));
+            if z <= top && best.is_none_or(|(old, _, _)| z > old) {
+                let id = self.surface.get(i as usize).copied().unwrap_or(0);
+                let kind = self.surface_kind.get(i as usize).copied().unwrap_or_else(|| SurfaceKind::from_id(id));
+                best = Some((z, id, kind));
             }
         }
         best
@@ -296,10 +348,12 @@ impl DriveGrid {
         let mut keep_bump = Vec::with_capacity(self.tris.len());
         let tagged = !self.surface.is_empty();
         let mut keep_surface = Vec::with_capacity(if tagged { self.tris.len() } else { 0 });
+        let mut keep_surface_kind = Vec::with_capacity(if tagged { self.tris.len() } else { 0 });
         self.ridge.resize(self.tris.len(), false);
         self.bump_of.resize(self.tris.len(), NO_BUMP);
         if tagged {
             self.surface.resize(self.tris.len(), 0);
+            self.surface_kind.resize(self.tris.len(), SurfaceKind::Asphalt);
         }
         for (k, ((t, r), b)) in self.tris.iter().zip(self.ridge.iter()).zip(self.bump_of.iter()).enumerate() {
             // (bucketed with the seam tolerance round it: a point that close is on it)
@@ -316,6 +370,7 @@ impl DriveGrid {
             keep_bump.push(*b);
             if tagged {
                 keep_surface.push(self.surface[k]);
+                keep_surface_kind.push(self.surface_kind[k]);
             }
         }
         self.reach = keep.iter().map(|t| plan_reach(t[0], t[1], t[2], SEAM_TOLERANCE)).collect();
@@ -323,6 +378,7 @@ impl DriveGrid {
         self.ridge = keep_ridge;
         self.bump_of = keep_bump;
         self.surface = keep_surface;
+        self.surface_kind = keep_surface_kind;
         let mut count = vec![0u32; n * n + 1];
         for &(x0, x1, y0, y1) in &ranges {
             for y in y0..=y1 {

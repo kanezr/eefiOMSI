@@ -68,6 +68,8 @@ pub struct TileSurface {
     pub drive: DriveGrid,
     /// What the tile's ground and trees sound like (see [`GroundSound`]).
     pub sound: GroundSound,
+    /// Physical surface class of the base and painted terrain.
+    pub ground_paint: GroundPaint,
 }
 
 /// Edge of a [`TileSurface`] block (texels).
@@ -98,12 +100,12 @@ impl TileSurface {
             rasters += n * 5 + b.low.as_ref().map(|_| n * 4).unwrap_or(0) + b.road.as_ref().map(|_| n * 4).unwrap_or(0);
         }
         rasters += self.holes.iter().flatten().count() * n * 4 + self.hole_cover.iter().flatten().count() * n * 2;
-        (rasters, self.drive.heap_bytes())
+        (rasters + self.ground_paint.kinds.capacity() * std::mem::size_of::<SurfaceKind>(), self.drive.heap_bytes())
     }
 
     pub fn new(size: usize) -> TileSurface {
         let blocks = size.div_ceil(BLOCK);
-        TileSurface { size, blocks: (0..blocks * blocks).map(|_| None).collect(), holes: (0..blocks * blocks).map(|_| None).collect(), hole_cover: (0..blocks * blocks).map(|_| None).collect(), outlines: Vec::new(), drive: DriveGrid::default(), sound: GroundSound::default() }
+        TileSurface { size, blocks: (0..blocks * blocks).map(|_| None).collect(), holes: (0..blocks * blocks).map(|_| None).collect(), hole_cover: (0..blocks * blocks).map(|_| None).collect(), outlines: Vec::new(), drive: DriveGrid::default(), sound: GroundSound::default(), ground_paint: GroundPaint::default() }
     }
 
     /// Block and index within it of texel `k`.
@@ -240,7 +242,9 @@ impl TileSurface {
                 None => self.drive.push_kind(p, false),
             };
             if pushed {
-                self.drive.tag_last(surf.map(|s| s.id(j)).unwrap_or(0));
+                if let Some(surf) = surf {
+                    self.drive.tag_last_kind(surf.id(j), surf.kind(j));
+                }
             }
         }
     }
@@ -263,7 +267,9 @@ impl TileSurface {
                 None => self.drive.push_kind(p, j * 3 >= ridge_from),
             };
             if pushed {
-                self.drive.tag_last(surf.map(|s| s.id(j)).unwrap_or(0));
+                if let Some(surf) = surf {
+                    self.drive.tag_last_kind(surf.id(j), surf.kind(j));
+                }
             }
         }
     }

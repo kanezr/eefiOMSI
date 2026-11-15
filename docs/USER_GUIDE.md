@@ -364,9 +364,10 @@ as designed; `navigator_opacity` in older files),
 at its first and last stop, railway stations and the stops the timetable gives a time of their
 own, and drives on from the others once boarding is done; off by default: it waits at every
 stop it serves, as in OMSI),
-`bouncy_suspension` (off by default; enables the experimental wheel-mass and tyre suspension
-for a livelier response to bumps; set it in Options under Suspension feel and restart the game
-for it to take effect),
+`bouncy_suspension` (off by default; the launcher and in-game option is named Improved physics
+(experimental). It enables the wheel-mass suspension, per-tyre surface and puddle grip, an open
+differential, load- and speed-dependent rolling resistance, painted terrain classes, and a
+friction-circle limit. Set it in Options and restart the game for it to take effect),
 `boarding`, `detail_textures`, `exact_fare`, `pax_bad_driving`, `enhanced`, `fullscreen`, `vsync`, `volume`
 and `drive_keys`, plus `render_scale` (`auto` or a fraction: the picture is drawn smaller
 and upscaled), `post_aa` (`fxaa`, the enhanced renderer's, or `off`), `view_distance` (m,
@@ -411,7 +412,7 @@ the bus waits at a stop) and `head_idle_pace` (0.5..2: how fast that sway moves,
 pace it is designed at), `collision_objects` (walls, poles and bridges stop the bus; off is OMSI's `no_collision`
 option and is taken from OMSI's options when openOMSI starts the first time), `graphics_api`
 (`auto`, `vulkan`, `dx12` on Windows, `gl`, `angle` on Windows: which graphics interface the
-game asks first - with `auto` on Windows DirectX 12, then Vulkan, then OpenGL, then ANGLE;
+game asks first - with `auto` on Windows DirectX 12, then Vulkan, then OpenGL, then ANGLE, except with a discrete AMD Radeon, where `auto` asks Vulkan first, as it is faster there; after a device lost on Vulkan, `auto` keeps to DirectX 12 on that machine until the next version of the game, or until `~/.openomsi/vulkan-lost` is deleted;
 elsewhere Vulkan, then OpenGL; see *Graphics API* below), `ctrl_off` (game controllers switched off
 on the Controllers page, by name, separated by `|`) and `language` (`ENG`, `DEU`, `FRA`: the language the HUD names cockpit switches
 in). The file also carries a `version`; older files that say

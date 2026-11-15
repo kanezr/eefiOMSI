@@ -54,7 +54,13 @@ impl TrafficSim {
         (unsched_factor, max_scheduled): (f32, u32),
         target: usize,
     ) -> TrafficSim {
-        let RandomTypes { types, groups, group_curves, group_uvg, uvg_defaults } = random;
+        let RandomTypes {
+            types,
+            groups,
+            group_curves,
+            group_uvg,
+            uvg_defaults,
+        } = random;
         let parked: HashMap<usize, Vec<(f32, f32)>> = HashMap::new();
         let light_log = omsi_cfg::flags::OMSI_DEBUG_LIGHTS.var().map(String::from);
         let light_prev = lights.iter().map(|c| vec![-100; c.lights.len()]).collect();
@@ -113,6 +119,7 @@ impl TrafficSim {
             unsched_factor,
             max_scheduled,
             timed_waits_only: false,
+            reaction_factor: 1.0,
             no_timetable_buses: false,
             viewer: None,
             occluders: None,
@@ -146,6 +153,8 @@ impl TrafficSim {
             index_of: HashMap::new(),
             frames_buf: Vec::new(),
             order_buf: Vec::new(),
+            occupancy_by_lane: Default::default(),
+            occupancy_coming: Default::default(),
             pull_out_rooms: HashMap::new(),
             removed_scheduled: Vec::new(),
             twinned: Default::default(),

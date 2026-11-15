@@ -16,7 +16,7 @@ mod traits;
 
 pub use arrivals::{TrafficArrival, TrafficArrivals};
 
-pub use ground::{probe_tile, surface_flush, tile_key, GroundTiles, LiveGround, BURIED_FACE, PAINT_LAYER, WALL_TOP_STEP};
+pub use ground::{probe_tile, puddle_water_at, surface_flush, tile_key, GroundTiles, LiveGround, PuddleWater, BURIED_FACE, PAINT_LAYER, WALL_TOP_STEP};
 
 use crate::collision::{CollisionWorld, Obb};
 use arc_swap::ArcSwap;

@@ -21,10 +21,22 @@ fn pictures_larger_than_the_chip_takes_are_made_to_fit() {
     let b = renderer.add_texture(&mut scene, &big, true);
     let c = renderer.add_blank_texture(&mut scene, 4096, 64);
     let d = renderer.add_render_texture(&mut scene, 3000, 3000);
+    let cpu_mipped = omsi_texture::TextureData {
+        width: 4,
+        height: 4,
+        format: omsi_texture::PixelFormat::Rgba8,
+        levels: vec![vec![200; 4 * 4 * 4], vec![200; 2 * 2 * 4], vec![200; 4]],
+        has_alpha: true,
+        gpu_mips: false,
+    };
+    let e = renderer.add_texture_data(&mut scene, &cpu_mipped);
     for id in [a, b, c] {
         renderer.update_texture(&scene, id, &big);
     }
     renderer.update_texture_mips(&mut scene, b, &big);
+    let small = omsi_texture::Image { width: 4, height: 4, rgba: vec![100; 4 * 4 * 4], has_alpha: true };
+    assert!(renderer.update_texture_mips(&mut scene, e, &small));
+    assert!(!renderer.update_texture_mips(&mut scene, e, &small));
     for id in [a, b, c, d] {
         let (w, h) = scene.texture_size_of(id).expect("texture");
         assert!(w <= 2048 && h <= 2048, "{w}x{h}");

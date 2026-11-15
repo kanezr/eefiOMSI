@@ -37,6 +37,26 @@ fn run(rb: &mut RigidBody, secs: f32, torque: f32, brake: f32, g: &dyn Fn(f64, f
 }
 
 #[test]
+fn improved_physics_samples_each_contact_surface() {
+    let mut rb = RigidBody::from_definition_with_bouncy(&bus(), &[], true);
+    rb.place(DVec3::ZERO, 0.0);
+    let ground = road(1e9, 0.0);
+    let surface = |_, _, _| GroundSample {
+        kind: omsi_geometry::SurfaceKind::Paving,
+        puddle: 1.0,
+        depth: 1.0,
+        wet: 1.0,
+    };
+    rb.step_with_surface(1.0 / 60.0, 0.0, &[0.0; 4], 0.0, &ground, &surface);
+    assert!(rb.wheels.iter().all(|w| {
+        w.surface_kind == omsi_geometry::SurfaceKind::Paving
+            && w.surface_wetness == 1.0
+            && w.puddle_depth == 1.0
+    }));
+    assert!((rb.tyre_friction(0) - 0.85 * 0.65 * 0.35).abs() < 1e-5);
+}
+
+#[test]
 fn driving_past_a_thin_roadside_triangle_has_no_false_wall() {
     let mut grid = omsi_geometry::DriveGrid::default();
     grid.push([Vec3::ZERO, Vec3::new(30.0, 0.0, 0.0), Vec3::new(0.0, 50.0, 0.0)]);
@@ -139,6 +159,51 @@ fn sags_by_its_own_springs() {
     assert!(soft.origin().z < origin.z - 0.08, "{:?}", soft.origin());
 }
 
+#[test]
+fn bouncy_suspension_settles_on_a_flat_spline() {
+    let g = road(1e9, 0.0);
+    let mut rb = RigidBody::from_definition_with_bouncy(&bus(), &[], true);
+    rb.place(DVec3::ZERO, 0.0);
+    run(&mut rb, 3.0, 0.0, 5000.0, &g);
+
+    let mut compression_range = vec![(f32::INFINITY, f32::NEG_INFINITY); rb.wheels.len()];
+    let (mut low_z, mut high_z) = (f64::INFINITY, f64::NEG_INFINITY);
+    for _ in 0..120 {
+        rb.step(1.0 / 60.0, 0.0, &[5000.0; 4], 0.0, &g);
+        for (i, wheel) in rb.wheels.iter().enumerate() {
+            compression_range[i].0 = compression_range[i].0.min(wheel.compression);
+            compression_range[i].1 = compression_range[i].1.max(wheel.compression);
+        }
+        low_z = low_z.min(rb.origin().z);
+        high_z = high_z.max(rb.origin().z);
+    }
+
+    let worst_wheel = compression_range.iter().map(|(low, high)| high - low).fold(0.0f32, f32::max);
+    assert!(worst_wheel < 0.001, "wheel travel on a fixed flat road: {worst_wheel:.6} m");
+    assert!(high_z - low_z < 0.001, "body movement on a fixed flat road: {:.6} m", high_z - low_z);
+}
+
+#[test]
+fn bouncy_suspension_damps_buses_with_low_configured_damping() {
+    let g = road(1e9, 0.0);
+    let mut definition = bus();
+    for axle in &mut definition.axles {
+        axle.damper = 0.05;
+    }
+    let mut rb = RigidBody::from_definition_with_bouncy(&definition, &[], true);
+    rb.place(DVec3::ZERO, 0.0);
+    rb.velocity.z = 0.1;
+    let (mut low, mut high) = (f64::INFINITY, f64::NEG_INFINITY);
+    for frame in 0..240 {
+        rb.step(1.0 / 60.0, 0.0, &[5000.0; 4], 0.0, &g);
+        if frame >= 180 {
+            low = low.min(rb.origin().z);
+            high = high.max(rb.origin().z);
+        }
+    }
+    assert!(high - low < 0.001, "body kept bouncing on a fixed flat road: {:.6} m", high - low);
+}
+
 /// A 6 cm hump 0.6 m long (a manhole cover's rim, a speed cushion's edge) crossed at
 /// 40 km/h: the wheels ride over it without leaving the road for long, the body
 /// hardly lifts, and a wheel's travel changes smoothly from frame to frame instead of
@@ -160,6 +225,50 @@ fn a_long_frame_does_not_bounce_the_body() {
         }
     }
     assert!(worst < 0.02, "the suspension moved {worst} m after a long frame");
+}
+
+#[test]
+fn bouncy_suspension_settles_after_small_repeated_road_irregularities() {
+    let ripple = |_x: f64, y: f64, _top: f64| {
+        let z = 0.008 * (std::f64::consts::TAU * y / 0.7).sin();
+        GroundProbe {
+            below: Some(z),
+            above: None,
+        }
+    };
+    let flat = road(1e9, 0.0);
+    let response = |legacy_tyre_damping: bool| {
+        let mut rb = RigidBody::from_definition_with_bouncy(&bus(), &[], true);
+        if legacy_tyre_damping {
+            for w in &mut rb.wheels {
+                w.tyre_c = TYRE_C * (w.tyre_k / TYRE_K).sqrt();
+            }
+        }
+        rb.place(DVec3::ZERO, 0.0);
+        run(&mut rb, 3.0, 0.0, 5000.0, &flat);
+        let speed = 8.0;
+        rb.velocity = Vec3::Y * speed;
+        for w in &mut rb.wheels {
+            w.spin = speed / w.radius;
+        }
+        let (mut lo_z, mut hi_z) = (f64::INFINITY, f64::NEG_INFINITY);
+        let (mut lo_c, mut hi_c) = (f32::INFINITY, f32::NEG_INFINITY);
+        for _ in 0..240 {
+            rb.step(1.0 / 120.0, 0.0, &[0.0; 4], 0.0, &ripple);
+            lo_z = lo_z.min(rb.origin().z);
+            hi_z = hi_z.max(rb.origin().z);
+            lo_c = lo_c.min(rb.wheels[0].compression);
+            hi_c = hi_c.max(rb.wheels[0].compression);
+        }
+        (hi_z - lo_z, hi_c - lo_c)
+    };
+    let baseline = response(true);
+    let damped = response(false);
+    assert!(
+        damped.1 < baseline.1,
+        "wheel travel was not damped: baseline={baseline:?}, damped={damped:?}"
+    );
+    assert!(damped.0 < 0.04, "body bounced {:.3} m over a small road ripple", damped.0);
 }
 
 #[test]
@@ -244,7 +353,7 @@ fn climbs_a_kerb_but_not_a_wall() {
 fn pusher_front_section_is_pushed_through_the_joint() {
     let mut def = bus();
     def.axles.iter_mut().for_each(|a| a.driven = false);
-    let rear = CoupledPart { point: Vec3::new(0.0, -4.456, 0.503), dir: Vec3::Y, mass: 0.0, driven_wheels: 2, radius: 0.47, driven_load: 70_000.0, brake: 0.0, load: 70_000.0, joint_load: 0.0 };
+    let rear = CoupledPart { point: Vec3::new(0.0, -4.456, 0.503), dir: Vec3::Y, mass: 0.0, driven_wheels: 2, radius: 0.47, driven_load: 70_000.0, brake: 0.0, rolling_resistance: 0.0, load: 70_000.0, joint_load: 0.0 };
     let g = road(1e9, 0.0);
     let start = |def: &Vehicle, parts: Vec<CoupledPart>| {
         let mut rb = RigidBody::from_definition(def, &[]);
@@ -306,7 +415,7 @@ fn towed_weight_on_a_grade() {
     let mut def = bus();
     def.axles.iter_mut().for_each(|a| a.driven = false);
     let g = ramp(0.08);
-    let part = CoupledPart { point: Vec3::new(0.0, -4.456, 0.503), dir: Vec3::Y, mass: 7000.0, driven_wheels: 0, radius: 0.47, driven_load: 0.0, brake: 0.0, load: 70_000.0, joint_load: 0.0 };
+    let part = CoupledPart { point: Vec3::new(0.0, -4.456, 0.503), dir: Vec3::Y, mass: 7000.0, driven_wheels: 0, radius: 0.47, driven_load: 0.0, brake: 0.0, rolling_resistance: 0.0, load: 70_000.0, joint_load: 0.0 };
     let mut rb = RigidBody::from_definition(&def, &[]);
     rb.coupled = vec![CoupledPart { brake: 40_000.0, ..part }];
     rb.place(DVec3::new(0.0, 50.0, 4.0), 0.0);
